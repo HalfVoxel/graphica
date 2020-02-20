@@ -1,0 +1,26 @@
+[package]
+name = "graphica"
+version = "0.1.0"
+authors = ["Aron Granberg <aron.granberg@gmail.com>"]
+edition = "2018"
+
+[[bin]]
+name = "graphica"
+path = "src/bin/main.rs"
+
+[dependencies]
+lyon = { path = "../lyon", features = ["extra"] }
+wgpu = "0.4"
+wgpu-native = "0.4"
+winit = "0.20.0"
+euclid = "0.20"
+log = "0.4"
+env_logger = "0.7"
+take_mut = "0.2"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "my_benchmark"
+harness = false
