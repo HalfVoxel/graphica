@@ -13,11 +13,13 @@ use winit::event_loop::{EventLoop, ControlFlow};
 use winit::window::Window;
 use winit::dpi::{PhysicalSize, LogicalSize};
 use std::time::Instant;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::hash::{Hash, Hasher};
 use euclid;
 use take_mut;
+use by_address::ByAddress;
 
 use std::ops::Rem;
 use crate::fps_limiter::FPSLimiter;
@@ -123,7 +125,17 @@ impl<'a, 'b: 'a> PathPoint<'b> {
         }
     }
 
+    pub fn prev (&'a self) -> PathPoint<'b> {
+        debug_assert!(self.data.point_type(self.index as i32) == PointType::Point);
+        PathPoint {
+            index: if self.index == self.data.sub_paths[self.sub_path].range.start { self.data.sub_paths[self.sub_path].range.end - 3 } else { self.index - 3 },
+            sub_path: self.sub_path,
+            data: self.data,
+        }
+    }
+
     pub fn next (&'a self) -> PathPoint<'b> {
+        debug_assert!(self.data.point_type(self.index as i32) == PointType::Point);
         PathPoint {
             index: if self.index + 3 >= self.data.sub_paths[self.sub_path].range.end { self.data.sub_paths[self.sub_path].range.start } else { self.index + 3 },
             sub_path: self.sub_path,
@@ -217,6 +229,12 @@ impl<'a, 'b: 'a> SubPath<'b> {
     }
 }*/
 
+#[derive(PartialEq)]
+pub enum PointType {
+    Point,
+    ControlPoint,
+}
+
 impl PathData {
     pub fn new() -> PathData {
         PathData {
@@ -247,14 +265,27 @@ impl PathData {
         panic!("No sub path contains index {:?}", index);
     }
 
+    pub fn point_type(&self, index: i32) -> PointType {
+        match index % 3 {
+            0 => PointType::Point,
+            _ => PointType::ControlPoint,
+        }
+    }
+
     pub fn point<'a> (&'a self, index: i32) -> PathPoint<'a> {
         PathPoint { data: &self, sub_path: self.find_sub_path(index), index: index as usize }
     }
 
     pub fn point_mut(&mut self, index: i32) -> &mut CanvasPoint {
-        let index = index * 3;
         assert!(index >= 0 && index < self.points.len() as i32);
         &mut self.points[index as usize]
+    }
+
+    pub fn set_point(&mut self, index: i32, point: CanvasPoint) {
+        match self.point_type(index) {
+            PointType::Point => *self.point_mut(index) = point,
+            PointType::ControlPoint => *self.point_mut(index) = (point - self.point(index - (index%3)).position()).to_point(),
+        }
     }
 
     /*pub fn control_point(&self, index: i32, offset: ControlPointDirection) -> CanvasPoint {
@@ -294,6 +325,11 @@ impl PathData {
         self.points.push(point(0.0, 0.0));
         self.extend_current();
         (self.points.len() as i32  - 2)
+    }
+
+    pub fn move_to(&mut self, pt: CanvasPoint) -> i32 {
+        self.end();
+        self.line_to(pt)
     }
 
     pub fn start_if_necessary(&mut self) {
@@ -978,17 +1014,17 @@ pub fn main() {
                 pass.draw_indexed(0..6, 0, 0..1);
             }
 
-            if scene.show_wireframe {
-                pass.set_pipeline(&wireframe_render_pipeline);
-            } else {
+            // if scene.show_wireframe {
+            //     pass.set_pipeline(&wireframe_render_pipeline);
+            // } else {
                 pass.set_pipeline(&render_pipeline);
-            }
-            pass.set_bind_group(0, &bind_group, &[]);
-            pass.set_index_buffer(&ibo, 0);
-            pass.set_vertex_buffers(0, &[(&vbo, 0)]);
+            // }
+            // pass.set_bind_group(0, &bind_group, &[]);
+            // pass.set_index_buffer(&ibo, 0);
+            // pass.set_vertex_buffers(0, &[(&vbo, 0)]);
 
-            pass.draw_indexed(fill_range.clone(), 0, 0..(num_instances as u32));
-            pass.draw_indexed(stroke_range.clone(), 0, 0..1);
+            // pass.draw_indexed(fill_range.clone(), 0, 0..(num_instances as u32));
+            // pass.draw_indexed(stroke_range.clone(), 0, 0..1);
 
 
             //pass.set_pipeline(&render_pipeline);
@@ -1003,7 +1039,7 @@ pub fn main() {
         frame_count += 1.0;
         scene.input.tick_frame();
         dbg!(a.elapsed());
-        //fps_limiter.wait(std::time::Duration::from_secs_f32(1.0 / 60.0));
+        fps_limiter.wait(std::time::Duration::from_secs_f32(1.0 / 60.0));
     });
 }
 
@@ -1038,14 +1074,53 @@ impl StrokeVertexConstructor<GpuVertex> for WithId {
     }
 }
 
+#[derive(Clone, Hash, Eq, PartialEq)]
 struct VertexReference {
-    path: Rc<RefCell<PathData>>,
+    path: ByAddress<Rc<RefCell<PathData>>>,
     vertex_index: u32,
 }
 
+// impl PartialEq for VertexReference {
+//     fn eq(&self, other: &VertexReference) -> bool {
+//         self.vertex_index == other.vertex_index && Rc::ptr_eq(&self.path, &other.path)
+//     }
+// }
+// impl Eq for VertexReference {}
+
 impl VertexReference {
+    fn new(path: Rc<RefCell<PathData>>, vertex_index: u32) -> VertexReference {
+        VertexReference {
+            path: ByAddress(path),
+            vertex_index,
+        }
+    }
+
     fn position<'a> (&'a self) -> CanvasPoint {
+
         self.path.borrow().point(self.vertex_index as i32).position()
+    }
+
+    fn set_position<'a> (&'a self, point: CanvasPoint) {
+        self.path.borrow_mut().set_point(self.vertex_index as i32, point);
+    }
+
+    fn point_type(&self) -> PointType {
+        self.path.borrow().point_type(self.vertex_index as i32)
+    }
+
+    fn prev(&self) -> VertexReference {
+        // Pretty slow
+        VertexReference {
+            path: self.path.clone(),
+            vertex_index: self.path.borrow().point(self.vertex_index as i32).prev().index() as u32,
+        }
+    }
+
+    fn next(&self) -> VertexReference {
+        VertexReference {
+            path: self.path.clone(),
+            vertex_index: self.path.borrow().point(self.vertex_index as i32).next().index() as u32,
+        }
     }
 }
 
@@ -1053,16 +1128,85 @@ struct Selection {
     items: Vec<VertexReference>,
 }
 
+fn evalute_cubic_bezier<U>(p0: euclid::Point2D<f32,U>, p1: euclid::Point2D<f32,U>, p2: euclid::Point2D<f32,U>, p3: euclid::Point2D<f32,U>, t: f32) -> euclid::Point2D<f32,U> {
+    let p0 = p0.to_untyped().to_vector();
+    let p1 = p1.to_untyped().to_vector();
+    let p2 = p2.to_untyped().to_vector();
+    let p3 = p3.to_untyped().to_vector();
+    let t1 = 1.0-t;
+    let t2 = t1*t1;
+    let t3 = t1*t1*t1;
+    (p0*t3 + p1*(3.0*t2*t) + p2*(3.0*t1*t*t) + p3*(t*t*t)).to_point().cast_unit()
+}
+
+fn sqr_distance_bezier_point<U>(p0: euclid::Point2D<f32,U>, p1: euclid::Point2D<f32,U>, p2: euclid::Point2D<f32,U>, p3: euclid::Point2D<f32,U>, p: euclid::Point2D<f32,U>) -> (f32, euclid::Point2D<f32,U>) {
+    let mut closest = euclid::Point2D::new(0.0,0.0);
+    let mut closest_dist = std::f32::INFINITY;
+    for i in 0..100 {
+        let t = i as f32 / 100.0;
+        let bezier_point = evalute_cubic_bezier(p0, p1, p2, p3, t);
+        let dist = (bezier_point - p).square_length();
+        if dist < closest_dist {
+            closest_dist = dist;
+            closest = bezier_point;
+        }
+    }
+    (closest_dist, closest)
+}
+
+impl Selection {
+    fn distance_to(&self, point: CanvasPoint) -> Option<(CanvasLength, CanvasPoint)> {
+        let mut min_dist = std::f32::INFINITY;
+        let mut closest_point = None;
+        let mut point_set = HashSet::new();
+        for vertex in &self.items {
+            if vertex.point_type() == PointType::Point {
+                point_set.insert(vertex);
+            }
+        }
+        for vertex in &self.items {
+            match vertex.point_type() {
+                PointType::ControlPoint => {
+                    min_dist = min_dist.min((vertex.position() - point).square_length());
+                }
+                PointType::Point => {
+                    let path = vertex.path.borrow();
+                    if point_set.contains(&vertex.next()) {
+                        let p = path.point(vertex.vertex_index as i32);
+                        let (dist, point) = sqr_distance_bezier_point(p.position(), p.control_after(), p.next().control_before(), p.next().position(), point);
+                        if dist < min_dist {
+                            min_dist = dist;
+                            closest_point = Some(point);
+                        }
+                    } else {
+                        let p = path.point(vertex.vertex_index as i32);
+                        let dist = (p.position() - point).square_length();
+                        if dist < min_dist {
+                            min_dist = dist;
+                            closest_point = Some(p.position());
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(p) = closest_point {
+            Some((CanvasLength::new(min_dist.sqrt()), p))
+        } else {
+            None
+        }
+    }
+}
+
 enum SelectState {
     Down(CapturedClick, Selection),
     DragSelect(CapturedClick),
-    Dragging(CapturedClick, Selection),
+    Dragging(CapturedClick, Selection, Vec<CanvasPoint>),
 }
 
 struct PathEditor {
     paths: Vec<Rc<RefCell<PathData>>>,
     ui_path: Rc<RefCell<PathData>>,
-    selected: Option<VertexReference>,
+    selected: Option<Selection>,
     select_state: Option<SelectState>,
 }
 
@@ -1080,7 +1224,28 @@ impl PathEditor {
         let mut ui_path = self.ui_path.borrow_mut();
         ui_path.clear();
         if let Some(selected) = &self.selected {
-            ui_path.add_circle(selected.position(), CanvasLength::new(5.0));
+            for vertex in &selected.items {
+                ui_path.add_circle(vertex.position(), CanvasLength::new(5.0));
+            }
+        }
+        let mouse_pos = view.screen_to_canvas_point(input.mouse_position);
+        if let Some(SelectState::DragSelect(capture)) = &self.select_state {
+            let start = view.screen_to_canvas_point(capture.mouse_start);
+            let end = mouse_pos;
+            ui_path.move_to(point(start.x, start.y));
+            ui_path.line_to(point(end.x, start.y));
+            ui_path.line_to(point(end.x, end.y));
+            ui_path.line_to(point(start.x, end.y));
+            ui_path.line_to(point(start.x, start.y));
+            ui_path.close();
+        }
+        let everything = self.select_everything();
+        dbg!(everything.items.len());
+        if let Some((_, closest_point)) = everything.distance_to(mouse_pos) {
+            dbg!(closest_point);
+            ui_path.move_to(mouse_pos);
+            ui_path.line_to(closest_point);
+            ui_path.end();
         }
         ui_path.add_circle(view.screen_to_canvas_point(input.mouse_position), CanvasLength::new(3.0));
     }
@@ -1091,6 +1256,34 @@ impl PathEditor {
         }
     }
 
+    fn select_everything(&self) -> Selection {
+        let mut selection = Selection {
+            items: Vec::new()
+        };
+        for path in self.paths.iter() {
+            let p = path.borrow();
+            for point in p.iter_points() {
+                selection.items.push(VertexReference::new(path.clone(), point.index() as u32));
+            }
+        }
+        selection
+    }
+
+    fn select_rect(&self, rect: CanvasRect) -> Selection {
+        let mut selection = Selection {
+            items: Vec::new()
+        };
+        for path in self.paths.iter() {
+            let p = path.borrow();
+            for point in p.iter_points() {
+                if rect.contains(point.position()) {
+                    selection.items.push(VertexReference::new(path.clone(), point.index() as u32));
+                }
+            }
+        }
+        selection
+    }
+
     fn update_selection(&mut self, view : &CanvasView, input: &mut InputManager) {
         self.select_state = match self.select_state.take() {
             None => {
@@ -1098,7 +1291,7 @@ impl PathEditor {
                     for path in &self.paths {
                         let p = path.borrow();
                         for point in p.iter_points() {
-                            let reference = VertexReference { path: Rc::clone(&path), vertex_index: point.index() as u32 };
+                            let reference = VertexReference::new(path.clone(), point.index() as u32);
                             capture.add(CircleShape { center: view.canvas_to_screen_point(point.position()), radius: 5.0 }, reference);
                         }
                     }
@@ -1106,6 +1299,9 @@ impl PathEditor {
                     if let Some((capture, best)) = capture.capture(input) {
                         // Something was close enough to the cursor, we should select it
                         Some(SelectState::Down(capture, Selection { items: vec![best] }))
+                    } else if let Some(capture) = input.capture_click(winit::event::MouseButton::Left) {
+                        // Start with empty selection
+                        Some(SelectState::Down(capture, Selection { items: vec![] }))
                     } else {
                         None
                     }
@@ -1114,33 +1310,61 @@ impl PathEditor {
                 }
             }
             Some(state) => match state {
-                SelectState::Down(capture, selection) if (capture.mouse_start - input.mouse_position).square_length() > 5.0*5.0 => {
-                    Some(SelectState::Dragging(capture, selection))
-                }
-                SelectState::DragSelect(capture)  if !capture.is_pressed(input) => {
+                // Note: !pressed matches should come first, otherwise mouse_up might be missed if multiple state transitions were to happen in a single frame
+                SelectState::DragSelect(capture) if !capture.is_pressed(input) => {
+                    // Only select if mouse was released inside the window
                     if capture.on_up(input) {
                         // Select
+                        // TODO: Start point should be stored in canvas space, in case the view is zoomed or moved
+                        let selection_rect = CanvasRect::from_points(vec![view.screen_to_canvas_point(capture.mouse_start), view.screen_to_canvas_point(input.mouse_position)]);
+                        self.selected = Some(self.select_rect(selection_rect));
+                        None
+                    } else {
+                        self.selected = None;
+                        None
                     }
-                    self.selected = None;
-                    None
                 }
-                SelectState::Down(capture, mut selection) if !capture.is_pressed(input) => {
+                SelectState::Down(capture, selection) if !capture.is_pressed(input) => {
                     if capture.on_up(input) {
                         // Select
-                        self.selected = Some(selection.items.remove(0));
+                        self.selected = Some(selection);
                     }
                     None
                 }
-                SelectState::Dragging(capture, selection) => {
-                    for vertex in &selection.items {
-                        vertex.position();
+                SelectState::Down(capture, _) if (capture.mouse_start - input.mouse_position).square_length() > 5.0*5.0 => {
+                    if self.selected.as_ref().map(|selection| selection.distance_to(view.screen_to_canvas_point(capture.mouse_start))).flatten().map(|(dist, _)| dist*view.canvas_to_screen_scale() < ScreenLength::new(5.0)).unwrap_or(false) {
+                        // The mouse started at a selected curve, this means the user probably wants to drag the existing selection.
+                        let selection = Selection { items: self.selected.as_ref().unwrap().items.clone() };
+                        let original_position = selection.items.iter().map(|x| x.position()).collect();
+                        Some(SelectState::Dragging(capture, selection, original_position))
+                    } else {
+                        // Mouse started at some other location. We should do a drag-select
+                        Some(SelectState::DragSelect(capture))
+                    }
+                }
+                SelectState::Dragging(capture, selection, original_positions) => {
+                    let offset = view.screen_to_canvas_vector(input.mouse_position - capture.mouse_start);
+
+                    // Move all points
+                    for (vertex, &original_position) in selection.items.iter().zip(original_positions.iter()) {
+                        if vertex.point_type() == PointType::Point {
+                            vertex.set_position(original_position + offset);
+                        }
+                    }
+
+                    // Move all control points
+                    // Doing this before moving points will lead to weird results
+                    for (vertex, &original_position) in selection.items.iter().zip(original_positions.iter()) {
+                        if vertex.point_type() == PointType::ControlPoint {
+                            vertex.set_position(original_position + offset);
+                        }
                     }
 
                     if !capture.is_pressed(input) {
                         // Stop drag
                         None
                     } else {
-                        Some(SelectState::Dragging(capture, selection))
+                        Some(SelectState::Dragging(capture, selection, original_positions))
                     }
                 }
                 SelectState::DragSelect(..) => {
@@ -1177,21 +1401,18 @@ impl PathEditor {
     
     fn update(&mut self, view : &CanvasView, input: &mut InputManager) {
         let canvas_mouse_pos = view.screen_to_canvas_point(input.mouse_position);
-        self.update_selection(view, input);
 
-        if input.on_mouse_down(winit::event::MouseButton::Left) {
-
-            if input.is_pressed(VirtualKeyCode::T) {
+        if input.is_pressed(VirtualKeyCode::T) {
+            if let Some(_) = input.capture_click(winit::event::MouseButton::Left) {
                 if self.paths.len() == 0 {
                     self.paths.push(Rc::new(RefCell::new(PathData::new())));
                 }
                 let mut path = self.paths.last_mut().unwrap().borrow_mut();
                 path.line_to(canvas_mouse_pos);
-            } else {
-                
             }
         }
 
+        self.update_selection(view, input);
         self.update_ui(view, input);
     }
 }
@@ -1204,6 +1425,7 @@ pub type CanvasPoint = euclid::Point2D<f32, CanvasSpace>;
 pub type CanvasVector = euclid::Vector2D<f32, CanvasSpace>;
 pub type CanvasLength = euclid::Length<f32, CanvasSpace>;
 pub type ScreenLength = euclid::Length<f32, ScreenSpace>;
+pub type CanvasRect = euclid::Rect<f32, CanvasSpace>;
 
 pub struct CanvasView {
     zoom: f32,
@@ -1249,44 +1471,44 @@ struct SceneParams {
 }
 
 struct MouseBtnState {
-    downFrame: i32,
-    upFrame: i32,
+    down_frame: i32,
+    up_frame: i32,
     captured: bool,
 }
 
 impl MouseBtnState {
     fn is_pressed(&self) -> bool {
-        self.downFrame > self.upFrame
+        self.down_frame > self.up_frame
     }
 }
 
-struct InputManager {
+pub struct InputManager {
     states: HashMap<VirtualKeyCode, bool>,
     mouse_states: HashMap<winit::event::MouseButton, MouseBtnState>,
     mouse_position: ScreenPoint,
     frame_count: i32,
 }
 
-struct CapturedClick {
+pub struct CapturedClick {
     mouse_btn: winit::event::MouseButton,
     down_frame: i32,
     mouse_start: ScreenPoint,
 }
 
 impl CapturedClick {
-    fn is_pressed(&self, input: &InputManager) -> bool {
+    pub fn is_pressed(&self, input: &InputManager) -> bool {
         let btn_state = input.mouse_states.get(&self.mouse_btn).unwrap();
-        btn_state.downFrame == self.down_frame && btn_state.is_pressed()
+        btn_state.down_frame == self.down_frame && btn_state.is_pressed()
     }
 
-    fn on_down(&self, input: &InputManager) -> bool {
+    pub fn on_down(&self, input: &InputManager) -> bool {
         let btn_state = input.mouse_states.get(&self.mouse_btn).unwrap();
-        btn_state.downFrame == self.down_frame && btn_state.downFrame == input.frame_count
+        btn_state.down_frame == self.down_frame && btn_state.down_frame == input.frame_count
     }
 
-    fn on_up(&self, input: &InputManager) -> bool {
+    pub fn on_up(&self, input: &InputManager) -> bool {
         let btn_state = input.mouse_states.get(&self.mouse_btn).unwrap();
-        btn_state.downFrame == self.down_frame && btn_state.upFrame == input.frame_count
+        btn_state.down_frame == self.down_frame && btn_state.up_frame == input.frame_count
     }
 }
 
@@ -1351,6 +1573,11 @@ impl InputManager {
 
     fn tick_frame(&mut self) {
         self.frame_count += 1;
+        for state in self.mouse_states.values_mut() {
+            if !state.is_pressed() {
+                state.captured = false;
+            }
+        }
     }
 
     fn on_key(&mut self, state: ElementState, key_code: VirtualKeyCode) {
@@ -1360,25 +1587,23 @@ impl InputManager {
     fn on_mouse(&mut self, state: ElementState, mouse_btn: winit::event::MouseButton) {
         if !self.mouse_states.contains_key(&mouse_btn) {
             self.mouse_states.insert(mouse_btn, MouseBtnState {
-                downFrame: -1,
-                upFrame: -1,
+                down_frame: -1,
+                up_frame: -1,
                 captured: false,
             });
         }
 
         let mut btn_state = self.mouse_states.get_mut(&mouse_btn).unwrap();
-
-
         if state == ElementState::Released && btn_state.is_pressed() {
-            btn_state.upFrame = self.frame_count;
+            btn_state.up_frame = self.frame_count;
         }
         if state == ElementState::Pressed && !btn_state.is_pressed() {
-            btn_state.upFrame = self.frame_count;
+            btn_state.down_frame = self.frame_count;
         }
     }
 
     fn on_mouse_down(&self, mouse_btn: winit::event::MouseButton) -> bool {
-        self.mouse_states.get(&mouse_btn).map(|x| x.downFrame == self.frame_count).unwrap_or(false)
+        self.mouse_states.get(&mouse_btn).map(|x| x.down_frame == self.frame_count).unwrap_or(false)
     }
 
     fn is_mouse_pressed(&self, mouse_btn: winit::event::MouseButton) -> bool {
@@ -1386,7 +1611,7 @@ impl InputManager {
     }
 
     fn is_mouse_click(&self, mouse_btn: winit::event::MouseButton) -> bool {
-        self.mouse_states.get(&mouse_btn).map(|x| x.upFrame == self.frame_count).unwrap_or(false)
+        self.mouse_states.get(&mouse_btn).map(|x| x.up_frame == self.frame_count).unwrap_or(false)
     }
 
     fn is_pressed(&self, key_code: VirtualKeyCode) -> bool {
@@ -1396,7 +1621,7 @@ impl InputManager {
     fn capture_click_batch<T>(&mut self, mouse_btn: winit::event::MouseButton) -> Option<BatchedMouseCapture<T>> {
         //let btn_state = self.mouse_states.get_mut(&mouse_btn).unwrap();
         if let Some(btn_state) = self.mouse_states.get_mut(&mouse_btn) {
-            if btn_state.downFrame == self.frame_count && !btn_state.captured {
+            if btn_state.down_frame == self.frame_count && !btn_state.captured {
                 return Some(BatchedMouseCapture {
                     point: self.mouse_position,
                     best: None,
@@ -1410,7 +1635,7 @@ impl InputManager {
 
     fn capture_click(&mut self, mouse_btn: winit::event::MouseButton) -> Option<CapturedClick> {
         if let Some(btn_state) = self.mouse_states.get_mut(&mouse_btn) {
-            if btn_state.downFrame == self.frame_count && !btn_state.captured {
+            if btn_state.down_frame == self.frame_count && !btn_state.captured {
                 btn_state.captured = true;
                 return Some(CapturedClick { mouse_btn, down_frame: self.frame_count, mouse_start: self.mouse_position });
             }
@@ -1494,7 +1719,7 @@ fn update_inputs(event: Event<()>, control_flow: &mut ControlFlow, scene: &mut S
         }
     }
 
-    if scene.input.is_mouse_pressed(winit::event::MouseButton::Left) {
+    if scene.input.is_mouse_pressed(winit::event::MouseButton::Right) {
         let cursor_delta = scene.input.mouse_position - last_cursor;
         scene.target_scroll -= scene.view.screen_to_canvas_vector(cursor_delta);
         scene.view.scroll -= scene.view.screen_to_canvas_vector(cursor_delta);
