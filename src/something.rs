@@ -11,18 +11,20 @@ use lyon::tessellation;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode,WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
 use winit::window::Window;
-use winit::dpi::{PhysicalSize, LogicalSize};
+use winit::dpi::{PhysicalSize};
 use std::time::Instant;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::hash::{Hash, Hasher};
+use std::hash::{Hash};
 use euclid;
-use take_mut;
 use by_address::ByAddress;
+use rand::{SeedableRng, rngs::StdRng};
 
 use std::ops::Rem;
 use crate::fps_limiter::FPSLimiter;
+use crate::geometry_utilities::types::*;
+use crate::geometry_utilities::{poisson_disc_sampling, VectorField, VectorFieldPrimitive};
 
 const PRIM_BUFFER_LEN: usize = 64;
 
@@ -125,22 +127,39 @@ impl<'a, 'b: 'a> PathPoint<'b> {
         }
     }
 
-    pub fn prev (&'a self) -> PathPoint<'b> {
+    pub fn prev (&'a self) -> Option<PathPoint<'b>> {
         debug_assert!(self.data.point_type(self.index as i32) == PointType::Point);
-        PathPoint {
-            index: if self.index == self.data.sub_paths[self.sub_path].range.start { self.data.sub_paths[self.sub_path].range.end - 3 } else { self.index - 3 },
+        let new_index = if self.index == self.data.sub_paths[self.sub_path].range.start {
+            if !self.data.sub_paths[self.sub_path].closed {
+                return None;
+            }
+            self.data.sub_paths[self.sub_path].range.end - 3
+        } else {
+            self.index - 3
+        };
+        Some(PathPoint {
+            index: new_index,
             sub_path: self.sub_path,
             data: self.data,
-        }
+        })
     }
 
-    pub fn next (&'a self) -> PathPoint<'b> {
+    pub fn next (&'a self) -> Option<PathPoint<'b>> {
         debug_assert!(self.data.point_type(self.index as i32) == PointType::Point);
-        PathPoint {
-            index: if self.index + 3 >= self.data.sub_paths[self.sub_path].range.end { self.data.sub_paths[self.sub_path].range.start } else { self.index + 3 },
+        let new_index = if self.index + 3 >= self.data.sub_paths[self.sub_path].range.end {
+            if !self.data.sub_paths[self.sub_path].closed {
+                return None;
+            }
+            self.data.sub_paths[self.sub_path].range.start
+        } else {
+            self.index + 3
+        };
+
+        Some(PathPoint {
+            index: new_index,
             sub_path: self.sub_path,
             data: self.data,
-        }
+        })
     }
 
     pub fn index(&self) -> usize {
@@ -379,7 +398,7 @@ impl PathData {
         for sub_path in self.iter_sub_paths() {
             builder.move_to(sub_path.first().position().to_untyped());
             for a in sub_path.iter_beziers() {
-                let b = a.next();
+                let b = a.next().unwrap();
                 builder.cubic_bezier_to(
                     a.control_after().to_untyped(),
                     b.control_before().to_untyped(),
@@ -457,7 +476,7 @@ pub fn main() {
 
     // Number of samples for anti-aliasing
     // Set to 1 to disable
-    let sample_count = 4;
+    let sample_count = 8;
 
     let num_instances: u32 = PRIM_BUFFER_LEN as u32 - 1;
     let tolerance = 0.02;
@@ -471,7 +490,7 @@ pub fn main() {
     let t1 = Instant::now();
 
     
-    let mut geometry: VertexBuffers<GpuVertex, u16> = VertexBuffers::new();
+    let mut geometry: VertexBuffers<GpuVertex, u32> = VertexBuffers::new();
 
     let stroke_prim_id = 0;
     let fill_prim_id = 1;
@@ -689,7 +708,7 @@ pub fn main() {
             write_mask: wgpu::ColorWrite::ALL,
         }],
         depth_stencil_state: depth_stencil_state.clone(),
-        index_format: wgpu::IndexFormat::Uint16,
+        index_format: wgpu::IndexFormat::Uint32,
         vertex_buffers: &[
             wgpu::VertexBufferDescriptor {
                 stride: std::mem::size_of::<GpuVertex>() as u64,
@@ -805,7 +824,9 @@ pub fn main() {
             return;
         }
 
+        let t0 = Instant::now();
         scene.path_editor.update(&scene.view, &mut scene.input);
+        dbg!(t0.elapsed());
 
         if scene.size_changed {
             scene.size_changed = false;
@@ -888,7 +909,9 @@ pub fn main() {
             prim_buffer_byte_size,
         );
 
-        let mut test_geometry: VertexBuffers<GpuVertex, u16> = VertexBuffers::new();
+        
+
+        let mut test_geometry: VertexBuffers<GpuVertex, u32> = VertexBuffers::new();
         let mut builder = Path::builder();
         //builder.arc(Point::new(50.0 + 5.0, 50.0 + 0.0), vector(10.0, 5.0), Angle::degrees(300.0), Angle::degrees(1950 as f32));
         builder.line_to(point(100.0,0.0));
@@ -912,12 +935,13 @@ pub fn main() {
         .create_buffer_mapped(test_geometry.vertices.len(), wgpu::BufferUsage::VERTEX)
         .fill_from_slice(&test_geometry.vertices);
 
-        let indices : Vec<u16> = if scene.show_wireframe {
+        let indices : Vec<u32> = if scene.show_wireframe {
             // Transform the triangle primitives into line primitives: (0,1,2) => (0,1),(1,2),(2,0)
             test_geometry.indices.chunks_exact(3).flat_map(|v| vec![v[0], v[1], v[1], v[2], v[2], v[0]]).collect()
         } else {
             test_geometry.indices
         };
+        dbg!(indices.len());
         
         let test_ibo = device
             .create_buffer_mapped(indices.len(), wgpu::BufferUsage::INDEX)
@@ -1014,11 +1038,11 @@ pub fn main() {
                 pass.draw_indexed(0..6, 0, 0..1);
             }
 
-            // if scene.show_wireframe {
-            //     pass.set_pipeline(&wireframe_render_pipeline);
-            // } else {
+            if scene.show_wireframe {
+                pass.set_pipeline(&wireframe_render_pipeline);
+            } else {
                 pass.set_pipeline(&render_pipeline);
-            // }
+            }
             // pass.set_bind_group(0, &bind_group, &[]);
             // pass.set_index_buffer(&ibo, 0);
             // pass.set_vertex_buffers(0, &[(&vbo, 0)]);
@@ -1108,18 +1132,26 @@ impl VertexReference {
         self.path.borrow().point_type(self.vertex_index as i32)
     }
 
-    fn prev(&self) -> VertexReference {
+    fn prev(&self) -> Option<VertexReference> {
         // Pretty slow
-        VertexReference {
-            path: self.path.clone(),
-            vertex_index: self.path.borrow().point(self.vertex_index as i32).prev().index() as u32,
+        if let Some(prev) = self.path.borrow().point(self.vertex_index as i32).prev() {
+            Some(VertexReference {
+                path: self.path.clone(),
+                vertex_index: prev.index() as u32,
+            })
+        } else {
+            None
         }
     }
 
-    fn next(&self) -> VertexReference {
-        VertexReference {
-            path: self.path.clone(),
-            vertex_index: self.path.borrow().point(self.vertex_index as i32).next().index() as u32,
+    fn next(&self) -> Option<VertexReference> {
+        if let Some(next) = self.path.borrow().point(self.vertex_index as i32).next() {
+            Some(VertexReference {
+                path: self.path.clone(),
+                vertex_index: next.index() as u32,
+            })
+        } else {
+            None
         }
     }
 }
@@ -1171,9 +1203,9 @@ impl Selection {
                 }
                 PointType::Point => {
                     let path = vertex.path.borrow();
-                    if point_set.contains(&vertex.next()) {
+                    if vertex.next().filter(|next| point_set.contains(&next)).is_some() {
                         let p = path.point(vertex.vertex_index as i32);
-                        let (dist, point) = sqr_distance_bezier_point(p.position(), p.control_after(), p.next().control_before(), p.next().position(), point);
+                        let (dist, point) = sqr_distance_bezier_point(p.position(), p.control_after(), p.next().unwrap().control_before(), p.next().unwrap().position(), point);
                         if dist < min_dist {
                             min_dist = dist;
                             closest_point = Some(point);
@@ -1203,11 +1235,14 @@ enum SelectState {
     Dragging(CapturedClick, Selection, Vec<CanvasPoint>),
 }
 
+
+
 struct PathEditor {
     paths: Vec<Rc<RefCell<PathData>>>,
     ui_path: Rc<RefCell<PathData>>,
     selected: Option<Selection>,
     select_state: Option<SelectState>,
+    vector_field: VectorField,
 }
 
 impl PathEditor {
@@ -1217,6 +1252,15 @@ impl PathEditor {
             ui_path: Rc::new(RefCell::new(PathData::new())),
             selected: None,
             select_state: None,
+            vector_field: VectorField {
+                primitives: vec![
+                    VectorFieldPrimitive::Curl { center: point(0.0, 0.0), strength: 1.0, radius: 500.0 },
+                    VectorFieldPrimitive::Curl { center: point(0.0, 50.0), strength: 1.0, radius: 500.0 },
+                    VectorFieldPrimitive::Curl { center: point(100.0, 50.0), strength: 1.0, radius: 500.0 },
+                    VectorFieldPrimitive::Curl { center: point(200.0, 300.0), strength: 1.0, radius: 2000.0 },
+                    VectorFieldPrimitive::Linear { direction: vector(1.0, 1.0), strength: 1.1 },
+                ]
+            }
         }
     }
 
@@ -1225,7 +1269,7 @@ impl PathEditor {
         ui_path.clear();
         if let Some(selected) = &self.selected {
             for vertex in &selected.items {
-                ui_path.add_circle(vertex.position(), CanvasLength::new(5.0));
+                ui_path.add_circle(vertex.position(), ScreenLength::new(5.0) * view.screen_to_canvas_scale());
             }
         }
         let mouse_pos = view.screen_to_canvas_point(input.mouse_position);
@@ -1239,15 +1283,58 @@ impl PathEditor {
             ui_path.line_to(point(start.x, start.y));
             ui_path.close();
         }
-        let everything = self.select_everything();
-        dbg!(everything.items.len());
-        if let Some((_, closest_point)) = everything.distance_to(mouse_pos) {
-            dbg!(closest_point);
-            ui_path.move_to(mouse_pos);
-            ui_path.line_to(closest_point);
-            ui_path.end();
-        }
+
+        // let everything = self.select_everything();
+        // if let Some((_, closest_point)) = everything.distance_to(mouse_pos) {
+        //     dbg!(closest_point);
+        //     ui_path.move_to(mouse_pos);
+        //     ui_path.line_to(closest_point);
+        //     ui_path.end();
+        // }
         ui_path.add_circle(view.screen_to_canvas_point(input.mouse_position), CanvasLength::new(3.0));
+
+        if self.paths.len() == 0 {
+            self.paths.push(Rc::new(RefCell::new(PathData::new())));
+        }
+
+        let mut path = self.paths[0].borrow_mut();
+        path.clear();
+        for p in &self.vector_field.primitives {
+            match p {
+                &VectorFieldPrimitive::Curl { center, .. } => {
+                    path.add_circle(center, CanvasLength::new(1.0));
+                }
+                &VectorFieldPrimitive::Linear { .. } => {
+
+                }
+            }
+        }
+
+        let mut rng: StdRng = SeedableRng::seed_from_u64(0);
+        let samples = poisson_disc_sampling(rect(-100.0, -100.0, 300.0, 300.0), 80.0, &mut rng);
+        for (i, &p) in samples.iter().enumerate() {
+            if let VectorFieldPrimitive::Linear { ref mut strength, .. } = self.vector_field.primitives.last_mut().unwrap() {
+                // *strength = i as f32;
+            }
+            path.move_to(p);
+            for p in self.vector_field.trace(p) {
+                path.line_to(p);
+            }
+            path.end();
+        }
+        if let VectorFieldPrimitive::Linear { ref mut strength, .. } = self.vector_field.primitives.last_mut().unwrap() {
+            // *strength = 2.0;
+        }
+        // let d = f32::sin(0.01 * (input.frame_count as f32));
+        // for x in 0..100 {
+        //     for y in 0..100 {
+        //         let p = (point(x as f32, y as f32) - vector(50.0, 50.0)) * 4.0;
+        //         let dir = self.vector_field.sample(p).unwrap();
+        //         path.move_to(p);
+        //         path.line_to(p + dir.normalize() * 5.0 * d);
+        //         path.end();
+        //     }
+        // }
     }
 
     fn build(&self, builder: &mut lyon::path::Builder) {
@@ -1416,16 +1503,6 @@ impl PathEditor {
         self.update_ui(view, input);
     }
 }
-
-pub struct ScreenSpace;
-pub struct CanvasSpace;
-pub type ScreenPoint = euclid::Point2D<f32, ScreenSpace>;
-pub type ScreenVector = euclid::Vector2D<f32, ScreenSpace>;
-pub type CanvasPoint = euclid::Point2D<f32, CanvasSpace>;
-pub type CanvasVector = euclid::Vector2D<f32, CanvasSpace>;
-pub type CanvasLength = euclid::Length<f32, CanvasSpace>;
-pub type ScreenLength = euclid::Length<f32, ScreenSpace>;
-pub type CanvasRect = euclid::Rect<f32, CanvasSpace>;
 
 pub struct CanvasView {
     zoom: f32,

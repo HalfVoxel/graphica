@@ -16,8 +16,8 @@ winit = "0.20.0"
 euclid = "0.20"
 log = "0.4"
 env_logger = "0.7"
-take_mut = "0.2"
 by_address = "1.0"
+rand = "0.7"
 
 [dev-dependencies]
 criterion = "0.3"
