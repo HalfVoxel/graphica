@@ -1261,10 +1261,38 @@ impl VertexReference {
     }
 }
 
+#[derive(Eq, Clone)]
 struct Selection {
+    /// Items in the selection.
+    /// Should not contain any duplicates
     items: Vec<VertexReference>,
 }
 
+impl PartialEq for Selection {
+    fn eq(&self, other: &Self) -> bool {
+        if self.items.len() != other.items.len() {
+            return false;
+        }
+
+        let mut refs = HashSet::new();
+        for item in &self.items {
+            // Insert everything into the set
+            // Also assert to make sure there are no duplicates in the selection
+            // as this will break the algorithm
+            assert!(refs.insert(item));
+        }
+
+        for item in &other.items {
+            if !refs.contains(item) {
+                return false
+            }
+        }
+
+        // The selections have the same length and self contains everything in other.
+        // This means they are identical since selections do not contain duplicates
+        true
+    }
+}
 
 impl Selection {
     fn distance_to(&self, paths: &PathCollection, point: CanvasPoint) -> Option<(CanvasLength, CanvasPoint)> {
@@ -1304,6 +1332,27 @@ impl Selection {
         } else {
             None
         }
+    }
+}
+
+fn smooth_vertices(selection: &Selection, paths: &PathCollection) {
+    for vertex in &selection.items {
+        let mut vertex = paths.resolve_mut(vertex);
+        let pos = vertex.position();
+        let prev = vertex.prev();
+        let next = vertex.next();
+        let dir = if prev.is_some() && next.is_some() {
+            next.unwrap().position() - prev.unwrap().position()
+        } else if let Some(prev) = prev {
+            pos - prev.position()
+        } else if let Some(next) = next {
+            next.position() - pos
+        } else {
+            continue
+        };
+            
+        vertex.set_control_before(pos - dir * 0.25);
+        vertex.set_control_after(pos + dir * 0.25);
     }
 }
 
@@ -1389,32 +1438,39 @@ impl PathEditor {
         }
 
         let path = &mut self.paths.paths[0];
-        path.clear();
-        for p in &self.vector_field.primitives {
-            match p {
-                &VectorFieldPrimitive::Curl { center, .. } => {
-                    path.add_circle(center, CanvasLength::new(1.0));
-                }
-                &VectorFieldPrimitive::Linear { .. } => {
+        if path.len() == 0 {
+            path.clear();
+            for p in &self.vector_field.primitives {
+                match p {
+                    &VectorFieldPrimitive::Curl { center, .. } => {
+                        path.add_circle(center, CanvasLength::new(1.0));
+                    }
+                    &VectorFieldPrimitive::Linear { .. } => {
 
+                    }
                 }
             }
-        }
 
-        let mut rng: StdRng = SeedableRng::seed_from_u64(0);
-        let samples = poisson_disc_sampling(rect(-100.0, -100.0, 300.0, 300.0), 80.0, &mut rng);
-        for (i, &p) in samples.iter().enumerate() {
-            if let VectorFieldPrimitive::Linear { ref mut strength, .. } = self.vector_field.primitives.last_mut().unwrap() {
-                // *strength = i as f32;
+            let mut rng: StdRng = SeedableRng::seed_from_u64(0);
+            let samples = poisson_disc_sampling(rect(-100.0, -100.0, 300.0, 300.0), 80.0, &mut rng);
+            for (i, &p) in samples.iter().enumerate() {
+                // if let VectorFieldPrimitive::Linear { ref mut strength, .. } = self.vector_field.primitives.last_mut().unwrap() {
+                    // *strength = i as f32;
+                // }
+                path.move_to(p);
+                let (vertices, closed) = self.vector_field.trace(p);
+                for &p in vertices.iter().skip(1) {
+                    path.line_to(p);
+                }
+                if closed {
+                    path.close();
+                } else {
+                    path.end();
+                }
             }
-            path.move_to(p);
-            for p in self.vector_field.trace(p) {
-                path.line_to(p);
-            }
-            path.end();
-        }
-        if let VectorFieldPrimitive::Linear { ref mut strength, .. } = self.vector_field.primitives.last_mut().unwrap() {
-            // *strength = 2.0;
+            // if let VectorFieldPrimitive::Linear { ref mut strength, .. } = self.vector_field.primitives.last_mut().unwrap() {
+                // *strength = 2.0;
+            // }
         }
         // let d = f32::sin(0.01 * (input.frame_count as f32));
         // for x in 0..100 {
@@ -1582,31 +1638,23 @@ impl PathEditor {
                 if self.paths.len() == 0 {
                     self.paths.push(PathData::new());
                 }
-                let mut path = self.paths.paths.last_mut().unwrap();
+                let path = self.paths.paths.last_mut().unwrap();
                 path.line_to(canvas_mouse_pos);
             }
         }
         if input.is_pressed(VirtualKeyCode::S) {
             // Make smooth
             if let Some(selected) = &self.selected {
-                for vertex in &selected.items {
-                    let mut vertex = self.paths.resolve_mut(vertex);
-                    let pos = vertex.position();
-                    let prev = vertex.prev();
-                    let next = vertex.prev();
-                    let dir = if prev.is_some() && next.is_some() {
-                        prev.unwrap().position() - next.unwrap().position()
-                    } else if prev.is_some() {
-                        pos - prev.unwrap().position()
-                    } else if next.is_some() {
-                        prev.unwrap().position() - pos
-                    } else {
-                        continue
-                    };
-                        
-                    vertex.set_control_before(pos - dir * 0.25);
-                    vertex.set_control_after(pos + dir * 0.25);
-                }
+                smooth_vertices(selected, &self.paths);
+            }
+        }
+
+        if input.is_pressed(VirtualKeyCode::A) {
+            let everything = Some(self.select_everything());
+            if self.selected == everything {
+                self.selected = None;
+            } else {
+                self.selected = everything;
             }
         }
 

@@ -111,7 +111,7 @@ impl VectorField {
         }
     }
 
-    pub fn trace(&self, mut point: CanvasPoint) -> Vec<CanvasPoint> {
+    pub fn trace(&self, mut point: CanvasPoint) -> (Vec<CanvasPoint>, bool) {
         // Use 4th order runge-kutta
         let dt = 5.0;
         let mut result = vec![point];
@@ -130,14 +130,12 @@ impl VectorField {
                 let dist = square_distance_segment_point(prev, point, first);
                 if dist <= dt * dt * 1.01*1.01 {
                     // Looped back on itself
-                    result.push(first);
-                    break
+                    return (result, true);
                 }
-
             }
             result.push(point);
         }
-        result
+        (result, false)
     }
 
     pub fn trace_with_clearance(&self, mut point: CanvasPoint, clearance: f32) -> Vec<CanvasPoint> {
@@ -233,7 +231,7 @@ pub fn poisson_disc_sampling<U>(bounds: euclid::Rect<f32,U>, radius: f32, rng: &
             let cell_index = y0 as usize * grid_width + x0 as usize;
             grid[cell_index] = result.len() as i32;
             queue.push(np);
-            result.push(p);
+            result.push(np);
             continue 'outer;
         }
 
