@@ -1,6 +1,6 @@
 use euclid;
 use lyon::math::*;
-use crate::something::PathPoint;
+use crate::something::{ImmutablePathPoint, PathPoint};
 use rand::Rng;
 use types::*;
 
@@ -23,6 +23,33 @@ pub enum VectorFieldPrimitive {
 
 pub struct VectorField {
     pub primitives: Vec<VectorFieldPrimitive>,
+}
+
+pub fn evalute_cubic_bezier<U>(p0: euclid::Point2D<f32,U>, p1: euclid::Point2D<f32,U>, p2: euclid::Point2D<f32,U>, p3: euclid::Point2D<f32,U>, t: f32) -> euclid::Point2D<f32,U> {
+    let p0 = p0.to_untyped().to_vector();
+    let p1 = p1.to_untyped().to_vector();
+    let p2 = p2.to_untyped().to_vector();
+    let p3 = p3.to_untyped().to_vector();
+    let t1 = 1.0-t;
+    let t2 = t1*t1;
+    let t3 = t1*t1*t1;
+    (p0*t3 + p1*(3.0*t2*t) + p2*(3.0*t1*t*t) + p3*(t*t*t)).to_point().cast_unit()
+}
+
+#[inline(never)]
+pub fn sqr_distance_bezier_point<U>(p0: euclid::Point2D<f32,U>, p1: euclid::Point2D<f32,U>, p2: euclid::Point2D<f32,U>, p3: euclid::Point2D<f32,U>, p: euclid::Point2D<f32,U>) -> (f32, euclid::Point2D<f32,U>) {
+    let mut closest = euclid::Point2D::new(0.0,0.0);
+    let mut closest_dist = std::f32::INFINITY;
+    for i in 0..100 {
+        let t = i as f32 / 100.0;
+        let bezier_point = evalute_cubic_bezier(p0, p1, p2, p3, t);
+        let dist = (bezier_point - p).square_length();
+        if dist < closest_dist {
+            closest_dist = dist;
+            closest = bezier_point;
+        }
+    }
+    (closest_dist, closest)
 }
 
 pub fn closest_point_on_segment<U> (start: euclid::Point2D<f32,U>, end: euclid::Point2D<f32,U>, point: euclid::Point2D<f32,U>) -> euclid::Point2D<f32,U> {
@@ -135,7 +162,7 @@ impl VectorField {
 struct PathClearanceGrid<'a,U> {
     clearance: f32,
     bounds: euclid::Rect<f32,U>,
-    grid: Vec<Option<PathPoint<'a>>>,
+    grid: Vec<Option<ImmutablePathPoint<'a>>>,
 }
 
 impl<'a,U> PathClearanceGrid<'a,U> {
@@ -148,7 +175,7 @@ impl<'a,U> PathClearanceGrid<'a,U> {
         }
     }
 
-    fn add(point: PathPoint<'a>) {
+    fn add(point: ImmutablePathPoint<'a>) {
         // point.prev()
     }
 }
