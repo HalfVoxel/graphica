@@ -1008,7 +1008,10 @@ pub fn main() {
         scene.path_editor.build(&mut builder);
 
         let p = builder.build();
-        let canvas_tolerance = ScreenLength::new(0.1) * scene.view.screen_to_canvas_scale();
+        let mut canvas_tolerance : CanvasLength = ScreenLength::new(0.1) * scene.view.screen_to_canvas_scale();
+        // It's important to clamp the tolerance to a not too small value
+        // If the tesselator is fed a too small value it may get stuck in an infinite loop due to floating point precision errors
+        canvas_tolerance = CanvasLength::new(canvas_tolerance.get().max(0.001));
         let canvas_line_width = ScreenLength::new(1.0) * scene.view.screen_to_canvas_scale();
         StrokeTessellator::new().tessellate_path(
             &p,
