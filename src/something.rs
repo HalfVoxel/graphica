@@ -117,6 +117,18 @@ pub struct MutablePathPoint<'a> {
     data: &'a mut PathData,
 }
 
+pub struct ImmutableControlPoint<'a> {
+    index: usize,
+    sub_path: usize,
+    data: &'a PathData,
+}
+
+pub struct MutableControlPoint<'a> {
+    index: usize,
+    sub_path: usize,
+    data: &'a mut PathData,
+}
+
 impl<'a> PathPoint<'a> for MutablePathPoint<'a> {
     fn index(&self) -> usize {
         self.index
@@ -131,6 +143,59 @@ impl<'a> PathPoint<'a> for MutablePathPoint<'a> {
     }
 }
 
+impl<'a> ImmutableControlPoint<'a> {
+    fn vertex(&'a self) -> ImmutablePathPoint<'a> {
+        if self.index == self.data.sub_paths[self.sub_path].range.end - 1{
+            ImmutablePathPoint {
+                data: self.data,
+                sub_path: self.sub_path,
+                index: self.data.sub_paths[self.sub_path].range.start,
+            }
+        } else {
+            ImmutablePathPoint {
+                data: self.data,
+                sub_path: self.sub_path,
+                // If index is 1 mod 3 then the vertex is one behind us, if we are at 2 mod 3 then the vertex is on the next index
+                // 0 mod 3 is impossible since only vertices are at 0 mod 3
+                index: ((self.index + 1)/3)*3,
+            }
+        }
+    }
+
+    fn position(&self) -> CanvasPoint {
+        self.data.points[self.index] + self.vertex().position().to_vector()
+    }
+}
+
+impl<'a> MutableControlPoint<'a> {
+    // TODO: Code duplication
+    fn vertex(&'a self) -> ImmutablePathPoint<'a> {
+        if self.index == self.data.sub_paths[self.sub_path].range.end - 1 {
+            ImmutablePathPoint {
+                data: self.data,
+                sub_path: self.sub_path,
+                index: self.data.sub_paths[self.sub_path].range.start,
+            }
+        } else {
+            ImmutablePathPoint {
+                data: self.data,
+                sub_path: self.sub_path,
+                // If index is 1 mod 3 then the vertex is one behind us, if we are at 2 mod 3 then the vertex is on the next index
+                // 0 mod 3 is impossible since only vertices are at 0 mod 3
+                index: ((self.index + 1)/3)*3,
+            }
+        }
+    }
+
+    fn position(&self) -> CanvasPoint {
+        self.data.points[self.index] + self.vertex().position().to_vector()
+    }
+
+    fn set_position(&mut self, value: CanvasPoint) {
+        self.data.points[self.index] = value - self.vertex().position().to_vector()
+    }
+}
+
 pub trait PathPoint<'a> {
     fn index(&self) -> usize;
     fn sub_path(&self) -> usize;
@@ -141,15 +206,11 @@ pub trait PathPoint<'a> {
     }
 
     fn control_after(&'a self) -> CanvasPoint {
-        self.position() + self.data().points[self.index() + 1].to_vector()
+        self.position() + self.data().points[control_after_index(self.index())].to_vector()
     }
 
     fn control_before(&'a self) -> CanvasPoint {
-        if self.index() == self.data().sub_paths[self.sub_path()].range.start {
-            self.position() + self.data().points[self.data().sub_paths[self.sub_path()].range.end - 1].to_vector()
-        } else {
-            self.position() + self.data().points[self.index() - 1].to_vector()
-        }
+        self.position() + self.data().points[control_before_index(self.data(), self.sub_path(), self.index())].to_vector()
     }
 
     fn point_type(&'a self) -> PointType {
@@ -195,6 +256,18 @@ fn next_index(data: &PathData, sub_path: usize, index: usize) -> Option<usize> {
     }
 }
 
+fn control_before_index(data: &PathData, sub_path: usize, index: usize) -> usize {
+    if index == data.sub_paths[sub_path].range.start {
+        data.sub_paths[sub_path].range.end - 1
+    } else {
+        index - 1
+    }
+}
+
+fn control_after_index(index: usize) -> usize {
+    index + 1
+}
+
 impl<'b, 'a: 'b> ImmutablePathPoint<'a> {
     fn prev (&'a self) -> Option<ImmutablePathPoint<'b>> {
         debug_assert!(self.data().point_type(self.index() as i32) == PointType::Point);
@@ -221,15 +294,12 @@ impl<'b, 'a: 'b> MutablePathPoint<'a> {
     }
 
     fn set_control_after(&mut self, value: CanvasPoint) {
-        self.data.points[self.index + 1] = (value - self.position()).to_point();
+        self.data.points[control_after_index(self.index)] = (value - self.position()).to_point();
     }
 
     fn set_control_before(&mut self, value: CanvasPoint) {
-        if self.index() == self.data().sub_paths[self.sub_path()].range.start {
-            self.data.points[self.data.sub_paths[self.sub_path].range.end - 1] = (value - self.position()).to_point();
-        } else {
-            self.data.points[self.index - 1] = (value - self.position()).to_point();
-        }
+        let index = control_before_index(self.data, self.sub_path, self.index);
+        self.data.points[index] = (value - self.position()).to_point();
     }
 
     fn prev (&'a self) -> Option<ImmutablePathPoint<'b>> {
@@ -383,6 +453,15 @@ impl PathData {
     pub fn point_mut<'a> (&'a mut self, index: i32) -> MutablePathPoint<'a> {
         let sub_path = self.find_sub_path(index);
         MutablePathPoint { data: self, sub_path, index: index as usize }
+    }
+
+    pub fn control_point<'a> (&'a self, index: i32) -> ImmutableControlPoint<'a> {
+        ImmutableControlPoint { data: self, sub_path: self.find_sub_path(index), index: index as usize }
+    }
+
+    pub fn control_point_mut<'a> (&'a mut self, index: i32) -> MutableControlPoint<'a> {
+        let sub_path = self.find_sub_path(index);
+        MutableControlPoint { data: self, sub_path, index: index as usize }
     }
 
     // pub fn set_point(&mut self, index: i32, point: CanvasPoint) {
@@ -1187,10 +1266,44 @@ impl StrokeVertexConstructor<GpuVertex> for WithId {
 }
 
 #[derive(Clone, Hash, Eq, PartialEq)]
-struct VertexReference {
+enum SelectionReference {
+    VertexReference(VertexReference),
+    ControlPointReference(ControlPointReference),
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct VertexReference {
     // path: ByAddress<Rc<RefCell<PathData>>>,
     path_index: u32,
     vertex_index: u32,
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct ControlPointReference {
+    // path: ByAddress<Rc<RefCell<PathData>>>,
+    path_index: u32,
+    vertex_index: u32,
+}
+
+impl From<VertexReference> for SelectionReference {
+    fn from(v: VertexReference) -> Self {
+        SelectionReference::VertexReference(v)
+    }
+}
+
+impl From<ControlPointReference> for SelectionReference {
+    fn from(v: ControlPointReference) -> Self {
+        SelectionReference::ControlPointReference(v)
+    }
+}
+
+impl SelectionReference {
+    pub fn position(&self, paths: &PathCollection) -> CanvasPoint {
+        match self {
+            SelectionReference::VertexReference(x) => paths.resolve(x).position(),
+            SelectionReference::ControlPointReference(x) => paths.resolve(x).position(),
+        }
+    }
 }
 
 // impl PartialEq for VertexReference {
@@ -1200,7 +1313,7 @@ struct VertexReference {
 // }
 // impl Eq for VertexReference {}
 
-struct PathCollection {
+pub struct PathCollection {
     paths: Vec<PathData>,
 }
 
@@ -1219,14 +1332,52 @@ impl PathCollection {
     }
 }
 
-impl<'a> PathCollection {
+pub trait ReferenceResolver<'a, A, B> {
+    fn resolve(&'a self, reference: &A) -> B;
+    fn as_ref(&self, point: &B) -> A;
+}
+
+pub trait MutableReferenceResolver<'a, A, B> {
+    fn resolve_mut(&'a mut self, reference: &A) -> B;
+}
+
+impl<'a> ReferenceResolver<'a, VertexReference, ImmutablePathPoint<'a>> for PathCollection {
     fn resolve(&'a self, reference: &VertexReference) -> ImmutablePathPoint<'a> {
         self.paths[reference.path_index as usize].point(reference.vertex_index as i32)
     }
+    fn as_ref(&self, point: &ImmutablePathPoint<'a>) -> VertexReference {
+        VertexReference {
+            path_index: point.data.path_index,
+            vertex_index: point.index as u32,
+        }
+    }
+}
 
+impl<'a> MutableReferenceResolver<'a, VertexReference, MutablePathPoint<'a>> for PathCollection {
     fn resolve_mut(&'a mut self, reference: &VertexReference) -> MutablePathPoint<'a> {
         self.paths[reference.path_index as usize].point_mut(reference.vertex_index as i32)
     }
+}
+
+impl<'a> ReferenceResolver<'a, ControlPointReference, ImmutableControlPoint<'a>> for PathCollection {
+    fn resolve(&'a self, reference: &ControlPointReference) -> ImmutableControlPoint<'a> {
+        self.paths[reference.path_index as usize].control_point(reference.vertex_index as i32)
+    }
+    fn as_ref(&self, point: &ImmutableControlPoint<'a>) -> ControlPointReference {
+        ControlPointReference {
+            path_index: point.data.path_index,
+            vertex_index: point.index as u32,
+        }
+    }
+}
+
+impl<'a> MutableReferenceResolver<'a, ControlPointReference, MutableControlPoint<'a>> for PathCollection {
+    fn resolve_mut(&'a mut self, reference: &ControlPointReference) -> MutableControlPoint<'a> {
+        self.paths[reference.path_index as usize].control_point_mut(reference.vertex_index as i32)
+    }
+}
+
+impl<'a> PathCollection {
 }
 
 impl VertexReference {
@@ -1237,26 +1388,61 @@ impl VertexReference {
         }
     }
 
-    fn prev(&self, path_collection: &PathCollection) -> Option<VertexReference> {
+    pub fn control_before(&self, path_collection: &PathCollection) -> ControlPointReference {
         // Pretty slow
-        if let Some(prev) = path_collection.resolve(&self).prev() {
-            Some(VertexReference {
-                path_index: self.path_index,
-                vertex_index: prev.index() as u32,
-            })
-        } else {
-            None
+        let vertex = path_collection.resolve(self);
+        let k = ControlPointReference {
+            path_index: self.path_index,
+            vertex_index: control_before_index(vertex.data, vertex.sub_path, vertex.index) as u32,
+        };
+        dbg!(vertex.index, vertex.sub_path, k.vertex_index);
+        path_collection.resolve(&k).position();
+        k
+    }
+
+    pub fn control_after(&self, path_collection: &PathCollection) -> ControlPointReference {
+        // Pretty slow
+        let vertex = path_collection.resolve(self);
+        ControlPointReference {
+            path_index: self.path_index,
+            vertex_index: control_after_index(vertex.index) as u32,
         }
     }
 
-    fn next(&self, path_collection: &PathCollection) -> Option<VertexReference> {
-        if let Some(prev) = path_collection.resolve(&self).next() {
-            Some(VertexReference {
-                path_index: self.path_index,
-                vertex_index: prev.index() as u32,
-            })
+    pub fn prev(&self, path_collection: &PathCollection) -> Option<VertexReference> {
+        // Pretty slow
+        path_collection.resolve(self).prev().map(|p| path_collection.as_ref(&p))
+        
+        // if let Some(prev) = path_collection.resolve(self).prev() {
+        //     Some(VertexReference {
+        //         path_index: self.path_index,
+        //         vertex_index: prev.index() as u32,
+        //     })
+        // } else {
+        //     None
+        // }
+    }
+
+    pub fn next(&self, path_collection: &PathCollection) -> Option<VertexReference> {
+        path_collection.resolve(self).next().map(|p| path_collection.as_ref(&p))
+    }
+}
+
+impl ControlPointReference {
+    pub fn vertex(&self, paths: &PathCollection) -> VertexReference {
+        VertexReference {
+            path_index: self.path_index,
+            vertex_index: paths.resolve(self).vertex().index as u32,
+        }
+    }
+
+    pub fn opposite_control(&self, paths: &PathCollection) -> ControlPointReference {
+        // Pretty slow
+        let v = self.vertex(paths);
+        if *self == v.control_after(paths) {
+            v.control_before(paths)
         } else {
-            None
+            v.control_after(paths)
         }
     }
 }
@@ -1265,7 +1451,7 @@ impl VertexReference {
 struct Selection {
     /// Items in the selection.
     /// Should not contain any duplicates
-    items: Vec<VertexReference>,
+    items: Vec<SelectionReference>,
 }
 
 impl PartialEq for Selection {
@@ -1294,66 +1480,221 @@ impl PartialEq for Selection {
     }
 }
 
+struct ClosestInSelection {
+    distance: CanvasLength,
+    point: CanvasPoint,
+    closest: ClosestItemInSelection,
+}
+enum ClosestItemInSelection {
+    Curve { start: VertexReference },
+    ControlPoint(ControlPointReference)
+}
+
 impl Selection {
-    fn distance_to(&self, paths: &PathCollection, point: CanvasPoint) -> Option<(CanvasLength, CanvasPoint)> {
+    pub fn distance_to(&self, paths: &PathCollection, point: CanvasPoint) -> Option<ClosestInSelection> {
         let mut min_dist = std::f32::INFINITY;
         let mut closest_point = None;
+        let mut closest_ref = None;
         let mut point_set = HashSet::new();
         for vertex in &self.items {
-            if paths.resolve(vertex).point_type() == PointType::Point {
+            if let SelectionReference::VertexReference(vertex) = vertex {
                 point_set.insert(vertex);
             }
         }
         for vertex_ref in &self.items {
-            let vertex = paths.resolve(vertex_ref);
-            match vertex.point_type() {
-                PointType::ControlPoint => {
-                    min_dist = min_dist.min((vertex.position() - point).square_length());
+            match vertex_ref {
+                SelectionReference::ControlPointReference(ctrl_ref) => {
+                    let vertex = paths.resolve(ctrl_ref);
+                    let dist = (vertex.position() - point).square_length();
+                    if dist < min_dist {
+                        min_dist = dist;
+                        closest_point = Some(vertex.position());
+                        closest_ref = Some(vertex_ref.clone());
+                    }
                 }
-                PointType::Point => {
-                    if vertex_ref.next(paths).filter(|next| point_set.contains(&vertex_ref)).is_some() {
-                        let (dist, point) = sqr_distance_bezier_point(vertex.position(), vertex.control_after(), vertex.next().unwrap().control_before(), vertex.next().unwrap().position(), point);
+                SelectionReference::VertexReference(vertex_ref2) => {
+                    let vertex = paths.resolve(vertex_ref2);
+                    if vertex_ref2.next(paths).filter(|next| point_set.contains(&vertex_ref2)).is_some() {
+                        let (dist, closest_on_curve) = sqr_distance_bezier_point(vertex.position(), vertex.control_after(), vertex.next().unwrap().control_before(), vertex.next().unwrap().position(), point);
                         if dist < min_dist {
                             min_dist = dist;
-                            closest_point = Some(point);
+                            closest_point = Some(closest_on_curve);
+                            closest_ref = Some(vertex_ref.clone());
                         }
                     } else {
                         let dist = (vertex.position() - point).square_length();
                         if dist < min_dist {
                             min_dist = dist;
                             closest_point = Some(vertex.position());
+                            closest_ref = Some(vertex_ref.clone());
                         }
                     }
                 }
             }
         }
-        if let Some(p) = closest_point {
-            Some((CanvasLength::new(min_dist.sqrt()), p))
+        if let Some(p) = closest_ref {
+            match p {
+                SelectionReference::VertexReference(vertex_ref2) => {
+                    Some(ClosestInSelection {
+                        distance: CanvasLength::new(min_dist.sqrt()),
+                        point: closest_point.unwrap(),
+                        closest: ClosestItemInSelection::Curve { start: vertex_ref2 }
+                    })
+                }
+                SelectionReference::ControlPointReference(ctrl_ref) => {
+                    Some(ClosestInSelection {
+                        distance: CanvasLength::new(min_dist.sqrt()),
+                        point: closest_point.unwrap(),
+                        closest: ClosestItemInSelection::ControlPoint(ctrl_ref)
+                    })
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn distance_to_curve(&self, paths: &PathCollection, point: CanvasPoint) -> Option<(VertexReference, CanvasPoint, CanvasLength)> {
+        let mut min_dist = std::f32::INFINITY;
+        let mut closest_point = None;
+        let mut closest_ref = None;
+        let mut point_set = HashSet::new();
+        for vertex in &self.items {
+            if let SelectionReference::VertexReference(vertex) = vertex {
+                point_set.insert(vertex);
+            }
+        }
+        for vertex_ref in &self.items {
+            match vertex_ref {
+                SelectionReference::VertexReference(vertex_ref2) => {
+                    let vertex = paths.resolve(vertex_ref2);
+                    if vertex_ref2.next(paths).filter(|next| point_set.contains(&vertex_ref2)).is_some() {
+                        let (dist, closest_on_curve) = sqr_distance_bezier_point(vertex.position(), vertex.control_after(), vertex.next().unwrap().control_before(), vertex.next().unwrap().position(), point);
+                        if dist < min_dist {
+                            min_dist = dist;
+                            closest_point = Some(closest_on_curve);
+                            closest_ref = Some(vertex_ref2.clone());
+                        }
+                    } else {
+                        let dist = (vertex.position() - point).square_length();
+                        if dist < min_dist {
+                            min_dist = dist;
+                            closest_point = Some(vertex.position());
+                            closest_ref = Some(vertex_ref2.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(closest_point) = closest_point {
+            Some((closest_ref.unwrap(), closest_point, CanvasLength::new(min_dist.sqrt())))
         } else {
             None
         }
     }
 }
 
-fn smooth_vertices(selection: &Selection, paths: &PathCollection) {
+fn smooth_vertices(selection: &Selection, paths: &mut PathCollection) {
     for vertex in &selection.items {
-        let mut vertex = paths.resolve_mut(vertex);
-        let pos = vertex.position();
-        let prev = vertex.prev();
-        let next = vertex.next();
-        let dir = if prev.is_some() && next.is_some() {
-            next.unwrap().position() - prev.unwrap().position()
-        } else if let Some(prev) = prev {
-            pos - prev.position()
-        } else if let Some(next) = next {
-            next.position() - pos
-        } else {
-            continue
-        };
-            
-        vertex.set_control_before(pos - dir * 0.25);
-        vertex.set_control_after(pos + dir * 0.25);
+        if let SelectionReference::VertexReference(vertex) = vertex {
+            let mut vertex = paths.resolve_mut(vertex);
+            let pos = vertex.position();
+            let prev = vertex.prev();
+            let next = vertex.next();
+            let dir = if prev.is_some() && next.is_some() {
+                next.unwrap().position() - prev.unwrap().position()
+            } else if let Some(prev) = prev {
+                pos - prev.position()
+            } else if let Some(next) = next {
+                next.position() - pos
+            } else {
+                continue
+            };
+                
+            vertex.set_control_before(pos - dir * 0.25);
+            vertex.set_control_after(pos + dir * 0.25);
+        }
     }
+}
+
+fn drag_at_point(selection: &Selection, paths: &PathCollection, point: CanvasPoint, distance_threshold: CanvasLength) -> Option<Selection> {
+    let selected_vertices: Vec<VertexReference> = selection.items
+        .iter()
+        .filter_map(|v| if let SelectionReference::VertexReference(v_ref) = v { Some(*v_ref) } else { None })
+        .collect();
+
+    let potential_control_points = Selection {
+        items: selected_vertices
+            .iter()
+            .flat_map(|v| vec![v.control_before(&paths).into(), v.control_after(&paths).into()])
+            .collect()
+    };
+
+    // view.screen_to_canvas_point(capture.mouse_start)
+    let distance_to_controls = potential_control_points.distance_to(&paths, point);
+    let closest_vertex = selected_vertices.iter().map(|v| (v, (paths.resolve(v).position() - point).length())).min_by(|a,b| a.1.partial_cmp(&b.1).unwrap());
+    let distance_to_curve = selection.distance_to_curve(&paths, point);
+    
+    // Figure out which item is the best to drag
+    let mut best_score = CanvasLength::new(std::f32::INFINITY);
+    // Lower weights means they are prioritized higher when picking
+    const VERTEX_WEIGHT: f32 = 0.5;
+    const CONTROL_WEIGHT: f32 = 0.7;
+    const CURVE_WEIGHT: f32 = 1.0;
+
+    if let Some(closest_vertex) = &closest_vertex {
+        let dist = CanvasLength::new(closest_vertex.1);
+        let score = dist * VERTEX_WEIGHT;
+        if score < best_score && dist < distance_threshold {
+            best_score = score;
+        }
+    }
+    if let Some(distance_to_controls) = &distance_to_controls {
+        let score = distance_to_controls.distance * CONTROL_WEIGHT;
+        if score < best_score && distance_to_controls.distance < distance_threshold {
+            best_score = score;
+        }
+    }
+    if let Some(distance_to_curve) = &distance_to_curve {
+        let score = distance_to_curve.2 * CURVE_WEIGHT;
+        if score < best_score && distance_to_curve.2 < distance_threshold {
+            best_score = score;
+        }
+    }
+
+    // Figure out which item had the best score and then return that result
+    if let Some(closest_vertex) = &closest_vertex {
+        let dist = CanvasLength::new(closest_vertex.1);
+        let score = dist * VERTEX_WEIGHT;
+        if score == best_score {
+            // The mouse started at a vertex, this means the user probably wants to drag the existing selection.
+            return Some(selection.clone());
+        }
+    }
+
+    if let Some(distance_to_controls) = &distance_to_controls {
+        let score = distance_to_controls.distance * CONTROL_WEIGHT;
+        if score == best_score {
+            if let ClosestItemInSelection::ControlPoint(control_point) = distance_to_controls.closest {
+                return Some(Selection { items: vec![control_point.into()] });
+            } else {
+                unreachable!();
+            }
+        }
+    }
+
+    if let Some(distance_to_curve) = &distance_to_curve {
+        let score = distance_to_curve.2 * CURVE_WEIGHT;
+        if score == best_score {
+            // The mouse started at a selected curve, this means the user probably wants to drag the existing selection.
+            return Some(selection.clone());
+        }
+    }
+    
+    // Nothing was close enough
+    None
 }
 
 enum SelectState {
@@ -1394,25 +1735,46 @@ impl PathEditor {
     fn update_ui(&mut self, view : &CanvasView, input: &InputManager) {
         let ui_path = &mut self.ui_path;
         ui_path.clear();
+        let mouse_pos = view.screen_to_canvas_point(input.mouse_position);
+
         if let Some(selected) = &self.selected {
             for vertex in &selected.items {
-                let vertex = self.paths.resolve(vertex);
-                ui_path.add_circle(vertex.position(), ScreenLength::new(5.0) * view.screen_to_canvas_scale());
+                if let SelectionReference::VertexReference(vertex) = vertex {
+                    let vertex = self.paths.resolve(vertex);
+                    ui_path.add_circle(vertex.position(), ScreenLength::new(5.0) * view.screen_to_canvas_scale());
 
-                if vertex.control_before() != vertex.position() {
-                    ui_path.add_circle(vertex.control_before(), ScreenLength::new(3.0) * view.screen_to_canvas_scale());
-                }
-                if vertex.control_after() != vertex.position() {
-                    ui_path.add_circle(vertex.control_after(), ScreenLength::new(3.0) * view.screen_to_canvas_scale());
-                }
+                    if vertex.control_before() != vertex.position() {
+                        ui_path.add_circle(vertex.control_before(), ScreenLength::new(3.0) * view.screen_to_canvas_scale());
+                    }
+                    if vertex.control_after() != vertex.position() {
+                        ui_path.add_circle(vertex.control_after(), ScreenLength::new(3.0) * view.screen_to_canvas_scale());
+                    }
 
-                if vertex.control_after() != vertex.position() || vertex.control_before() != vertex.position() {
-                    ui_path.move_to(vertex.control_before());
-                    ui_path.line_to(vertex.control_after());
+                    if vertex.control_before() != vertex.position() {
+                        ui_path.move_to(vertex.control_before());
+                        ui_path.line_to(vertex.position());
+                    }
+                    if vertex.control_after() != vertex.position() {
+                        ui_path.move_to(vertex.control_after());
+                        ui_path.line_to(vertex.position());
+                    }
+                }
+            }
+
+            let drag = drag_at_point(selected, &self.paths, mouse_pos, ScreenLength::new(5.0) * view.screen_to_canvas_scale());
+            if let Some(drag) = drag {
+                for item in &drag.items {
+                    if let SelectionReference::VertexReference(vertex) = item {
+                        let vertex = self.paths.resolve(vertex);
+                        ui_path.add_circle(vertex.position(), ScreenLength::new(4.0) * view.screen_to_canvas_scale());
+                    }
+                    if let SelectionReference::ControlPointReference(vertex) = item {
+                        let vertex = self.paths.resolve(vertex);
+                        ui_path.add_circle(vertex.position(), ScreenLength::new(2.0) * view.screen_to_canvas_scale());
+                    }
                 }
             }
         }
-        let mouse_pos = view.screen_to_canvas_point(input.mouse_position);
         if let Some(SelectState::DragSelect(capture)) = &self.select_state {
             let start = view.screen_to_canvas_point(capture.mouse_start);
             let end = mouse_pos;
@@ -1496,7 +1858,7 @@ impl PathEditor {
         };
         for path in self.paths.iter() {
             for point in path.iter_points() {
-                selection.items.push(VertexReference::new(path.path_index, point.index() as u32));
+                selection.items.push(VertexReference::new(path.path_index, point.index() as u32).into());
             }
         }
         selection
@@ -1509,7 +1871,7 @@ impl PathEditor {
         for path in self.paths.iter() {
             for point in path.iter_points() {
                 if rect.contains(point.position()) {
-                    selection.items.push(VertexReference::new(path.path_index, point.index() as u32));
+                    selection.items.push(VertexReference::new(path.path_index, point.index() as u32).into());
                 }
             }
         }
@@ -1529,7 +1891,7 @@ impl PathEditor {
                     
                     if let Some((capture, best)) = capture.capture(input) {
                         // Something was close enough to the cursor, we should select it
-                        Some(SelectState::Down(capture, Selection { items: vec![best] }))
+                        Some(SelectState::Down(capture, Selection { items: vec![best.into()] }))
                     } else if let Some(capture) = input.capture_click(winit::event::MouseButton::Left) {
                         // Start with empty selection
                         Some(SelectState::Down(capture, Selection { items: vec![] }))
@@ -1563,13 +1925,17 @@ impl PathEditor {
                     None
                 }
                 SelectState::Down(capture, _) if (capture.mouse_start - input.mouse_position).square_length() > 5.0*5.0 => {
-                    if self.selected.as_ref().map(|selection| selection.distance_to(&self.paths, view.screen_to_canvas_point(capture.mouse_start))).flatten().map(|(dist, _)| dist*view.canvas_to_screen_scale() < ScreenLength::new(5.0)).unwrap_or(false) {
-                        // The mouse started at a selected curve, this means the user probably wants to drag the existing selection.
-                        let selection = Selection { items: self.selected.as_ref().unwrap().items.clone() };
-                        let original_position = selection.items.iter().map(|x| self.paths.resolve(x).position()).collect();
-                        Some(SelectState::Dragging(capture, selection, original_position))
+                    if let Some(selection) = &self.selected {
+                        let drag = drag_at_point(selection, &self.paths, view.screen_to_canvas_point(capture.mouse_start), ScreenLength::new(5.0) * view.screen_to_canvas_scale());
+
+                        if let Some(drag) = drag {
+                            let original_position = drag.items.iter().map(|x| x.position(&self.paths)).collect();
+                            Some(SelectState::Dragging(capture, drag, original_position))
+                        } else {
+                            Some(SelectState::DragSelect(capture))
+                        }
                     } else {
-                        // Mouse started at some other location. We should do a drag-select
+                        // Nothing selected. We should do a drag-select
                         Some(SelectState::DragSelect(capture))
                     }
                 }
@@ -1578,7 +1944,7 @@ impl PathEditor {
 
                     // Move all points
                     for (vertex, &original_position) in selection.items.iter().zip(original_positions.iter()) {
-                        if self.paths.resolve(vertex).point_type() == PointType::Point {
+                        if let SelectionReference::VertexReference(vertex) = vertex {
                             self.paths.resolve_mut(vertex).set_position(original_position + offset);
                         }
                     }
@@ -1586,8 +1952,14 @@ impl PathEditor {
                     // Move all control points
                     // Doing this before moving points will lead to weird results
                     for (vertex, &original_position) in selection.items.iter().zip(original_positions.iter()) {
-                        if self.paths.resolve(vertex).point_type() == PointType::ControlPoint {
+                        if let SelectionReference::ControlPointReference(vertex) = vertex {
+                            // Move control point
                             self.paths.resolve_mut(vertex).set_position(original_position + offset);
+
+                            // Move opposite control point
+                            let center = self.paths.resolve(vertex).vertex().position();
+                            let dir = original_position + offset - center;
+                            self.paths.resolve_mut(&vertex.opposite_control(&self.paths)).set_position(center - dir);
                         }
                     }
 
@@ -1645,7 +2017,7 @@ impl PathEditor {
         if input.is_pressed(VirtualKeyCode::S) {
             // Make smooth
             if let Some(selected) = &self.selected {
-                smooth_vertices(selected, &self.paths);
+                smooth_vertices(selected, &mut self.paths);
             }
         }
 
