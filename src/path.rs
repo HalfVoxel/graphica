@@ -308,6 +308,14 @@ pub enum PointType {
     ControlPoint,
 }
 
+#[derive(Copy, Clone)]
+pub struct BorderRadii {
+    pub top_left: f32,
+    pub top_right: f32,
+    pub bottom_left: f32,
+    pub bottom_right: f32,
+}
+
 impl PathData {
     pub fn new() -> PathData {
         PathData {
@@ -451,6 +459,57 @@ impl PathData {
             self.points.push((bezier.ctrl1 - bezier.from).to_point().cast_unit::<CanvasSpace>());
             self.points.push((bezier.ctrl2 - bezier.to).to_point().cast_unit::<CanvasSpace>());
         });
+        self.close();
+    }
+
+    pub fn add_rounded_rect(&mut self, rect: &Rect, mut radii: BorderRadii) {
+        fn clamp (r1: &mut f32, r2: &mut f32, max: f32) {
+            if *r1 + *r2 > max {
+                let delta = (*r1 + *r2 - max) * 0.5;
+                *r1 -= delta;
+                *r2 -= delta;
+            }
+        }
+
+        let min_wh = rect.width().min(rect.height());
+        radii.bottom_left = radii.bottom_left.min(min_wh);
+        radii.bottom_right = radii.bottom_right.min(min_wh);
+        radii.top_left = radii.top_left.min(min_wh);
+        radii.top_right = radii.top_right.min(min_wh);
+
+        clamp(&mut radii.bottom_left, &mut radii.bottom_right, rect.width());
+        clamp(&mut radii.top_left, &mut radii.top_right, rect.width());
+        clamp(&mut radii.top_left, &mut radii.bottom_left, rect.height());
+        clamp(&mut radii.top_right, &mut radii.bottom_right, rect.height());
+
+        fn corner_arc(corner: Point, radius: f32, start_angle: Angle, offset: Vector) -> lyon::geom::Arc<f32> {
+            lyon::geom::Arc {
+                center: corner + offset * radius,
+                radii: vector(radius, radius),
+                start_angle: start_angle,
+                sweep_angle: Angle::frac_pi_2(),
+                x_rotation: Angle::zero()
+            }
+        }
+
+        let arcs = &[
+            corner_arc(point(rect.min_x(), rect.min_y()), radii.top_left, Angle::degrees(180.0), vector(1.0, 1.0)),
+            corner_arc(point(rect.max_x(), rect.min_y()), radii.top_right, Angle::degrees(270.0), vector(-1.0, 1.0)),
+            corner_arc(point(rect.max_x(), rect.max_y()), radii.bottom_right, Angle::degrees(0.0), vector(-1.0, -1.0)),
+            corner_arc(point(rect.min_x(), rect.max_y()), radii.bottom_left, Angle::degrees(90.0), vector(1.0, -1.0)),
+        ];
+
+        self.start();
+        for arc in arcs {
+            if arc.radii.x > 0.0 {
+                arc.for_each_cubic_bezier(&mut |&bezier| {
+                    self.points.push(bezier.from.cast_unit::<CanvasSpace>());
+                    self.points.push((bezier.ctrl1 - bezier.from).to_point().cast_unit::<CanvasSpace>());
+                    self.points.push((bezier.ctrl2 - bezier.to).to_point().cast_unit::<CanvasSpace>());
+                });
+            }
+            self.line_to(arc.to().cast_unit());
+        }
         self.close();
     }
 
