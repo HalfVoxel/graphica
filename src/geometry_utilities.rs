@@ -1,6 +1,6 @@
 use euclid;
 use lyon::math::*;
-use crate::something::{ImmutablePathPoint, PathPoint};
+use crate::path::{ImmutablePathPoint};
 use rand::Rng;
 use types::*;
 
