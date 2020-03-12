@@ -8,7 +8,7 @@ use lyon::tessellation::{FillTessellator, FillOptions};
 use lyon::tessellation::{StrokeTessellator, StrokeOptions};
 use lyon::tessellation;
 
-use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode,WindowEvent};
+use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent, MouseButton};
 use winit::event_loop::{EventLoop, ControlFlow};
 use winit::window::Window;
 use winit::dpi::{PhysicalSize};
@@ -22,6 +22,7 @@ use by_address::ByAddress;
 use rand::{SeedableRng, rngs::StdRng};
 
 use std::ops::Rem;
+use crate::input::{InputManager, CircleShape, CapturedClick, KeyCombination};
 use crate::fps_limiter::FPSLimiter;
 use crate::geometry_utilities::types::*;
 use crate::geometry_utilities::{poisson_disc_sampling, VectorField, VectorFieldPrimitive, sqr_distance_bezier_point};
@@ -2014,7 +2015,7 @@ impl PathEditor {
                 path.line_to(canvas_mouse_pos);
             }
         }
-        if input.is_pressed(VirtualKeyCode::S) {
+        if input.on_combination(&KeyCombination::new().and(VirtualKeyCode::LControl).and(VirtualKeyCode::S)) {
             // Make smooth
             if let Some(selected) = &self.selected {
                 smooth_vertices(selected, &mut self.paths);
@@ -2078,190 +2079,10 @@ struct SceneParams {
     path_editor: PathEditor,
 }
 
-struct MouseBtnState {
-    down_frame: i32,
-    up_frame: i32,
-    captured: bool,
-}
-
-impl MouseBtnState {
-    fn is_pressed(&self) -> bool {
-        self.down_frame > self.up_frame
-    }
-}
-
-pub struct InputManager {
-    states: HashMap<VirtualKeyCode, bool>,
-    mouse_states: HashMap<winit::event::MouseButton, MouseBtnState>,
-    mouse_position: ScreenPoint,
-    frame_count: i32,
-}
-
-pub struct CapturedClick {
-    mouse_btn: winit::event::MouseButton,
-    down_frame: i32,
-    mouse_start: ScreenPoint,
-}
-
-impl CapturedClick {
-    pub fn is_pressed(&self, input: &InputManager) -> bool {
-        let btn_state = input.mouse_states.get(&self.mouse_btn).unwrap();
-        btn_state.down_frame == self.down_frame && btn_state.is_pressed()
-    }
-
-    pub fn on_down(&self, input: &InputManager) -> bool {
-        let btn_state = input.mouse_states.get(&self.mouse_btn).unwrap();
-        btn_state.down_frame == self.down_frame && btn_state.down_frame == input.frame_count
-    }
-
-    pub fn on_up(&self, input: &InputManager) -> bool {
-        let btn_state = input.mouse_states.get(&self.mouse_btn).unwrap();
-        btn_state.down_frame == self.down_frame && btn_state.up_frame == input.frame_count
-    }
-}
-
-struct BatchedMouseCapture<T> {
-    point: ScreenPoint,
-    best: Option<T>,
-    best_score: f32,
-    mouse_btn: winit::event::MouseButton,
-}
-
-impl<T> BatchedMouseCapture<T> {
-    fn add(&mut self, shape: impl Shape, value: T) {
-        let score = shape.score(self.point);
-        if score > self.best_score {
-            self.best = Some(value);
-            self.best_score = score;
-        }
-    }
-
-    fn capture(self, input: &mut InputManager) -> Option<(CapturedClick, T)> {
-        if let Some(best) = self.best {
-            if let Some(capture) = input.capture_click(self.mouse_btn) {
-                Some((capture, best))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-}
-
-trait Shape {
-    fn score(&self, point: ScreenPoint) -> f32;
-}
-
-struct CircleShape {
-    center: ScreenPoint,
-    radius: f32,
-}
-
-impl Shape for CircleShape {
-    fn score(&self, point: ScreenPoint) -> f32 {
-        let dist = (point - self.center).square_length();
-        if dist < self.radius*self.radius {
-            1.0 / self.radius
-        } else {
-            0.0
-        }
-    }
-}
-
-impl InputManager {
-    fn new() -> InputManager {
-        InputManager {
-            states: HashMap::new(),
-            mouse_states: HashMap::new(),
-            mouse_position: point(0.0, 0.0),
-            frame_count: 0,
-        }
-    }
-
-    fn tick_frame(&mut self) {
-        self.frame_count += 1;
-        for state in self.mouse_states.values_mut() {
-            if !state.is_pressed() {
-                state.captured = false;
-            }
-        }
-    }
-
-    fn on_key(&mut self, state: ElementState, key_code: VirtualKeyCode) {
-        self.states.insert(key_code, state == ElementState::Pressed);
-    }
-
-    fn on_mouse(&mut self, state: ElementState, mouse_btn: winit::event::MouseButton) {
-        if !self.mouse_states.contains_key(&mouse_btn) {
-            self.mouse_states.insert(mouse_btn, MouseBtnState {
-                down_frame: -1,
-                up_frame: -1,
-                captured: false,
-            });
-        }
-
-        let mut btn_state = self.mouse_states.get_mut(&mouse_btn).unwrap();
-        if state == ElementState::Released && btn_state.is_pressed() {
-            btn_state.up_frame = self.frame_count;
-        }
-        if state == ElementState::Pressed && !btn_state.is_pressed() {
-            btn_state.down_frame = self.frame_count;
-        }
-    }
-
-    fn on_mouse_down(&self, mouse_btn: winit::event::MouseButton) -> bool {
-        self.mouse_states.get(&mouse_btn).map(|x| x.down_frame == self.frame_count).unwrap_or(false)
-    }
-
-    fn is_mouse_pressed(&self, mouse_btn: winit::event::MouseButton) -> bool {
-        self.mouse_states.get(&mouse_btn).map(MouseBtnState::is_pressed).unwrap_or(false)
-    }
-
-    fn is_mouse_click(&self, mouse_btn: winit::event::MouseButton) -> bool {
-        self.mouse_states.get(&mouse_btn).map(|x| x.up_frame == self.frame_count).unwrap_or(false)
-    }
-
-    fn is_pressed(&self, key_code: VirtualKeyCode) -> bool {
-        self.states.get(&key_code).cloned().unwrap_or(false)
-    }
-
-    fn capture_click_batch<T>(&mut self, mouse_btn: winit::event::MouseButton) -> Option<BatchedMouseCapture<T>> {
-        //let btn_state = self.mouse_states.get_mut(&mouse_btn).unwrap();
-        if let Some(btn_state) = self.mouse_states.get_mut(&mouse_btn) {
-            if btn_state.down_frame == self.frame_count && !btn_state.captured {
-                return Some(BatchedMouseCapture {
-                    point: self.mouse_position,
-                    best: None,
-                    best_score: 0.0,
-                    mouse_btn: mouse_btn,
-                });
-            }
-        }
-        None
-    }
-
-    fn capture_click(&mut self, mouse_btn: winit::event::MouseButton) -> Option<CapturedClick> {
-        if let Some(btn_state) = self.mouse_states.get_mut(&mouse_btn) {
-            if btn_state.down_frame == self.frame_count && !btn_state.captured {
-                btn_state.captured = true;
-                return Some(CapturedClick { mouse_btn, down_frame: self.frame_count, mouse_start: self.mouse_position });
-            }
-        }
-        None
-    }
-
-    fn capture_click_shape(&mut self, mouse_btn: winit::event::MouseButton, shape: impl Shape) -> Option<CapturedClick> {
-        if shape.score(self.mouse_position) > 0.0 {
-            self.capture_click(mouse_btn)
-        } else {
-            None
-        }
-    }
-}
-
 fn update_inputs(event: Event<()>, control_flow: &mut ControlFlow, scene: &mut SceneParams, delta_time: f32) -> bool {
     let last_cursor = scene.input.mouse_position;
+
+    scene.input.event(&event);
 
     match event {
         Event::MainEventsCleared => {
@@ -2293,7 +2114,6 @@ fn update_inputs(event: Event<()>, control_flow: &mut ControlFlow, scene: &mut S
                     },
                     ..
                 } => {
-                    scene.input.on_key(state, key);
                     if state == ElementState::Pressed {
                         match key {
                             VirtualKeyCode::Escape => {
@@ -2313,9 +2133,6 @@ fn update_inputs(event: Event<()>, control_flow: &mut ControlFlow, scene: &mut S
                         }
                     }
                 }
-                WindowEvent::MouseInput { state, button, .. } => {
-                    scene.input.on_mouse(state, button);
-                }
                 _ => {}
             }
         }
@@ -2327,7 +2144,7 @@ fn update_inputs(event: Event<()>, control_flow: &mut ControlFlow, scene: &mut S
         }
     }
 
-    if scene.input.is_mouse_pressed(winit::event::MouseButton::Right) {
+    if scene.input.is_pressed(MouseButton::Right) {
         let cursor_delta = scene.input.mouse_position - last_cursor;
         scene.target_scroll -= scene.view.screen_to_canvas_vector(cursor_delta);
         scene.view.scroll -= scene.view.screen_to_canvas_vector(cursor_delta);
