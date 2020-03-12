@@ -787,7 +787,7 @@ dependencies = [
 
 [[package]]
 name = "lyon"
-version = "0.15.5"
+version = "0.15.6"
 dependencies = [
  "lyon_algorithms",
  "lyon_extra",
@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "lyon_path"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "lyon_geom",
 ]
@@ -836,7 +836,7 @@ dependencies = [
 
 [[package]]
 name = "lyon_tessellation"
-version = "0.15.5"
+version = "0.15.6"
 dependencies = [
  "arrayvec",
  "lyon_path",
