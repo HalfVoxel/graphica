@@ -3,7 +3,6 @@ use lyon::path::builder::*;
 use lyon::path::Path;
 use lyon::math::*;
 use lyon::tessellation::geometry_builder::*;
-use lyon::tessellation::basic_shapes::*;
 use lyon::tessellation::{FillTessellator, FillOptions};
 use lyon::tessellation::{StrokeTessellator, StrokeOptions};
 use lyon::tessellation;
@@ -142,7 +141,7 @@ pub fn main() {
     let stroke_range = fill_range.end..(geometry.indices.len() as u32);
 
     let mut bg_geometry: VertexBuffers<Point, u16> = VertexBuffers::new();
-    fill_rectangle(
+    lyon::tessellation::basic_shapes::fill_rectangle(
         &Rect::new(point(-1.0, -1.0), size(2.0, 2.0)),
         &FillOptions::default(),
         &mut BuffersBuilder::new(&mut bg_geometry, Positions),
@@ -986,7 +985,7 @@ enum SelectState {
 
 
 
-struct PathEditor {
+pub struct PathEditor {
     paths: PathCollection,
     ui_path: PathData,
     selected: Option<Selection>,
@@ -1016,6 +1015,8 @@ impl PathEditor {
     fn update_ui(&mut self, view : &CanvasView, input: &InputManager) {
         let ui_path = &mut self.ui_path;
         ui_path.clear();
+        ui_path.add_rounded_rect(&rect(100.0, 100.0, 200.0, 100.0), BorderRadii { top_left: 0.0, top_right: 1000.0, bottom_right: 50.0, bottom_left: 50.0});
+
         let mouse_pos = view.screen_to_canvas_point(input.mouse_position);
 
         if let Some(selected) = &self.selected {
