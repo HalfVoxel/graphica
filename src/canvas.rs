@@ -1,6 +1,6 @@
-use lyon::math::*;
 use crate::geometry_utilities::types::*;
-use winit::dpi::{PhysicalSize};
+use lyon::math::*;
+use winit::dpi::PhysicalSize;
 
 pub struct CanvasView {
     pub zoom: f32,
@@ -18,7 +18,9 @@ impl CanvasView {
     }
 
     pub fn screen_to_canvas_point(&self, point: ScreenPoint) -> CanvasPoint {
-        (point - vector(self.resolution.width as f32, self.resolution.height as f32)*0.5) * self.screen_to_canvas_scale() + self.scroll
+        (point - vector(self.resolution.width as f32, self.resolution.height as f32) * 0.5)
+            * self.screen_to_canvas_scale()
+            + self.scroll
     }
 
     pub fn screen_to_canvas_vector(&self, vector: ScreenVector) -> CanvasVector {
@@ -26,6 +28,7 @@ impl CanvasView {
     }
 
     pub fn canvas_to_screen_point(&self, point: CanvasPoint) -> ScreenPoint {
-        (point - self.scroll) * self.canvas_to_screen_scale() + vector(self.resolution.width as f32, self.resolution.height as f32)*0.5
+        (point - self.scroll) * self.canvas_to_screen_scale()
+            + vector(self.resolution.width as f32, self.resolution.height as f32) * 0.5
     }
 }

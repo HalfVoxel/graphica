@@ -7,7 +7,7 @@ pub struct FPSLimiter {
 impl FPSLimiter {
     pub fn new() -> FPSLimiter {
         FPSLimiter {
-            last_tick: Instant::now() - Duration::from_secs(100000)
+            last_tick: Instant::now() - Duration::from_secs(100000),
         }
     }
 

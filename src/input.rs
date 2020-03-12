@@ -1,9 +1,9 @@
-use std::collections::{HashMap};
 use crate::geometry_utilities::types::ScreenPoint;
-use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent, MouseButton};
-use lyon::math::*;
 use euclid::default::Vector2D;
-use std::time::{Instant};
+use lyon::math::*;
+use std::collections::HashMap;
+use std::time::Instant;
+use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
 
 struct KeyState {
     last_down_time: Option<Instant>,
@@ -100,7 +100,7 @@ pub struct CircleShape {
 impl Shape for CircleShape {
     fn score(&self, point: ScreenPoint) -> f32 {
         let dist = (point - self.center).square_length();
-        if dist < self.radius*self.radius {
+        if dist < self.radius * self.radius {
             1.0 / self.radius
         } else {
             0.0
@@ -112,7 +112,7 @@ pub struct InputManager {
     states: HashMap<ExtendedKey, KeyState>,
     pub mouse_position: ScreenPoint,
     pub frame_count: i32,
-    pub scroll_delta: Vector2D<f32>
+    pub scroll_delta: Vector2D<f32>,
 }
 
 pub struct KeyCombination {
@@ -121,9 +121,7 @@ pub struct KeyCombination {
 
 impl KeyCombination {
     pub fn new() -> KeyCombination {
-        KeyCombination {
-            keys: vec![]
-        }
+        KeyCombination { keys: vec![] }
     }
 
     pub fn and(mut self, key: impl Into<ExtendedKey>) -> Self {
@@ -138,7 +136,7 @@ impl InputManager {
             states: HashMap::new(),
             mouse_position: point(0.0, 0.0),
             frame_count: 0,
-            scroll_delta: vector(0.0, 0.0)
+            scroll_delta: vector(0.0, 0.0),
         }
     }
 
@@ -154,32 +152,38 @@ impl InputManager {
 
     pub fn event(&mut self, event: &Event<()>) {
         match event {
-            Event::WindowEvent { event, .. } => {
-                match event {
-                    WindowEvent::CursorMoved { position, ..} => {
-                        self.mouse_position = point(position.x as f32, position.y as f32);
-                    }
-                    WindowEvent::KeyboardInput {
-                        input: KeyboardInput {
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::CursorMoved { position, .. } => {
+                    self.mouse_position = point(position.x as f32, position.y as f32);
+                }
+                WindowEvent::KeyboardInput {
+                    input:
+                        KeyboardInput {
                             state,
                             virtual_keycode: Some(key),
                             ..
                         },
-                        ..
-                    } => {
-                        self.event_key(*state, ExtendedKey::VirtualKeyCode(*key));
-                    }
-                    WindowEvent::MouseInput { state, button, .. } => {
-                        self.event_key(*state, ExtendedKey::MouseButton(*button));
-                    }
-                    _ => {}
+                    ..
+                } => {
+                    self.event_key(*state, ExtendedKey::VirtualKeyCode(*key));
                 }
-            }
-            Event::DeviceEvent { event: winit::event::DeviceEvent::Motion { axis, value }, ..} => {
+                WindowEvent::MouseInput { state, button, .. } => {
+                    self.event_key(*state, ExtendedKey::MouseButton(*button));
+                }
+                _ => {}
+            },
+            Event::DeviceEvent {
+                event: winit::event::DeviceEvent::Motion { axis, value },
+                ..
+            } => {
                 match axis {
                     // TODO Correct axis for hoizontal scroll?
-                    2 => { self.scroll_delta.x += *value as f32; }
-                    3 => { self.scroll_delta.y += *value as f32; }
+                    2 => {
+                        self.scroll_delta.x += *value as f32;
+                    }
+                    3 => {
+                        self.scroll_delta.y += *value as f32;
+                    }
                     _ => {}
                 }
             }
@@ -189,12 +193,15 @@ impl InputManager {
 
     fn event_key(&mut self, state: ElementState, key: ExtendedKey) {
         if !self.states.contains_key(&key) {
-            self.states.insert(key, KeyState {
-                last_down_time: None,
-                down_frame: -1,
-                up_frame: -1,
-                captured: false,
-            });
+            self.states.insert(
+                key,
+                KeyState {
+                    last_down_time: None,
+                    down_frame: -1,
+                    up_frame: -1,
+                    captured: false,
+                },
+            );
         }
 
         let mut btn_state = self.states.get_mut(&key).unwrap();
@@ -214,12 +221,18 @@ impl InputManager {
 
     pub fn on_down(&self, key: impl Into<ExtendedKey>) -> bool {
         let key = key.into();
-        self.states.get(&key).map(|x| x.down_frame == self.frame_count).unwrap_or(false)
+        self.states
+            .get(&key)
+            .map(|x| x.down_frame == self.frame_count)
+            .unwrap_or(false)
     }
 
     pub fn on_up(&self, key: impl Into<ExtendedKey>) -> bool {
         let key = key.into();
-        self.states.get(&key).map(|x| x.up_frame == self.frame_count).unwrap_or(false)
+        self.states
+            .get(&key)
+            .map(|x| x.up_frame == self.frame_count)
+            .unwrap_or(false)
     }
 
     pub fn on_click(&self, key: impl Into<ExtendedKey>) -> bool {
@@ -242,9 +255,9 @@ impl InputManager {
 
     fn priority(key: &ExtendedKey) -> i32 {
         match key {
-            ExtendedKey::MouseButton {..} => 2,
+            ExtendedKey::MouseButton { .. } => 2,
             ExtendedKey::VirtualKeyCode(key) if Self::is_modifier(key) => 0,
-            ExtendedKey::VirtualKeyCode(_) => 1
+            ExtendedKey::VirtualKeyCode(_) => 1,
         }
     }
 
@@ -255,14 +268,18 @@ impl InputManager {
         // All keys in the combination must be pressed
         if combination.keys.iter().all(|v| self.is_pressed(*v) || self.on_up(*v)) {
             // At least one of the highest priority keys must have been triggered this frame
-            combination.keys.iter().filter(|v| Self::priority(v) == highest_priority).any(|v| {
-                // Mouse keys trigger on click (key up) while other keys trigger on key down
-                if let ExtendedKey::MouseButton(_) = v {
-                    self.on_click(*v)
-                } else {
-                    self.on_down(*v)
-                }
-            })
+            combination
+                .keys
+                .iter()
+                .filter(|v| Self::priority(v) == highest_priority)
+                .any(|v| {
+                    // Mouse keys trigger on click (key up) while other keys trigger on key down
+                    if let ExtendedKey::MouseButton(_) = v {
+                        self.on_click(*v)
+                    } else {
+                        self.on_down(*v)
+                    }
+                })
         } else {
             false
         }
@@ -288,7 +305,11 @@ impl InputManager {
         if let Some(btn_state) = self.states.get_mut(&key) {
             if btn_state.down_frame == self.frame_count && !btn_state.captured {
                 btn_state.captured = true;
-                return Some(CapturedClick { key, down_frame: self.frame_count, mouse_start: self.mouse_position });
+                return Some(CapturedClick {
+                    key,
+                    down_frame: self.frame_count,
+                    mouse_start: self.mouse_position,
+                });
             }
         }
         None

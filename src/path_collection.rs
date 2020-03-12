@@ -70,7 +70,7 @@ impl PathCollection {
         self.as_path_ref(self.paths.last().unwrap())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item=&PathData> {
+    pub fn iter(&self) -> impl Iterator<Item = &PathData> {
         self.paths.iter()
     }
 }
@@ -168,7 +168,7 @@ impl VertexReference {
     pub fn prev(&self, path_collection: &PathCollection) -> Option<VertexReference> {
         // Pretty slow
         path_collection.resolve(self).prev().map(|p| path_collection.as_ref(&p))
-        
+
         // if let Some(prev) = path_collection.resolve(self).prev() {
         //     Some(VertexReference {
         //         path_index: self.path_index,

@@ -1,29 +1,32 @@
 use lyon::extra::rust_logo::build_logo_path;
+use lyon::math::*;
 use lyon::path::builder::*;
 use lyon::path::Path;
-use lyon::math::*;
-use lyon::tessellation::geometry_builder::*;
-use lyon::tessellation::{FillTessellator, FillOptions};
-use lyon::tessellation::{StrokeTessellator, StrokeOptions};
 use lyon::tessellation;
+use lyon::tessellation::geometry_builder::*;
+use lyon::tessellation::{FillOptions, FillTessellator};
+use lyon::tessellation::{StrokeOptions, StrokeTessellator};
 
-use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent, MouseButton};
-use winit::event_loop::{EventLoop, ControlFlow};
-use winit::window::Window;
-use winit::dpi::{PhysicalSize};
-use std::time::Instant;
-use std::collections::{HashMap, HashSet};
 use euclid;
-use rand::{SeedableRng, rngs::StdRng};
+use rand::{rngs::StdRng, SeedableRng};
+use std::collections::{HashMap, HashSet};
+use std::time::Instant;
+use winit::dpi::PhysicalSize;
+use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::Window;
 
-use std::ops::Rem;
-use crate::input::{InputManager, CircleShape, CapturedClick, KeyCombination};
+use crate::canvas::CanvasView;
 use crate::fps_limiter::FPSLimiter;
 use crate::geometry_utilities::types::*;
-use crate::geometry_utilities::{poisson_disc_sampling, VectorField, VectorFieldPrimitive, sqr_distance_bezier_point};
+use crate::geometry_utilities::{poisson_disc_sampling, sqr_distance_bezier_point, VectorField, VectorFieldPrimitive};
+use crate::input::{CapturedClick, CircleShape, InputManager, KeyCombination};
 use crate::path::*;
-use crate::path_collection::{PathCollection, VertexReference, ControlPointReference, SelectionReference, ReferenceResolver, MutableReferenceResolver};
-use crate::canvas::{CanvasView};
+use crate::path_collection::{
+    ControlPointReference, MutableReferenceResolver, PathCollection, ReferenceResolver, SelectionReference,
+    VertexReference,
+};
+use std::ops::Rem;
 
 const PRIM_BUFFER_LEN: usize = 64;
 
@@ -75,14 +78,15 @@ fn create_multisampled_framebuffer(
         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
     };
 
-    device.create_texture(multisampled_frame_descriptor).create_default_view()
+    device
+        .create_texture(multisampled_frame_descriptor)
+        .create_default_view()
 }
 
-fn load_shader(device: &wgpu::Device, shader_bytes : &[u8]) -> wgpu::ShaderModule {
+fn load_shader(device: &wgpu::Device, shader_bytes: &[u8]) -> wgpu::ShaderModule {
     let spv = wgpu::read_spirv(std::io::Cursor::new(&shader_bytes)).unwrap();
     device.create_shader_module(&spv)
 }
-
 
 pub fn main() {
     println!("== wgpu example ==");
@@ -99,7 +103,6 @@ pub fn main() {
     data.line_to(point(10.0, 10.0));
     data.close();
 
-
     // Number of samples for anti-aliasing
     // Set to 1 to disable
     let sample_count = 8;
@@ -115,25 +118,28 @@ pub fn main() {
 
     let t1 = Instant::now();
 
-    
     let mut geometry: VertexBuffers<GpuVertex, u32> = VertexBuffers::new();
 
     let stroke_prim_id = 0;
     let fill_prim_id = 1;
 
-    let fill_count = FillTessellator::new().tessellate_path(
-        &path,
-        &FillOptions::tolerance(tolerance),
-        &mut BuffersBuilder::new(&mut geometry, WithId(fill_prim_id as i32))
-    ).unwrap();
+    let fill_count = FillTessellator::new()
+        .tessellate_path(
+            &path,
+            &FillOptions::tolerance(tolerance),
+            &mut BuffersBuilder::new(&mut geometry, WithId(fill_prim_id as i32)),
+        )
+        .unwrap();
 
     let t2 = Instant::now();
 
-    StrokeTessellator::new().tessellate_path(
-        &path,
-        &StrokeOptions::tolerance(tolerance).dont_apply_line_width(),
-        &mut BuffersBuilder::new(&mut geometry, WithId(stroke_prim_id as i32))
-    ).unwrap();
+    StrokeTessellator::new()
+        .tessellate_path(
+            &path,
+            &StrokeOptions::tolerance(tolerance).dont_apply_line_width(),
+            &mut BuffersBuilder::new(&mut geometry, WithId(stroke_prim_id as i32)),
+        )
+        .unwrap();
 
     let t3 = Instant::now();
 
@@ -145,18 +151,17 @@ pub fn main() {
         &Rect::new(point(-1.0, -1.0), size(2.0, 2.0)),
         &FillOptions::default(),
         &mut BuffersBuilder::new(&mut bg_geometry, Positions),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut cpu_primitives = Vec::with_capacity(PRIM_BUFFER_LEN);
     for _ in 0..PRIM_BUFFER_LEN {
-        cpu_primitives.push(
-            Primitive {
-                color: [1.0, 0.0, 0.0, 1.0],
-                z_index: 0,
-                width: 0.0,
-                translate: [0.0, 0.0],
-            },
-        );
+        cpu_primitives.push(Primitive {
+            color: [1.0, 0.0, 0.0, 1.0],
+            z_index: 0,
+            width: 0.0,
+            translate: [0.0, 0.0],
+        });
     }
 
     // Stroke primitive
@@ -186,10 +191,10 @@ pub fn main() {
 
     let t4 = Instant::now();
 
-    println!("Loading svg: {:?}", (t1.duration_since(t0).as_secs_f32()*1000.0));
-    println!("Fill path: {:?}", (t2.duration_since(t1).as_secs_f32()*1000.0));
-    println!("Stroke path: {:?}", (t3.duration_since(t2).as_secs_f32()*1000.0));
-    println!("Memory: {:?}", (t4.duration_since(t3).as_secs_f32()*1000.0));
+    println!("Loading svg: {:?}", (t1.duration_since(t0).as_secs_f32() * 1000.0));
+    println!("Fill path: {:?}", (t2.duration_since(t1).as_secs_f32() * 1000.0));
+    println!("Stroke path: {:?}", (t3.duration_since(t2).as_secs_f32() * 1000.0));
+    println!("Memory: {:?}", (t4.duration_since(t3).as_secs_f32() * 1000.0));
 
     let mut scene = SceneParams {
         target_zoom: 1.0,
@@ -207,13 +212,14 @@ pub fn main() {
         cursor_position: (0.0, 0.0),
         size_changed: true,
         path_editor: PathEditor::new(),
-        input: InputManager::new()
+        input: InputManager::new(),
     };
 
     let adapter = wgpu::Adapter::request(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,
         backends: wgpu::BackendBit::PRIMARY,
-    }).unwrap();
+    })
+    .unwrap();
     let (device, mut queue) = adapter.request_device(&wgpu::DeviceDescriptor {
         extensions: wgpu::Extensions {
             anisotropic_filtering: false,
@@ -240,41 +246,35 @@ pub fn main() {
     let prim_buffer_byte_size = (PRIM_BUFFER_LEN * std::mem::size_of::<Primitive>()) as u64;
     let globals_buffer_byte_size = std::mem::size_of::<Globals>() as u64;
 
-    let prims_ubo = device.create_buffer(
-        &wgpu::BufferDescriptor {
-            size: prim_buffer_byte_size,
-            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-        }
-    );
+    let prims_ubo = device.create_buffer(&wgpu::BufferDescriptor {
+        size: prim_buffer_byte_size,
+        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+    });
 
-    let globals_ubo = device.create_buffer(
-        &wgpu::BufferDescriptor {
-            size: globals_buffer_byte_size,
-            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-        }
-    );
+    let globals_ubo = device.create_buffer(&wgpu::BufferDescriptor {
+        size: globals_buffer_byte_size,
+        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+    });
 
     let vs_module = load_shader(&device, include_bytes!("./../shaders/geometry.vert.spv"));
     let fs_module = load_shader(&device, include_bytes!("./../shaders/geometry.frag.spv"));
     let bg_vs_module = load_shader(&device, include_bytes!("./../shaders/background.vert.spv"));
     let bg_fs_module = load_shader(&device, include_bytes!("./../shaders/background.frag.spv"));
 
-    let bind_group_layout = device.create_bind_group_layout(
-        &wgpu::BindGroupLayoutDescriptor {
-            bindings: &[
-                wgpu::BindGroupLayoutBinding {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                },
-                wgpu::BindGroupLayoutBinding {
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                },
-            ]
-        }
-    );
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        bindings: &[
+            wgpu::BindGroupLayoutBinding {
+                binding: 0,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+            },
+            wgpu::BindGroupLayoutBinding {
+                binding: 1,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+            },
+        ],
+    });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: &bind_group_layout,
         bindings: &[
@@ -329,35 +329,41 @@ pub fn main() {
         primitive_topology: wgpu::PrimitiveTopology::TriangleList,
         color_states: &[wgpu::ColorStateDescriptor {
             format: wgpu::TextureFormat::Bgra8Unorm,
-            color_blend: wgpu::BlendDescriptor { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
-            alpha_blend: wgpu::BlendDescriptor { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
+            color_blend: wgpu::BlendDescriptor {
+                src_factor: wgpu::BlendFactor::SrcAlpha,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha_blend: wgpu::BlendDescriptor {
+                src_factor: wgpu::BlendFactor::SrcAlpha,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
             write_mask: wgpu::ColorWrite::ALL,
         }],
         depth_stencil_state: depth_stencil_state.clone(),
         index_format: wgpu::IndexFormat::Uint32,
-        vertex_buffers: &[
-            wgpu::VertexBufferDescriptor {
-                stride: std::mem::size_of::<GpuVertex>() as u64,
-                step_mode: wgpu::InputStepMode::Vertex,
-                attributes: &[
-                    wgpu::VertexAttributeDescriptor {
-                        offset: 0,
-                        format: wgpu::VertexFormat::Float2,
-                        shader_location: 0,
-                    },
-                    wgpu::VertexAttributeDescriptor {
-                        offset: 8,
-                        format: wgpu::VertexFormat::Float2,
-                        shader_location: 1,
-                    },
-                    wgpu::VertexAttributeDescriptor {
-                        offset: 16,
-                        format: wgpu::VertexFormat::Float,
-                        shader_location: 2,
-                    },
-                ],
-            },
-        ],
+        vertex_buffers: &[wgpu::VertexBufferDescriptor {
+            stride: std::mem::size_of::<GpuVertex>() as u64,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttributeDescriptor {
+                    offset: 0,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 0,
+                },
+                wgpu::VertexAttributeDescriptor {
+                    offset: 8,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 1,
+                },
+                wgpu::VertexAttributeDescriptor {
+                    offset: 16,
+                    format: wgpu::VertexFormat::Float,
+                    shader_location: 2,
+                },
+            ],
+        }],
         sample_count: sample_count,
         sample_mask: !0,
         alpha_to_coverage_enabled: false,
@@ -396,19 +402,15 @@ pub fn main() {
         }],
         depth_stencil_state: depth_stencil_state.clone(),
         index_format: wgpu::IndexFormat::Uint16,
-        vertex_buffers: &[
-            wgpu::VertexBufferDescriptor {
-                stride: std::mem::size_of::<Point>() as u64,
-                step_mode: wgpu::InputStepMode::Vertex,
-                attributes: &[
-                    wgpu::VertexAttributeDescriptor {
-                        offset: 0,
-                        format: wgpu::VertexFormat::Float2,
-                        shader_location: 0,
-                    },
-                ],
-            },
-        ],
+        vertex_buffers: &[wgpu::VertexBufferDescriptor {
+            stride: std::mem::size_of::<Point>() as u64,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[wgpu::VertexAttributeDescriptor {
+                offset: 0,
+                format: wgpu::VertexFormat::Float2,
+                shader_location: 0,
+            }],
+        }],
         sample_count: sample_count,
         sample_mask: !0,
         alpha_to_coverage_enabled: false,
@@ -429,10 +431,7 @@ pub fn main() {
     let mut multisampled_render_target = None;
 
     let window_surface = wgpu::Surface::create(&window);
-    let mut swap_chain = device.create_swap_chain(
-        &window_surface,
-        &swap_chain_desc,
-    );
+    let mut swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
 
     let mut depth_texture_view = None;
 
@@ -486,9 +485,7 @@ pub fn main() {
 
         let frame = swap_chain.get_next_texture();
         let mut a = Instant::now();
-        let mut encoder = device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { todo: 0 }
-        );
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
 
         cpu_primitives[stroke_prim_id as usize].width = scene.stroke_width;
         cpu_primitives[stroke_prim_id as usize].color = [
@@ -498,97 +495,83 @@ pub fn main() {
             0.5,
         ];
 
-        for idx in 2..(num_instances+1) {
+        for idx in 2..(num_instances + 1) {
             cpu_primitives[idx as usize].translate = [
                 (frame_count * 0.001 * idx as f32).sin() * (100.0 + idx as f32 * 10.0),
                 (frame_count * 0.002 * idx as f32).sin() * (100.0 + idx as f32 * 10.0),
             ];
         }
 
-        let globals_transfer_buffer = device.create_buffer_mapped(
-            1,
-            wgpu::BufferUsage::COPY_SRC,
-        ).fill_from_slice(&[Globals {
-            resolution: [scene.view.resolution.width as f32, scene.view.resolution.height as f32],
-            zoom: scene.view.zoom,
-            scroll_offset: scene.view.scroll.to_array(),
-        }]);
+        let globals_transfer_buffer = device
+            .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
+            .fill_from_slice(&[Globals {
+                resolution: [scene.view.resolution.width as f32, scene.view.resolution.height as f32],
+                zoom: scene.view.zoom,
+                scroll_offset: scene.view.scroll.to_array(),
+            }]);
 
-        let prim_transfer_buffer = device.create_buffer_mapped(
-            cpu_primitives.len(),
-            wgpu::BufferUsage::COPY_SRC,
-        );
+        let prim_transfer_buffer = device.create_buffer_mapped(cpu_primitives.len(), wgpu::BufferUsage::COPY_SRC);
 
         for (i, prim) in cpu_primitives.iter().enumerate() {
             prim_transfer_buffer.data[i] = *prim;
         }
 
-        encoder.copy_buffer_to_buffer(
-            &globals_transfer_buffer, 0,
-            &globals_ubo, 0,
-            globals_buffer_byte_size,
-        );
+        encoder.copy_buffer_to_buffer(&globals_transfer_buffer, 0, &globals_ubo, 0, globals_buffer_byte_size);
 
-        encoder.copy_buffer_to_buffer(
-            &prim_transfer_buffer.finish(), 0,
-            &prims_ubo, 0,
-            prim_buffer_byte_size,
-        );
-
-        
+        encoder.copy_buffer_to_buffer(&prim_transfer_buffer.finish(), 0, &prims_ubo, 0, prim_buffer_byte_size);
 
         let mut test_geometry: VertexBuffers<GpuVertex, u32> = VertexBuffers::new();
         let mut builder = Path::builder();
         //builder.arc(Point::new(50.0 + 5.0, 50.0 + 0.0), vector(10.0, 5.0), Angle::degrees(300.0), Angle::degrees(1950 as f32));
-        builder.line_to(point(100.0,0.0));
-        builder.line_to(point(100.0,100.0));
-        builder.line_to(point(0.0,100.0));
+        builder.line_to(point(100.0, 0.0));
+        builder.line_to(point(100.0, 100.0));
+        builder.line_to(point(0.0, 100.0));
         builder.close();
         // *data.point_mut(0) = point(2.0, 3.0);
         // data.build(&mut builder);
         scene.path_editor.build(&mut builder);
 
         let p = builder.build();
-        let mut canvas_tolerance : CanvasLength = ScreenLength::new(0.1) * scene.view.screen_to_canvas_scale();
+        let mut canvas_tolerance: CanvasLength = ScreenLength::new(0.1) * scene.view.screen_to_canvas_scale();
         // It's important to clamp the tolerance to a not too small value
         // If the tesselator is fed a too small value it may get stuck in an infinite loop due to floating point precision errors
         canvas_tolerance = CanvasLength::new(canvas_tolerance.get().max(0.001));
         let canvas_line_width = ScreenLength::new(1.0) * scene.view.screen_to_canvas_scale();
-        StrokeTessellator::new().tessellate_path(
-            &p,
-            &StrokeOptions::tolerance(canvas_tolerance.get()).with_line_width(canvas_line_width.get()),
-            &mut BuffersBuilder::new(&mut test_geometry, WithId(0 as i32))
-        ).unwrap();
+        StrokeTessellator::new()
+            .tessellate_path(
+                &p,
+                &StrokeOptions::tolerance(canvas_tolerance.get()).with_line_width(canvas_line_width.get()),
+                &mut BuffersBuilder::new(&mut test_geometry, WithId(0 as i32)),
+            )
+            .unwrap();
 
         let test_vbo = device
-        .create_buffer_mapped(test_geometry.vertices.len(), wgpu::BufferUsage::VERTEX)
-        .fill_from_slice(&test_geometry.vertices);
+            .create_buffer_mapped(test_geometry.vertices.len(), wgpu::BufferUsage::VERTEX)
+            .fill_from_slice(&test_geometry.vertices);
 
-        let indices : Vec<u32> = if scene.show_wireframe {
+        let indices: Vec<u32> = if scene.show_wireframe {
             // Transform the triangle primitives into line primitives: (0,1,2) => (0,1),(1,2),(2,0)
-            test_geometry.indices.chunks_exact(3).flat_map(|v| vec![v[0], v[1], v[1], v[2], v[2], v[0]]).collect()
+            test_geometry
+                .indices
+                .chunks_exact(3)
+                .flat_map(|v| vec![v[0], v[1], v[1], v[2], v[2], v[0]])
+                .collect()
         } else {
             test_geometry.indices
         };
         dbg!(indices.len());
-        
+
         let test_ibo = device
             .create_buffer_mapped(indices.len(), wgpu::BufferUsage::INDEX)
             .fill_from_slice(&indices);
-    
-        
-        let test_transfer_buffer = device.create_buffer_mapped(
-            1,
-            wgpu::BufferUsage::COPY_SRC,
-        );
+
+        let test_transfer_buffer = device.create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC);
 
         let test_ubo_size = (test_transfer_buffer.data.len() * std::mem::size_of::<Primitive>()) as u64;
-        let test_ubo = device.create_buffer(
-            &wgpu::BufferDescriptor {
-                size: test_ubo_size,
-                usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-            }
-        );
+        let test_ubo = device.create_buffer(&wgpu::BufferDescriptor {
+            size: test_ubo_size,
+            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+        });
 
         test_transfer_buffer.data[0] = Primitive {
             color: [1.0, 1.0, 1.0, 1.0],
@@ -596,12 +579,8 @@ pub fn main() {
             z_index: 100,
             width: 0.0,
         };
-        
-        encoder.copy_buffer_to_buffer(
-            &test_transfer_buffer.finish(), 0,
-            &test_ubo, 0,
-            test_ubo_size,
-        );
+
+        encoder.copy_buffer_to_buffer(&test_transfer_buffer.finish(), 0, &test_ubo, 0, test_ubo_size);
 
         let test_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
@@ -622,7 +601,6 @@ pub fn main() {
                 },
             ],
         });
-        
 
         {
             // A resolve target is only supported if the attachment actually uses anti-aliasing
@@ -678,7 +656,6 @@ pub fn main() {
 
             // pass.draw_indexed(fill_range.clone(), 0, 0..(num_instances as u32));
             // pass.draw_indexed(stroke_range.clone(), 0, 0..1);
-
 
             //pass.set_pipeline(&render_pipeline);
             pass.set_bind_group(0, &test_bind_group, &[]);
@@ -750,7 +727,7 @@ impl PartialEq for Selection {
 
         for item in &other.items {
             if !refs.contains(item) {
-                return false
+                return false;
             }
         }
 
@@ -767,7 +744,7 @@ struct ClosestInSelection {
 }
 enum ClosestItemInSelection {
     Curve { start: VertexReference },
-    ControlPoint(ControlPointReference)
+    ControlPoint(ControlPointReference),
 }
 
 impl Selection {
@@ -794,8 +771,18 @@ impl Selection {
                 }
                 SelectionReference::VertexReference(vertex_ref2) => {
                     let vertex = paths.resolve(vertex_ref2);
-                    if vertex_ref2.next(paths).filter(|next| point_set.contains(&vertex_ref2)).is_some() {
-                        let (dist, closest_on_curve) = sqr_distance_bezier_point(vertex.position(), vertex.control_after(), vertex.next().unwrap().control_before(), vertex.next().unwrap().position(), point);
+                    if vertex_ref2
+                        .next(paths)
+                        .filter(|next| point_set.contains(&vertex_ref2))
+                        .is_some()
+                    {
+                        let (dist, closest_on_curve) = sqr_distance_bezier_point(
+                            vertex.position(),
+                            vertex.control_after(),
+                            vertex.next().unwrap().control_before(),
+                            vertex.next().unwrap().position(),
+                            point,
+                        );
                         if dist < min_dist {
                             min_dist = dist;
                             closest_point = Some(closest_on_curve);
@@ -814,27 +801,27 @@ impl Selection {
         }
         if let Some(p) = closest_ref {
             match p {
-                SelectionReference::VertexReference(vertex_ref2) => {
-                    Some(ClosestInSelection {
-                        distance: CanvasLength::new(min_dist.sqrt()),
-                        point: closest_point.unwrap(),
-                        closest: ClosestItemInSelection::Curve { start: vertex_ref2 }
-                    })
-                }
-                SelectionReference::ControlPointReference(ctrl_ref) => {
-                    Some(ClosestInSelection {
-                        distance: CanvasLength::new(min_dist.sqrt()),
-                        point: closest_point.unwrap(),
-                        closest: ClosestItemInSelection::ControlPoint(ctrl_ref)
-                    })
-                }
+                SelectionReference::VertexReference(vertex_ref2) => Some(ClosestInSelection {
+                    distance: CanvasLength::new(min_dist.sqrt()),
+                    point: closest_point.unwrap(),
+                    closest: ClosestItemInSelection::Curve { start: vertex_ref2 },
+                }),
+                SelectionReference::ControlPointReference(ctrl_ref) => Some(ClosestInSelection {
+                    distance: CanvasLength::new(min_dist.sqrt()),
+                    point: closest_point.unwrap(),
+                    closest: ClosestItemInSelection::ControlPoint(ctrl_ref),
+                }),
             }
         } else {
             None
         }
     }
 
-    pub fn distance_to_curve(&self, paths: &PathCollection, point: CanvasPoint) -> Option<(VertexReference, CanvasPoint, CanvasLength)> {
+    pub fn distance_to_curve(
+        &self,
+        paths: &PathCollection,
+        point: CanvasPoint,
+    ) -> Option<(VertexReference, CanvasPoint, CanvasLength)> {
         let mut min_dist = std::f32::INFINITY;
         let mut closest_point = None;
         let mut closest_ref = None;
@@ -848,8 +835,18 @@ impl Selection {
             match vertex_ref {
                 SelectionReference::VertexReference(vertex_ref2) => {
                     let vertex = paths.resolve(vertex_ref2);
-                    if vertex_ref2.next(paths).filter(|next| point_set.contains(&vertex_ref2)).is_some() {
-                        let (dist, closest_on_curve) = sqr_distance_bezier_point(vertex.position(), vertex.control_after(), vertex.next().unwrap().control_before(), vertex.next().unwrap().position(), point);
+                    if vertex_ref2
+                        .next(paths)
+                        .filter(|next| point_set.contains(&vertex_ref2))
+                        .is_some()
+                    {
+                        let (dist, closest_on_curve) = sqr_distance_bezier_point(
+                            vertex.position(),
+                            vertex.control_after(),
+                            vertex.next().unwrap().control_before(),
+                            vertex.next().unwrap().position(),
+                            point,
+                        );
                         if dist < min_dist {
                             min_dist = dist;
                             closest_point = Some(closest_on_curve);
@@ -890,33 +887,48 @@ fn smooth_vertices(selection: &Selection, paths: &mut PathCollection) {
             } else if let Some(next) = next {
                 next.position() - pos
             } else {
-                continue
+                continue;
             };
-                
+
             vertex.set_control_before(pos - dir * 0.25);
             vertex.set_control_after(pos + dir * 0.25);
         }
     }
 }
 
-fn drag_at_point(selection: &Selection, paths: &PathCollection, point: CanvasPoint, distance_threshold: CanvasLength) -> Option<Selection> {
-    let selected_vertices: Vec<VertexReference> = selection.items
+fn drag_at_point(
+    selection: &Selection,
+    paths: &PathCollection,
+    point: CanvasPoint,
+    distance_threshold: CanvasLength,
+) -> Option<Selection> {
+    let selected_vertices: Vec<VertexReference> = selection
+        .items
         .iter()
-        .filter_map(|v| if let SelectionReference::VertexReference(v_ref) = v { Some(*v_ref) } else { None })
+        .filter_map(|v| {
+            if let SelectionReference::VertexReference(v_ref) = v {
+                Some(*v_ref)
+            } else {
+                None
+            }
+        })
         .collect();
 
     let potential_control_points = Selection {
         items: selected_vertices
             .iter()
             .flat_map(|v| vec![v.control_before(&paths).into(), v.control_after(&paths).into()])
-            .collect()
+            .collect(),
     };
 
     // view.screen_to_canvas_point(capture.mouse_start)
     let distance_to_controls = potential_control_points.distance_to(&paths, point);
-    let closest_vertex = selected_vertices.iter().map(|v| (v, (paths.resolve(v).position() - point).length())).min_by(|a,b| a.1.partial_cmp(&b.1).unwrap());
+    let closest_vertex = selected_vertices
+        .iter()
+        .map(|v| (v, (paths.resolve(v).position() - point).length()))
+        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
     let distance_to_curve = selection.distance_to_curve(&paths, point);
-    
+
     // Figure out which item is the best to drag
     let mut best_score = CanvasLength::new(std::f32::INFINITY);
     // Lower weights means they are prioritized higher when picking
@@ -958,7 +970,9 @@ fn drag_at_point(selection: &Selection, paths: &PathCollection, point: CanvasPoi
         let score = distance_to_controls.distance * CONTROL_WEIGHT;
         if score == best_score {
             if let ClosestItemInSelection::ControlPoint(control_point) = distance_to_controls.closest {
-                return Some(Selection { items: vec![control_point.into()] });
+                return Some(Selection {
+                    items: vec![control_point.into()],
+                });
             } else {
                 unreachable!();
             }
@@ -972,7 +986,7 @@ fn drag_at_point(selection: &Selection, paths: &PathCollection, point: CanvasPoi
             return Some(selection.clone());
         }
     }
-    
+
     // Nothing was close enough
     None
 }
@@ -982,8 +996,6 @@ enum SelectState {
     DragSelect(CapturedClick),
     Dragging(CapturedClick, Selection, Vec<CanvasPoint>),
 }
-
-
 
 pub struct PathEditor {
     paths: PathCollection,
@@ -1002,20 +1014,47 @@ impl PathEditor {
             select_state: None,
             vector_field: VectorField {
                 primitives: vec![
-                    VectorFieldPrimitive::Curl { center: point(0.0, 0.0), strength: 1.0, radius: 500.0 },
-                    VectorFieldPrimitive::Curl { center: point(0.0, 50.0), strength: 1.0, radius: 500.0 },
-                    VectorFieldPrimitive::Curl { center: point(100.0, 50.0), strength: 1.0, radius: 500.0 },
-                    VectorFieldPrimitive::Curl { center: point(200.0, 300.0), strength: 1.0, radius: 2000.0 },
-                    VectorFieldPrimitive::Linear { direction: vector(1.0, 1.0), strength: 1.1 },
-                ]
-            }
+                    VectorFieldPrimitive::Curl {
+                        center: point(0.0, 0.0),
+                        strength: 1.0,
+                        radius: 500.0,
+                    },
+                    VectorFieldPrimitive::Curl {
+                        center: point(0.0, 50.0),
+                        strength: 1.0,
+                        radius: 500.0,
+                    },
+                    VectorFieldPrimitive::Curl {
+                        center: point(100.0, 50.0),
+                        strength: 1.0,
+                        radius: 500.0,
+                    },
+                    VectorFieldPrimitive::Curl {
+                        center: point(200.0, 300.0),
+                        strength: 1.0,
+                        radius: 2000.0,
+                    },
+                    VectorFieldPrimitive::Linear {
+                        direction: vector(1.0, 1.0),
+                        strength: 1.1,
+                    },
+                ],
+            },
         }
     }
 
-    fn update_ui(&mut self, view : &CanvasView, input: &InputManager) {
+    fn update_ui(&mut self, view: &CanvasView, input: &InputManager) {
         let ui_path = &mut self.ui_path;
         ui_path.clear();
-        ui_path.add_rounded_rect(&rect(100.0, 100.0, 200.0, 100.0), BorderRadii { top_left: 0.0, top_right: 1000.0, bottom_right: 50.0, bottom_left: 50.0});
+        ui_path.add_rounded_rect(
+            &rect(100.0, 100.0, 200.0, 100.0),
+            BorderRadii {
+                top_left: 0.0,
+                top_right: 1000.0,
+                bottom_right: 50.0,
+                bottom_left: 50.0,
+            },
+        );
 
         let mouse_pos = view.screen_to_canvas_point(input.mouse_position);
 
@@ -1023,13 +1062,22 @@ impl PathEditor {
             for vertex in &selected.items {
                 if let SelectionReference::VertexReference(vertex) = vertex {
                     let vertex = self.paths.resolve(vertex);
-                    ui_path.add_circle(vertex.position(), ScreenLength::new(5.0) * view.screen_to_canvas_scale());
+                    ui_path.add_circle(
+                        vertex.position(),
+                        ScreenLength::new(5.0) * view.screen_to_canvas_scale(),
+                    );
 
                     if vertex.control_before() != vertex.position() {
-                        ui_path.add_circle(vertex.control_before(), ScreenLength::new(3.0) * view.screen_to_canvas_scale());
+                        ui_path.add_circle(
+                            vertex.control_before(),
+                            ScreenLength::new(3.0) * view.screen_to_canvas_scale(),
+                        );
                     }
                     if vertex.control_after() != vertex.position() {
-                        ui_path.add_circle(vertex.control_after(), ScreenLength::new(3.0) * view.screen_to_canvas_scale());
+                        ui_path.add_circle(
+                            vertex.control_after(),
+                            ScreenLength::new(3.0) * view.screen_to_canvas_scale(),
+                        );
                     }
 
                     if vertex.control_before() != vertex.position() {
@@ -1043,16 +1091,27 @@ impl PathEditor {
                 }
             }
 
-            let drag = drag_at_point(selected, &self.paths, mouse_pos, ScreenLength::new(5.0) * view.screen_to_canvas_scale());
+            let drag = drag_at_point(
+                selected,
+                &self.paths,
+                mouse_pos,
+                ScreenLength::new(5.0) * view.screen_to_canvas_scale(),
+            );
             if let Some(drag) = drag {
                 for item in &drag.items {
                     if let SelectionReference::VertexReference(vertex) = item {
                         let vertex = self.paths.resolve(vertex);
-                        ui_path.add_circle(vertex.position(), ScreenLength::new(4.0) * view.screen_to_canvas_scale());
+                        ui_path.add_circle(
+                            vertex.position(),
+                            ScreenLength::new(4.0) * view.screen_to_canvas_scale(),
+                        );
                     }
                     if let SelectionReference::ControlPointReference(vertex) = item {
                         let vertex = self.paths.resolve(vertex);
-                        ui_path.add_circle(vertex.position(), ScreenLength::new(2.0) * view.screen_to_canvas_scale());
+                        ui_path.add_circle(
+                            vertex.position(),
+                            ScreenLength::new(2.0) * view.screen_to_canvas_scale(),
+                        );
                     }
                 }
             }
@@ -1075,7 +1134,10 @@ impl PathEditor {
         //     ui_path.line_to(closest_point);
         //     ui_path.end();
         // }
-        ui_path.add_circle(view.screen_to_canvas_point(input.mouse_position), CanvasLength::new(3.0));
+        ui_path.add_circle(
+            view.screen_to_canvas_point(input.mouse_position),
+            CanvasLength::new(3.0),
+        );
 
         if self.paths.len() == 0 {
             self.paths.push(PathData::new());
@@ -1089,9 +1151,7 @@ impl PathEditor {
                     &VectorFieldPrimitive::Curl { center, .. } => {
                         path.add_circle(center, CanvasLength::new(1.0));
                     }
-                    &VectorFieldPrimitive::Linear { .. } => {
-
-                    }
+                    &VectorFieldPrimitive::Linear { .. } => {}
                 }
             }
 
@@ -1099,7 +1159,7 @@ impl PathEditor {
             let samples = poisson_disc_sampling(rect(-100.0, -100.0, 300.0, 300.0), 80.0, &mut rng);
             for (i, &p) in samples.iter().enumerate() {
                 // if let VectorFieldPrimitive::Linear { ref mut strength, .. } = self.vector_field.primitives.last_mut().unwrap() {
-                    // *strength = i as f32;
+                // *strength = i as f32;
                 // }
                 path.move_to(p);
                 let (vertices, closed) = self.vector_field.trace(p);
@@ -1113,7 +1173,7 @@ impl PathEditor {
                 }
             }
             // if let VectorFieldPrimitive::Linear { ref mut strength, .. } = self.vector_field.primitives.last_mut().unwrap() {
-                // *strength = 2.0;
+            // *strength = 2.0;
             // }
         }
         // let d = f32::sin(0.01 * (input.frame_count as f32));
@@ -1135,45 +1195,56 @@ impl PathEditor {
     }
 
     fn select_everything(&self) -> Selection {
-        let mut selection = Selection {
-            items: Vec::new()
-        };
+        let mut selection = Selection { items: Vec::new() };
         for path in self.paths.iter() {
             for point in path.iter_points() {
-                selection.items.push(VertexReference::new(path.path_index, point.index() as u32).into());
+                selection
+                    .items
+                    .push(VertexReference::new(path.path_index, point.index() as u32).into());
             }
         }
         selection
     }
 
     fn select_rect(&self, rect: CanvasRect) -> Selection {
-        let mut selection = Selection {
-            items: Vec::new()
-        };
+        let mut selection = Selection { items: Vec::new() };
         for path in self.paths.iter() {
             for point in path.iter_points() {
                 if rect.contains(point.position()) {
-                    selection.items.push(VertexReference::new(path.path_index, point.index() as u32).into());
+                    selection
+                        .items
+                        .push(VertexReference::new(path.path_index, point.index() as u32).into());
                 }
             }
         }
         selection
     }
 
-    fn update_selection(&mut self, view : &CanvasView, input: &mut InputManager) {
+    fn update_selection(&mut self, view: &CanvasView, input: &mut InputManager) {
         self.select_state = match self.select_state.take() {
             None => {
                 if let Some(mut capture) = input.capture_click_batch(winit::event::MouseButton::Left) {
                     for (path_index, path) in self.paths.iter().enumerate() {
                         for point in path.iter_points() {
                             let reference = VertexReference::new(path_index as u32, point.index() as u32);
-                            capture.add(CircleShape { center: view.canvas_to_screen_point(point.position()), radius: 5.0 }, reference);
+                            capture.add(
+                                CircleShape {
+                                    center: view.canvas_to_screen_point(point.position()),
+                                    radius: 5.0,
+                                },
+                                reference,
+                            );
                         }
                     }
-                    
+
                     if let Some((capture, best)) = capture.capture(input) {
                         // Something was close enough to the cursor, we should select it
-                        Some(SelectState::Down(capture, Selection { items: vec![best.into()] }))
+                        Some(SelectState::Down(
+                            capture,
+                            Selection {
+                                items: vec![best.into()],
+                            },
+                        ))
                     } else if let Some(capture) = input.capture_click(winit::event::MouseButton::Left) {
                         // Start with empty selection
                         Some(SelectState::Down(capture, Selection { items: vec![] }))
@@ -1191,7 +1262,10 @@ impl PathEditor {
                     if capture.on_up(input) {
                         // Select
                         // TODO: Start point should be stored in canvas space, in case the view is zoomed or moved
-                        let selection_rect = CanvasRect::from_points(vec![view.screen_to_canvas_point(capture.mouse_start), view.screen_to_canvas_point(input.mouse_position)]);
+                        let selection_rect = CanvasRect::from_points(vec![
+                            view.screen_to_canvas_point(capture.mouse_start),
+                            view.screen_to_canvas_point(input.mouse_position),
+                        ]);
                         self.selected = Some(self.select_rect(selection_rect));
                         None
                     } else {
@@ -1206,9 +1280,16 @@ impl PathEditor {
                     }
                     None
                 }
-                SelectState::Down(capture, _) if (capture.mouse_start - input.mouse_position).square_length() > 5.0*5.0 => {
+                SelectState::Down(capture, _)
+                    if (capture.mouse_start - input.mouse_position).square_length() > 5.0 * 5.0 =>
+                {
                     if let Some(selection) = &self.selected {
-                        let drag = drag_at_point(selection, &self.paths, view.screen_to_canvas_point(capture.mouse_start), ScreenLength::new(5.0) * view.screen_to_canvas_scale());
+                        let drag = drag_at_point(
+                            selection,
+                            &self.paths,
+                            view.screen_to_canvas_point(capture.mouse_start),
+                            ScreenLength::new(5.0) * view.screen_to_canvas_scale(),
+                        );
 
                         if let Some(drag) = drag {
                             let original_position = drag.items.iter().map(|x| x.position(&self.paths)).collect();
@@ -1241,7 +1322,9 @@ impl PathEditor {
                             // Move opposite control point
                             let center = self.paths.resolve(vertex).vertex().position();
                             let dir = original_position + offset - center;
-                            self.paths.resolve_mut(&vertex.opposite_control(&self.paths)).set_position(center - dir);
+                            self.paths
+                                .resolve_mut(&vertex.opposite_control(&self.paths))
+                                .set_position(center - dir);
                         }
                     }
 
@@ -1256,14 +1339,12 @@ impl PathEditor {
                     // Change visualization?
                     Some(state)
                 }
-                SelectState::Down(..) => Some(state)
-            }
+                SelectState::Down(..) => Some(state),
+            },
         };
 
         // self.select_state = state;
-        // self.select_state.take 
-
-        
+        // self.select_state.take
 
         // if let SelectState::Down(capture, selection) = &self.select_state {
         //     if (capture.mouse_start - input.mouse_position).square_length() > 5.0*5.0 {
@@ -1283,8 +1364,7 @@ impl PathEditor {
         // }
     }
 
-    
-    fn update(&mut self, view : &CanvasView, input: &mut InputManager) {
+    fn update(&mut self, view: &CanvasView, input: &mut InputManager) {
         let canvas_mouse_pos = view.screen_to_canvas_point(input.mouse_position);
 
         if input.is_pressed(VirtualKeyCode::T) {
@@ -1296,7 +1376,11 @@ impl PathEditor {
                 path.line_to(canvas_mouse_pos);
             }
         }
-        if input.on_combination(&KeyCombination::new().and(VirtualKeyCode::LControl).and(VirtualKeyCode::S)) {
+        if input.on_combination(
+            &KeyCombination::new()
+                .and(VirtualKeyCode::LControl)
+                .and(VirtualKeyCode::S),
+        ) {
             // Make smooth
             if let Some(selected) = &self.selected {
                 smooth_vertices(selected, &mut self.paths);
@@ -1341,55 +1425,57 @@ fn update_inputs(event: Event<()>, control_flow: &mut ControlFlow, scene: &mut S
         Event::MainEventsCleared => {
             return false;
         }
-        Event::WindowEvent { event, .. } => {
-            match event {
-                WindowEvent::Destroyed | WindowEvent::CloseRequested => {
-                    *control_flow = ControlFlow::Exit;
-                    return false;
-                }
-                WindowEvent::CursorMoved { position, ..} => {
-                    scene.cursor_position = (position.x as f32, position.y as f32);
-                    scene.input.mouse_position = point(position.x as f32, position.y as f32);
-                }
-                WindowEvent::Resized(size) => {
-                    scene.view.resolution = size;
-                    scene.size_changed = true
-                }
-                WindowEvent::ScaleFactorChanged {..} => {
-                    scene.size_changed = true;
-                    println!("DPI changed");
-                }
-                WindowEvent::KeyboardInput {
-                    input: KeyboardInput {
+        Event::WindowEvent { event, .. } => match event {
+            WindowEvent::Destroyed | WindowEvent::CloseRequested => {
+                *control_flow = ControlFlow::Exit;
+                return false;
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                scene.cursor_position = (position.x as f32, position.y as f32);
+                scene.input.mouse_position = point(position.x as f32, position.y as f32);
+            }
+            WindowEvent::Resized(size) => {
+                scene.view.resolution = size;
+                scene.size_changed = true
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                scene.size_changed = true;
+                println!("DPI changed");
+            }
+            WindowEvent::KeyboardInput {
+                input:
+                    KeyboardInput {
                         state,
                         virtual_keycode: Some(key),
                         ..
                     },
-                    ..
-                } => {
-                    if state == ElementState::Pressed {
-                        match key {
-                            VirtualKeyCode::Escape => {
-                                *control_flow = ControlFlow::Exit;
-                                return false;
-                            }
-                            VirtualKeyCode::P => {
-                                scene.show_points = !scene.show_points;
-                            }
-                            VirtualKeyCode::W => {
-                                scene.show_wireframe = !scene.show_wireframe;
-                            }
-                            VirtualKeyCode::B => {
-                                scene.draw_background = !scene.draw_background;
-                            }
-                            _ => {}
+                ..
+            } => {
+                if state == ElementState::Pressed {
+                    match key {
+                        VirtualKeyCode::Escape => {
+                            *control_flow = ControlFlow::Exit;
+                            return false;
                         }
+                        VirtualKeyCode::P => {
+                            scene.show_points = !scene.show_points;
+                        }
+                        VirtualKeyCode::W => {
+                            scene.show_wireframe = !scene.show_wireframe;
+                        }
+                        VirtualKeyCode::B => {
+                            scene.draw_background = !scene.draw_background;
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
             }
-        }
-        Event::DeviceEvent { event: winit::event::DeviceEvent::Motion { axis: 3, value }, ..} => {
+            _ => {}
+        },
+        Event::DeviceEvent {
+            event: winit::event::DeviceEvent::Motion { axis: 3, value },
+            ..
+        } => {
             scene.target_zoom *= f32::powf(1.01, -value as f32);
         }
         _evt => {
@@ -1432,8 +1518,7 @@ fn update_inputs(event: Event<()>, control_flow: &mut ControlFlow, scene: &mut S
 
     scene.view.zoom += (scene.target_zoom - scene.view.zoom) / 3.0;
     scene.view.scroll = scene.view.scroll + (scene.target_scroll - scene.view.scroll) / 3.0;
-    scene.stroke_width = scene.stroke_width +
-        (scene.target_stroke_width - scene.stroke_width) / 5.0;
+    scene.stroke_width = scene.stroke_width + (scene.target_stroke_width - scene.stroke_width) / 5.0;
 
     *control_flow = ControlFlow::Poll;
 

@@ -1,5 +1,5 @@
-use lyon::math::*;
 use crate::geometry_utilities::types::*;
+use lyon::math::*;
 
 pub struct SubPathData {
     pub range: std::ops::Range<usize>,
@@ -56,7 +56,7 @@ impl<'a> PathPoint<'a> for MutablePathPoint<'a> {
 
 impl<'a> ImmutableControlPoint<'a> {
     pub fn vertex(&'a self) -> ImmutablePathPoint<'a> {
-        if self.index == self.data.sub_paths[self.sub_path].range.end - 1{
+        if self.index == self.data.sub_paths[self.sub_path].range.end - 1 {
             ImmutablePathPoint {
                 data: self.data,
                 sub_path: self.sub_path,
@@ -68,7 +68,7 @@ impl<'a> ImmutableControlPoint<'a> {
                 sub_path: self.sub_path,
                 // If index is 1 mod 3 then the vertex is one behind us, if we are at 2 mod 3 then the vertex is on the next index
                 // 0 mod 3 is impossible since only vertices are at 0 mod 3
-                index: ((self.index + 1)/3)*3,
+                index: ((self.index + 1) / 3) * 3,
             }
         }
     }
@@ -93,7 +93,7 @@ impl<'a> MutableControlPoint<'a> {
                 sub_path: self.sub_path,
                 // If index is 1 mod 3 then the vertex is one behind us, if we are at 2 mod 3 then the vertex is on the next index
                 // 0 mod 3 is impossible since only vertices are at 0 mod 3
-                index: ((self.index + 1)/3)*3,
+                index: ((self.index + 1) / 3) * 3,
             }
         }
     }
@@ -121,7 +121,8 @@ pub trait PathPoint<'a> {
     }
 
     fn control_before(&'a self) -> CanvasPoint {
-        self.position() + self.data().points[control_before_index(self.data(), self.sub_path(), self.index())].to_vector()
+        self.position()
+            + self.data().points[control_before_index(self.data(), self.sub_path(), self.index())].to_vector()
     }
 
     fn point_type(&'a self) -> PointType {
@@ -180,7 +181,7 @@ pub(crate) fn control_after_index(index: usize) -> usize {
 }
 
 impl<'b, 'a: 'b> ImmutablePathPoint<'a> {
-    pub fn prev (&'a self) -> Option<ImmutablePathPoint<'b>> {
+    pub fn prev(&'a self) -> Option<ImmutablePathPoint<'b>> {
         debug_assert!(self.data().point_type(self.index() as i32) == PointType::Point);
         prev_index(self.data, self.sub_path, self.index).map(|new_index| ImmutablePathPoint {
             index: new_index,
@@ -189,7 +190,7 @@ impl<'b, 'a: 'b> ImmutablePathPoint<'a> {
         })
     }
 
-    pub fn next (&'a self) -> Option<ImmutablePathPoint<'b>> {
+    pub fn next(&'a self) -> Option<ImmutablePathPoint<'b>> {
         debug_assert!(self.data().point_type(self.index() as i32) == PointType::Point);
         next_index(self.data, self.sub_path, self.index).map(|new_index| ImmutablePathPoint {
             index: new_index,
@@ -213,7 +214,7 @@ impl<'b, 'a: 'b> MutablePathPoint<'a> {
         self.data.points[index] = (value - self.position()).to_point();
     }
 
-    pub fn prev (&'a self) -> Option<ImmutablePathPoint<'b>> {
+    pub fn prev(&'a self) -> Option<ImmutablePathPoint<'b>> {
         debug_assert!(self.data().point_type(self.index() as i32) == PointType::Point);
         prev_index(self.data, self.sub_path, self.index).map(|new_index| ImmutablePathPoint {
             index: new_index,
@@ -222,7 +223,7 @@ impl<'b, 'a: 'b> MutablePathPoint<'a> {
         })
     }
 
-    pub fn next (&'a self) -> Option<ImmutablePathPoint<'b>> {
+    pub fn next(&'a self) -> Option<ImmutablePathPoint<'b>> {
         debug_assert!(self.data().point_type(self.index() as i32) == PointType::Point);
         next_index(self.data, self.sub_path, self.index).map(|new_index| ImmutablePathPoint {
             index: new_index,
@@ -231,7 +232,7 @@ impl<'b, 'a: 'b> MutablePathPoint<'a> {
         })
     }
 
-    pub fn prev_mut (self) -> Option<MutablePathPoint<'b>> {
+    pub fn prev_mut(self) -> Option<MutablePathPoint<'b>> {
         debug_assert!(self.data().point_type(self.index() as i32) == PointType::Point);
         if let Some(new_index) = prev_index(self.data, self.sub_path, self.index) {
             Some(MutablePathPoint {
@@ -247,7 +248,7 @@ impl<'b, 'a: 'b> MutablePathPoint<'a> {
 
 pub enum ControlPointDirection {
     Before,
-    After
+    After,
 }
 
 pub struct SubPath<'a> {
@@ -257,24 +258,32 @@ pub struct SubPath<'a> {
 
 impl<'a, 'b: 'a> SubPath<'b> {
     pub fn first(&'a self) -> ImmutablePathPoint<'b> {
-        ImmutablePathPoint { index: self.data.sub_paths[self.index].range.start, data: self.data, sub_path: self.index }
+        ImmutablePathPoint {
+            index: self.data.sub_paths[self.index].range.start,
+            data: self.data,
+            sub_path: self.index,
+        }
     }
 
     pub fn closed(&self) -> bool {
         self.data.sub_paths[self.index].closed
     }
 
-    fn iter_point_indices(&'a self) -> impl Iterator<Item=usize> {
+    fn iter_point_indices(&'a self) -> impl Iterator<Item = usize> {
         self.data.sub_paths[self.index].range.clone().step_by(3)
     }
 
-    pub fn iter_points(&'a self) -> impl Iterator<Item=ImmutablePathPoint<'b>> {
+    pub fn iter_points(&'a self) -> impl Iterator<Item = ImmutablePathPoint<'b>> {
         let data = self.data;
         let index = self.index;
-        self.iter_point_indices().map(move|i| ImmutablePathPoint { index: i, data: data, sub_path: index })
+        self.iter_point_indices().map(move |i| ImmutablePathPoint {
+            index: i,
+            data: data,
+            sub_path: index,
+        })
     }
 
-    pub fn iter_beziers(&'a self) -> impl Iterator<Item=ImmutablePathPoint<'b>> {
+    pub fn iter_beziers(&'a self) -> impl Iterator<Item = ImmutablePathPoint<'b>> {
         let data = self.data;
         let index = self.index;
         let mut range = self.data.sub_paths[self.index].range.clone();
@@ -282,7 +291,11 @@ impl<'a, 'b: 'a> SubPath<'b> {
             range.end -= 3;
         }
 
-        range.step_by(3).map(move|i| { ImmutablePathPoint { index: i, data: data, sub_path: index } })
+        range.step_by(3).map(move |i| ImmutablePathPoint {
+            index: i,
+            data: data,
+            sub_path: index,
+        })
     }
 }
 /*impl<'a> Iterator for PathIterator<'a> {
@@ -326,20 +339,18 @@ impl PathData {
         }
     }
 
-    pub fn remove<'a> (&'a mut self, index: usize) {
+    pub fn remove<'a>(&'a mut self, index: usize) {}
 
+    pub fn iter_sub_paths<'a>(&'a self) -> impl Iterator<Item = SubPath<'a>> {
+        (0..self.sub_paths.len()).map(move |i| SubPath { data: self, index: i })
     }
 
-    pub fn iter_sub_paths<'a> (&'a self) -> impl Iterator<Item=SubPath<'a>> {
-        (0..self.sub_paths.len()).map(move|i| SubPath { data: self, index: i })
-    }
-
-    pub fn iter_points<'a> (&'a self) -> impl Iterator<Item=ImmutablePathPoint<'a>> {
+    pub fn iter_points<'a>(&'a self) -> impl Iterator<Item = ImmutablePathPoint<'a>> {
         self.iter_sub_paths().flat_map(|sp| sp.iter_points())
     }
 
     fn find_sub_path(&self, index: i32) -> usize {
-        for (i,sp) in self.sub_paths.iter().enumerate() {
+        for (i, sp) in self.sub_paths.iter().enumerate() {
             if sp.range.contains(&(index as usize)) {
                 return i;
             }
@@ -354,22 +365,38 @@ impl PathData {
         }
     }
 
-    pub fn point<'a> (&'a self, index: i32) -> ImmutablePathPoint<'a> {
-        ImmutablePathPoint { data: self, sub_path: self.find_sub_path(index), index: index as usize }
+    pub fn point<'a>(&'a self, index: i32) -> ImmutablePathPoint<'a> {
+        ImmutablePathPoint {
+            data: self,
+            sub_path: self.find_sub_path(index),
+            index: index as usize,
+        }
     }
 
-    pub fn point_mut<'a> (&'a mut self, index: i32) -> MutablePathPoint<'a> {
+    pub fn point_mut<'a>(&'a mut self, index: i32) -> MutablePathPoint<'a> {
         let sub_path = self.find_sub_path(index);
-        MutablePathPoint { data: self, sub_path, index: index as usize }
+        MutablePathPoint {
+            data: self,
+            sub_path,
+            index: index as usize,
+        }
     }
 
-    pub fn control_point<'a> (&'a self, index: i32) -> ImmutableControlPoint<'a> {
-        ImmutableControlPoint { data: self, sub_path: self.find_sub_path(index), index: index as usize }
+    pub fn control_point<'a>(&'a self, index: i32) -> ImmutableControlPoint<'a> {
+        ImmutableControlPoint {
+            data: self,
+            sub_path: self.find_sub_path(index),
+            index: index as usize,
+        }
     }
 
-    pub fn control_point_mut<'a> (&'a mut self, index: i32) -> MutableControlPoint<'a> {
+    pub fn control_point_mut<'a>(&'a mut self, index: i32) -> MutableControlPoint<'a> {
         let sub_path = self.find_sub_path(index);
-        MutableControlPoint { data: self, sub_path, index: index as usize }
+        MutableControlPoint {
+            data: self,
+            sub_path,
+            index: index as usize,
+        }
     }
 
     // pub fn set_point(&mut self, index: i32, point: CanvasPoint) {
@@ -400,7 +427,7 @@ impl PathData {
     }*/
 
     pub fn len(&self) -> i32 {
-        self.points.len() as i32/3
+        self.points.len() as i32 / 3
     }
 
     pub fn clear(&mut self) {
@@ -415,7 +442,7 @@ impl PathData {
         self.points.push(point(0.0, 0.0));
         self.points.push(point(0.0, 0.0));
         self.extend_current();
-        (self.points.len() as i32  - 2)
+        (self.points.len() as i32 - 2)
     }
 
     pub fn move_to(&mut self, pt: CanvasPoint) -> i32 {
@@ -431,7 +458,10 @@ impl PathData {
 
     pub fn start(&mut self) {
         self.end();
-        self.sub_paths.push(SubPathData { range: self.points.len()..self.points.len(), closed: false });
+        self.sub_paths.push(SubPathData {
+            range: self.points.len()..self.points.len(),
+            closed: false,
+        });
         self.in_path = true;
     }
 
@@ -456,14 +486,16 @@ impl PathData {
         self.start();
         lyon::geom::Arc::circle(center.to_untyped(), radius.get()).for_each_cubic_bezier(&mut |&bezier| {
             self.points.push(bezier.from.cast_unit::<CanvasSpace>());
-            self.points.push((bezier.ctrl1 - bezier.from).to_point().cast_unit::<CanvasSpace>());
-            self.points.push((bezier.ctrl2 - bezier.to).to_point().cast_unit::<CanvasSpace>());
+            self.points
+                .push((bezier.ctrl1 - bezier.from).to_point().cast_unit::<CanvasSpace>());
+            self.points
+                .push((bezier.ctrl2 - bezier.to).to_point().cast_unit::<CanvasSpace>());
         });
         self.close();
     }
 
     pub fn add_rounded_rect(&mut self, rect: &Rect, mut radii: BorderRadii) {
-        fn clamp (r1: &mut f32, r2: &mut f32, max: f32) {
+        fn clamp(r1: &mut f32, r2: &mut f32, max: f32) {
             if *r1 + *r2 > max {
                 let delta = (*r1 + *r2 - max) * 0.5;
                 *r1 -= delta;
@@ -488,15 +520,35 @@ impl PathData {
                 radii: vector(radius, radius),
                 start_angle: start_angle,
                 sweep_angle: Angle::frac_pi_2(),
-                x_rotation: Angle::zero()
+                x_rotation: Angle::zero(),
             }
         }
 
         let arcs = &[
-            corner_arc(point(rect.min_x(), rect.min_y()), radii.top_left, Angle::degrees(180.0), vector(1.0, 1.0)),
-            corner_arc(point(rect.max_x(), rect.min_y()), radii.top_right, Angle::degrees(270.0), vector(-1.0, 1.0)),
-            corner_arc(point(rect.max_x(), rect.max_y()), radii.bottom_right, Angle::degrees(0.0), vector(-1.0, -1.0)),
-            corner_arc(point(rect.min_x(), rect.max_y()), radii.bottom_left, Angle::degrees(90.0), vector(1.0, -1.0)),
+            corner_arc(
+                point(rect.min_x(), rect.min_y()),
+                radii.top_left,
+                Angle::degrees(180.0),
+                vector(1.0, 1.0),
+            ),
+            corner_arc(
+                point(rect.max_x(), rect.min_y()),
+                radii.top_right,
+                Angle::degrees(270.0),
+                vector(-1.0, 1.0),
+            ),
+            corner_arc(
+                point(rect.max_x(), rect.max_y()),
+                radii.bottom_right,
+                Angle::degrees(0.0),
+                vector(-1.0, -1.0),
+            ),
+            corner_arc(
+                point(rect.min_x(), rect.max_y()),
+                radii.bottom_left,
+                Angle::degrees(90.0),
+                vector(1.0, -1.0),
+            ),
         ];
 
         self.start();
@@ -504,8 +556,10 @@ impl PathData {
             if arc.radii.x > 0.0 {
                 arc.for_each_cubic_bezier(&mut |&bezier| {
                     self.points.push(bezier.from.cast_unit::<CanvasSpace>());
-                    self.points.push((bezier.ctrl1 - bezier.from).to_point().cast_unit::<CanvasSpace>());
-                    self.points.push((bezier.ctrl2 - bezier.to).to_point().cast_unit::<CanvasSpace>());
+                    self.points
+                        .push((bezier.ctrl1 - bezier.from).to_point().cast_unit::<CanvasSpace>());
+                    self.points
+                        .push((bezier.ctrl2 - bezier.to).to_point().cast_unit::<CanvasSpace>());
                 });
             }
             self.line_to(arc.to().cast_unit());
@@ -525,7 +579,7 @@ impl PathData {
                 builder.cubic_bezier_to(
                     a.control_after().to_untyped(),
                     b.control_before().to_untyped(),
-                    b.position().to_untyped()
+                    b.position().to_untyped(),
                 );
             }
             if sub_path.closed() {

@@ -1,14 +1,14 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 //use mycrate::fibonacci;
-use wgpu_example::something::PathData;
-use std::time::Instant;
 use lyon::math::*;
+use std::time::Instant;
+use wgpu_example::something::PathData;
 
 fn bench_iter(data: &mut PathData) {
     let mut k = point(0.0, 0.0);
     //let t1 = Instant::now();
     // let mut best = None;
-    
+
     for p in data.iter_sub_paths() {
         // assert_eq!(p.iter_points().count(), 4);
         for point in p.iter_points() {
