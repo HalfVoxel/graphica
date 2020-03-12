@@ -3,7 +3,7 @@ use crate::geometry_utilities::types::ScreenPoint;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent, MouseButton};
 use lyon::math::*;
 use euclid::default::Vector2D;
-use std::time::{Instant, Duration};
+use std::time::{Instant};
 
 struct KeyState {
     last_down_time: Option<Instant>,

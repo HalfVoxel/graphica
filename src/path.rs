@@ -250,17 +250,6 @@ pub enum ControlPointDirection {
     After
 }
 
-struct PathVertexIterator<'a> {
-    data: &'a PathData,
-    sub_path: usize,
-    index: usize,
-}
-
-/*struct PathIterator<'a> {
-    data: &'a PathData,
-    index: usize,
-}*/
-
 pub struct SubPath<'a> {
     data: &'a PathData,
     index: usize,
@@ -521,7 +510,7 @@ mod tests {
         }
         assert_eq!(data.iter_sub_paths().count(), 1000);
         let mut k = point(0.0, 0.0);
-        for i in 0..10 {
+        for _ in 0..10 {
             for p in data.iter_sub_paths() {
                 assert_eq!(p.iter_points().count(), 4);
                 for point in p.iter_points() {

@@ -1,4 +1,3 @@
-use lyon::math::*;
 use crate::geometry_utilities::types::*;
 use crate::path::*;
 

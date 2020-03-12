@@ -78,7 +78,7 @@ impl VectorField {
         true
     }
 
-    fn sample_time(&self, time: f32, point: CanvasPoint) -> Option<CanvasVector> {
+    fn sample_time(&self, _time: f32, point: CanvasPoint) -> Option<CanvasVector> {
         let mut result = CanvasVector::new(0.0, 0.0);
         for primitive in &self.primitives {
             match primitive {
@@ -184,8 +184,8 @@ pub fn poisson_disc_sampling<U>(bounds: euclid::Rect<f32,U>, radius: f32, rng: &
     let grid_width = (bounds.width() / cell_size).ceil() as usize;
     let grid_height = (bounds.height() / cell_size).ceil() as usize;
 
-    const k: u32 = 4;
-    const epsilon: f32 = 0.001;
+    const K: u32 = 4;
+    const EPSILON: f32 = 0.001;
 
     let mut grid: Vec<i32> = vec![0; grid_width*grid_height];
     let mut queue = Vec::new();
@@ -209,9 +209,9 @@ pub fn poisson_disc_sampling<U>(bounds: euclid::Rect<f32,U>, radius: f32, rng: &
         let p = queue[i];
 
         let starting_fraction = rng.gen_range(0.0, 1.0);
-        'inner: for j in 0..k {
-            let angle = 2.0 * std::f32::consts::PI * (starting_fraction + j as f32 / k as f32);
-            let r = radius + epsilon;
+        'inner: for j in 0..K {
+            let angle = 2.0 * std::f32::consts::PI * (starting_fraction + j as f32 / K as f32);
+            let r = radius + EPSILON;
             let np : euclid::Point2D<f32,U> = p + vector(r * angle.cos(), r * angle.sin());
 
             if !bounds.contains(np) {
