@@ -8,6 +8,12 @@ pub enum SelectionReference {
 }
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct PathReference {
+    // path: ByAddress<Rc<RefCell<PathData>>>,
+    path_index: u32,
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct VertexReference {
     // path: ByAddress<Rc<RefCell<PathData>>>,
     path_index: u32,
@@ -58,9 +64,10 @@ impl PathCollection {
         self.paths.len()
     }
 
-    pub fn push(&mut self, mut item: PathData) {
+    pub fn push(&mut self, mut item: PathData) -> PathReference {
         item.path_index = self.len() as u32;
         self.paths.push(item);
+        self.as_path_ref(self.paths.last().unwrap())
     }
 
     pub fn iter(&self) -> impl Iterator<Item=&PathData> {
@@ -114,6 +121,19 @@ impl<'a> MutableReferenceResolver<'a, ControlPointReference, MutableControlPoint
 }
 
 impl<'a> PathCollection {
+    pub fn resolve_path(&'a self, reference: &PathReference) -> &'a PathData {
+        &self.paths[reference.path_index as usize]
+    }
+
+    pub fn resolve_path_mut(&'a mut self, reference: &PathReference) -> &'a mut PathData {
+        &mut self.paths[reference.path_index as usize]
+    }
+
+    pub fn as_path_ref(&self, path: &PathData) -> PathReference {
+        PathReference {
+            path_index: path.path_index,
+        }
+    }
 }
 
 impl VertexReference {
