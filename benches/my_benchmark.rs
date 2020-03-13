@@ -2,7 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 //use mycrate::fibonacci;
 use lyon::math::*;
 use std::time::Instant;
-use wgpu_example::something::PathData;
+use wgpu_example::main::PathData;
 
 fn bench_iter(data: &mut PathData) {
     let mut k = point(0.0, 0.0);

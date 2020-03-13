@@ -1,4 +1,4 @@
-use crate::something::{PathEditor, Document};
+use crate::main::{PathEditor, Document};
 use crate::canvas::CanvasView;
 use crate::input::InputManager;
 use crate::path_collection::PathReference;
