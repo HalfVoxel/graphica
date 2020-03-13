@@ -51,7 +51,6 @@ pub fn evalute_cubic_bezier<U>(
         .cast_unit()
 }
 
-#[inline(never)]
 pub fn sqr_distance_bezier_point<U>(
     p0: euclid::Point2D<f32, U>,
     p1: euclid::Point2D<f32, U>,

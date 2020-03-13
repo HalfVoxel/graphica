@@ -1,5 +1,7 @@
 use crate::geometry_utilities::types::*;
 use lyon::math::*;
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
 
 pub struct SubPathData {
     pub range: std::ops::Range<usize>,
@@ -12,6 +14,8 @@ pub struct PathData {
     pub points: Vec<CanvasPoint>,
     pub sub_paths: Vec<SubPathData>,
     pub path_index: u32,
+    pub version: u32,
+    last_hash: std::cell::Cell<(u32, u64)>,
     in_path: bool,
 }
 
@@ -329,6 +333,17 @@ pub struct BorderRadii {
     pub bottom_right: f32,
 }
 
+impl BorderRadii {
+    pub fn new_uniform(radius: f32) -> BorderRadii {
+        BorderRadii {
+            top_left: radius,
+            top_right: radius,
+            bottom_left: radius,
+            bottom_right: radius,
+        }
+    }
+}
+
 impl PathData {
     pub fn new() -> PathData {
         PathData {
@@ -336,7 +351,28 @@ impl PathData {
             sub_paths: vec![],
             in_path: false,
             path_index: 0,
+            version: 0,
+            last_hash: std::cell::Cell::new((0, 0)),
         }
+    }
+
+    pub fn hash(&self) -> u64 {
+        if self.last_hash.get().0 == self.version {
+            self.last_hash.get().1
+        } else {
+            let mut h = DefaultHasher::new();
+            for p in &self.points {
+                h.write_u32(p.x.to_bits());
+                h.write_u32(p.y.to_bits());
+            }
+            let h = h.finish();
+            self.last_hash.set((self.version, h));
+            h
+        }
+    }
+
+    pub fn dirty(&mut self) {
+        self.version += 1;
     }
 
     pub fn remove<'a>(&'a mut self, index: usize) {}
@@ -442,7 +478,8 @@ impl PathData {
         self.points.push(point(0.0, 0.0));
         self.points.push(point(0.0, 0.0));
         self.extend_current();
-        (self.points.len() as i32 - 2)
+
+        self.points.len() as i32 - 2
     }
 
     pub fn move_to(&mut self, pt: CanvasPoint) -> i32 {
@@ -482,9 +519,9 @@ impl PathData {
         }
     }
 
-    pub fn add_circle(&mut self, center: CanvasPoint, radius: CanvasLength) {
+    pub fn add_circle(&mut self, center: CanvasPoint, radius: f32) {
         self.start();
-        lyon::geom::Arc::circle(center.to_untyped(), radius.get()).for_each_cubic_bezier(&mut |&bezier| {
+        lyon::geom::Arc::circle(center.to_untyped(), radius).for_each_cubic_bezier(&mut |&bezier| {
             self.points.push(bezier.from.cast_unit::<CanvasSpace>());
             self.points
                 .push((bezier.ctrl1 - bezier.from).to_point().cast_unit::<CanvasSpace>());
@@ -619,7 +656,7 @@ mod tests {
     fn test_iter() {
         let mut data = PathData::new();
         for _ in 0..1000 {
-            data.add_circle(point(0.0, 0.0), CanvasLength::new(5.0));
+            data.add_circle(point(0.0, 0.0), 5.0);
         }
         assert_eq!(data.iter_sub_paths().count(), 1000);
         let mut k = point(0.0, 0.0);

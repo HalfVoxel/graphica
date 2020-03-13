@@ -5,3 +5,4 @@ pub mod input;
 pub mod path;
 pub mod path_collection;
 pub mod something;
+mod toolbar;

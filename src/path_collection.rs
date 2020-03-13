@@ -98,6 +98,7 @@ impl<'a> ReferenceResolver<'a, VertexReference, ImmutablePathPoint<'a>> for Path
 
 impl<'a> MutableReferenceResolver<'a, VertexReference, MutablePathPoint<'a>> for PathCollection {
     fn resolve_mut(&'a mut self, reference: &VertexReference) -> MutablePathPoint<'a> {
+        self.paths[reference.path_index as usize].dirty();
         self.paths[reference.path_index as usize].point_mut(reference.vertex_index as i32)
     }
 }
@@ -116,6 +117,7 @@ impl<'a> ReferenceResolver<'a, ControlPointReference, ImmutableControlPoint<'a>>
 
 impl<'a> MutableReferenceResolver<'a, ControlPointReference, MutableControlPoint<'a>> for PathCollection {
     fn resolve_mut(&'a mut self, reference: &ControlPointReference) -> MutableControlPoint<'a> {
+        self.paths[reference.path_index as usize].dirty();
         self.paths[reference.path_index as usize].control_point_mut(reference.vertex_index as i32)
     }
 }
@@ -126,6 +128,7 @@ impl<'a> PathCollection {
     }
 
     pub fn resolve_path_mut(&'a mut self, reference: &PathReference) -> &'a mut PathData {
+        self.paths[reference.path_index as usize].dirty();
         &mut self.paths[reference.path_index as usize]
     }
 
@@ -151,7 +154,6 @@ impl VertexReference {
             path_index: self.path_index,
             vertex_index: control_before_index(vertex.data, vertex.sub_path, vertex.index) as u32,
         };
-        dbg!(vertex.index, vertex.sub_path, k.vertex_index);
         path_collection.resolve(&k).position();
         k
     }
