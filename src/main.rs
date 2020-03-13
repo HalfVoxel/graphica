@@ -135,7 +135,6 @@ impl DocumentRenderer {
         } else {
             geometry.indices
         };
-        dbg!(indices.len());
         // last_index_count = indices.len();
 
         let ibo = device
@@ -575,7 +574,7 @@ pub fn main() {
         let t0 = Instant::now();
         editor.toolbar.update_ui(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
         editor.path_editor.update(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
-        println!("Path editor = {:?}", t0.elapsed());
+        // println!("Path editor = {:?}", t0.elapsed());
 
         if scene.size_changed {
             scene.size_changed = false;
@@ -708,11 +707,11 @@ pub fn main() {
         }
 
         queue.submit(&[encoder.finish()]);
-        dbg!(t3.elapsed());
+        // dbg!(t3.elapsed());
 
         frame_count += 1.0;
         editor.input.tick_frame();
-        println!("Preparing GPU work = {:?}", t1.elapsed());
+        // println!("Preparing GPU work = {:?}", t1.elapsed());
         fps_limiter.wait(std::time::Duration::from_secs_f32(1.0 / 60.0));
     });
 }
@@ -1455,6 +1454,25 @@ impl PathEditor {
                 self.selected = None;
             } else {
                 self.selected = everything;
+            }
+        }
+
+        if input.on_combination(
+            &KeyCombination::new()
+                .and(VirtualKeyCode::LControl)
+                .and(VirtualKeyCode::P),
+        ) {
+            // Debug print selected vertex
+            if let Some(selected) = &self.selected {
+                if let Some(SelectionReference::VertexReference(vertex)) = selected.items.first() {
+                    let vertex = document.paths.resolve(vertex);
+                    let prev = vertex.prev().unwrap();
+                    let next = vertex.next().unwrap();
+                    println!("builder.move_to(point{});", prev.position());
+                    println!("builder.cubic_bezier_to(point{}, point{}, point{});", prev.control_after(), vertex.control_before(), vertex.position());
+                    println!("builder.cubic_bezier_to(point{}, point{}, point{});", vertex.control_after(), next.control_before(), next.position());
+                    println!("Tolerance: {}", (ScreenLength::new(0.1) * view.screen_to_canvas_scale()).get().max(0.001));
+                }
             }
         }
 
