@@ -21,7 +21,7 @@ use wgpu::{Device, Buffer, BindGroup, CommandEncoder, RenderPass};
 use crate::canvas::CanvasView;
 use crate::fps_limiter::FPSLimiter;
 use crate::geometry_utilities::types::*;
-use crate::geometry_utilities::{poisson_disc_sampling, sqr_distance_bezier_point, VectorField, VectorFieldPrimitive};
+use crate::geometry_utilities::{poisson_disc_sampling, sqr_distance_bezier_point, sqr_distance_bezier_point_binary, sqr_distance_bezier_point_lower_bound, VectorField, VectorFieldPrimitive};
 use crate::input::{CapturedClick, CircleShape, InputManager, KeyCombination};
 use crate::path::*;
 use crate::path_collection::{
@@ -31,6 +31,7 @@ use crate::path_collection::{
 use crate::toolbar::Toolbar;
 use std::cell::{RefCell, RefMut, Ref};
 use std::ops::Rem;
+use cpuprofiler::PROFILER;
 
 const PRIM_BUFFER_LEN: usize = 64;
 
@@ -228,6 +229,8 @@ impl DocumentRenderer {
 }
 
 pub fn main() {
+    PROFILER.lock().unwrap().start("./my-prof.profile").expect("Couldn't start");
+
     println!("== wgpu example ==");
     println!("Controls:");
     println!("  Arrow keys: scrolling");
@@ -573,7 +576,12 @@ pub fn main() {
 
         let t0 = Instant::now();
         editor.toolbar.update_ui(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
-        editor.path_editor.update(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
+        if editor.path_editor.update(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input) {
+            *control_flow = ControlFlow::Exit;
+            PROFILER.lock().unwrap().stop().expect("Couldn't stop");
+            return;
+        }
+
         // println!("Path editor = {:?}", t0.elapsed());
 
         if scene.size_changed {
@@ -883,17 +891,17 @@ impl Selection {
                         .filter(|next| point_set.contains(&vertex_ref2))
                         .is_some()
                     {
-                        let (dist, closest_on_curve) = sqr_distance_bezier_point(
-                            vertex.position(),
-                            vertex.control_after(),
-                            vertex.next().unwrap().control_before(),
-                            vertex.next().unwrap().position(),
-                            point,
-                        );
-                        if dist < min_dist {
-                            min_dist = dist;
-                            closest_point = Some(closest_on_curve);
-                            closest_ref = Some(vertex_ref2.clone());
+                        let a = vertex.position();
+                        let b = vertex.control_after();
+                        let c = vertex.next().unwrap().control_before();
+                        let d = vertex.next().unwrap().position();
+                        if sqr_distance_bezier_point_lower_bound(a, b, c, d, point) < min_dist {
+                            let (dist, closest_on_curve) = sqr_distance_bezier_point_binary(a, b, c, d, point);
+                            if dist < min_dist {
+                                min_dist = dist;
+                                closest_point = Some(closest_on_curve);
+                                closest_ref = Some(vertex_ref2.clone());
+                            }
                         }
                     } else {
                         let dist = (vertex.position() - point).square_length();
@@ -1152,6 +1160,9 @@ impl PathEditor {
         let mouse_pos_canvas = view.screen_to_canvas_point(input.mouse_position);
 
         if let Some(selected) = &self.selected {
+            let closest = selected.distance_to_curve(&document.paths, mouse_pos_canvas).unwrap();
+            ui_path.add_circle(view.canvas_to_screen_point(closest.1).cast_unit(), 3.0);
+
             for vertex in &selected.items {
                 if let SelectionReference::VertexReference(vertex) = vertex {
                     let vertex = document.paths.resolve(vertex);
@@ -1425,7 +1436,7 @@ impl PathEditor {
         // }
     }
 
-    fn update(&mut self, ui_document: &mut Document, document: &mut Document, view: &CanvasView, input: &mut InputManager) {
+    fn update(&mut self, ui_document: &mut Document, document: &mut Document, view: &CanvasView, input: &mut InputManager) -> bool {
         let canvas_mouse_pos = view.screen_to_canvas_point(input.mouse_position);
 
         if input.is_pressed(VirtualKeyCode::T) {
@@ -1476,8 +1487,19 @@ impl PathEditor {
             }
         }
 
+        if input.on_combination(
+            &KeyCombination::new()
+                .and(VirtualKeyCode::LControl)
+                .and(VirtualKeyCode::W),
+        ) {
+            // Quit
+            return true;
+        }
+
+
         self.update_selection(document, view, input);
         self.update_ui(ui_document, document, view, input);
+        false
     }
 }
 

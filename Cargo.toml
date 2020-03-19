@@ -18,6 +18,9 @@ log = "0.4"
 env_logger = "0.7"
 by_address = "1.0"
 rand = "0.7"
+cpuprofiler = "0.0.4"
+lazy_static = "1.4"
+packed_simd = "0.3"
 
 [dev-dependencies]
 criterion = "0.3"
