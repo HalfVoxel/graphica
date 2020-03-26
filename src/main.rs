@@ -28,6 +28,7 @@ use crate::path_collection::{
     ControlPointReference, MutableReferenceResolver, PathCollection, ReferenceResolver, SelectionReference,
     VertexReference, PathReference
 };
+use crate::gui;
 use crate::toolbar::Toolbar;
 use std::cell::{RefCell, RefMut, Ref};
 use std::ops::Rem;
@@ -308,11 +309,15 @@ pub fn main() {
     let mut ui_document = Document {
         paths: PathCollection { paths: vec![] },
     };
+
+    let mut gui = gui::Root::new();
+    gui.add(Toolbar::new(&mut ui_document));
+
     let mut editor = Editor {
         path_editor: PathEditor::new(&mut ui_document),
-        toolbar: Toolbar::new(&mut ui_document),
         document: document,
         ui_document: ui_document,
+        gui: gui,
         scene: SceneParams {
             target_zoom: 1.0,
             view: CanvasView {
@@ -575,7 +580,9 @@ pub fn main() {
         }
 
         let t0 = Instant::now();
-        editor.toolbar.update_ui(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
+        editor.gui.update();
+        editor.gui.render(&mut editor.ui_document, &scene.view);
+        // editor.toolbar.update_ui(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
         if editor.path_editor.update(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input) {
             *control_flow = ControlFlow::Exit;
             PROFILER.lock().unwrap().stop().expect("Couldn't stop");
@@ -1046,7 +1053,7 @@ enum SelectState {
 }
 
 pub struct Editor {
-    toolbar: Toolbar,
+    gui: gui::Root,
     path_editor: PathEditor,
     scene: SceneParams,
     ui_document: Document,
@@ -1160,8 +1167,8 @@ impl PathEditor {
         let mouse_pos_canvas = view.screen_to_canvas_point(input.mouse_position);
 
         if let Some(selected) = &self.selected {
-            let closest = selected.distance_to_curve(&document.paths, mouse_pos_canvas).unwrap();
-            ui_path.add_circle(view.canvas_to_screen_point(closest.1).cast_unit(), 3.0);
+            // let closest = selected.distance_to_curve(&document.paths, mouse_pos_canvas).unwrap();
+            // ui_path.add_circle(view.canvas_to_screen_point(closest.1).cast_unit(), 3.0);
 
             for vertex in &selected.items {
                 if let SelectionReference::VertexReference(vertex) = vertex {

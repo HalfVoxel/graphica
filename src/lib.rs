@@ -5,4 +5,5 @@ pub mod input;
 pub mod path;
 pub mod path_collection;
 pub mod main;
+pub mod gui;
 mod toolbar;
