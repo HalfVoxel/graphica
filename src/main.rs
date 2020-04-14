@@ -32,7 +32,7 @@ use crate::gui;
 use crate::toolbar::GUIRoot;
 use std::cell::{RefCell, RefMut, Ref};
 use std::ops::Rem;
-use cpuprofiler::PROFILER;
+// use cpuprofiler::PROFILER;
 use crate::path_editor::*;
 use crate::brush_editor::{BrushEditor, BrushData};
 use kurbo::Point as KurboPoint;
@@ -407,7 +407,7 @@ impl DocumentRenderer {
 }
 
 pub fn main() {
-    PROFILER.lock().unwrap().start("./my-prof.profile").expect("Couldn't start");
+    // PROFILER.lock().unwrap().start("./my-prof.profile").expect("Couldn't start");
 
     println!("== wgpu example ==");
     println!("Controls:");
@@ -858,7 +858,7 @@ pub fn main() {
         ) {
             // Quit
             *control_flow = ControlFlow::Exit;
-            PROFILER.lock().unwrap().stop().expect("Couldn't stop");
+            // PROFILER.lock().unwrap().stop().expect("Couldn't stop");
             return;
         }
 
