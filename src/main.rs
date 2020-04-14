@@ -8,7 +8,6 @@ use lyon::tessellation::{FillOptions, FillTessellator};
 use lyon::tessellation::{StrokeOptions, StrokeTessellator};
 
 use euclid;
-use rand::{rngs::StdRng, SeedableRng};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use std::hash::Hash;
@@ -16,23 +15,29 @@ use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
-use wgpu::{Device, Buffer, BindGroup, CommandEncoder, RenderPass};
+use wgpu::{Device, Buffer, BindGroup, CommandEncoder, RenderPass, RenderPipeline};
+use std::rc::Rc;
 
 use crate::canvas::CanvasView;
 use crate::fps_limiter::FPSLimiter;
 use crate::geometry_utilities::types::*;
-use crate::geometry_utilities::{poisson_disc_sampling, sqr_distance_bezier_point, sqr_distance_bezier_point_binary, sqr_distance_bezier_point_lower_bound, VectorField, VectorFieldPrimitive};
+use crate::geometry_utilities::{poisson_disc_sampling, sqr_distance_bezier_point, sqr_distance_bezier_point_binary, sqr_distance_bezier_point_lower_bound, VectorField, VectorFieldPrimitive, ParamCurveDistanceEval};
 use crate::input::{CapturedClick, CircleShape, InputManager, KeyCombination};
 use crate::path::*;
 use crate::path_collection::{
     ControlPointReference, MutableReferenceResolver, PathCollection, ReferenceResolver, SelectionReference,
     VertexReference, PathReference
 };
+use crate::geometry_utilities;
 use crate::gui;
-use crate::toolbar::Toolbar;
+use crate::toolbar::GUIRoot;
 use std::cell::{RefCell, RefMut, Ref};
 use std::ops::Rem;
 use cpuprofiler::PROFILER;
+use crate::path_editor::*;
+use crate::brush_editor::{BrushEditor, BrushData};
+use kurbo::Point as KurboPoint;
+use kurbo::CubicBez;
 
 const PRIM_BUFFER_LEN: usize = 64;
 
@@ -101,10 +106,164 @@ struct DocumentRenderer {
     primitive_ubo: Buffer,
     bind_group: BindGroup,
     index_buffer_length: usize,
+    render_pipeline: Rc<RenderPipeline>,
+    brush_renderer: BrushRenderer,
+}
+
+struct BrushRenderer {
+    vbo: Buffer,
+    ibo: Buffer,
+    // ubo: Buffer,
+    index_buffer_length: usize,
+    bind_group: BindGroup,
+    render_pipeline: Rc<RenderPipeline>,
+}
+
+fn sample_points_along_curve(path: &PathData, spacing: f32) -> Vec<CanvasPoint> {
+    let mut result = vec![];
+    let mut builder = Path::builder();
+    path.build(&mut builder);
+    
+    for sub_path in path.iter_sub_paths() {
+        let mut offset = 0f32;
+
+        for start in sub_path.iter_beziers() {
+            let end = start.next().unwrap();
+            let p0 = start.position();
+            let p1 = start.control_after();
+            let p2 = end.control_before();
+            let p3 = end.position();
+            let bezier = CubicBez::new(KurboPoint::new(p0.x as f64, p0.y as f64), KurboPoint::new(p1.x as f64, p1.y as f64), KurboPoint::new(p2.x as f64, p2.y as f64), KurboPoint::new(p3.x as f64, p3.y as f64));
+
+            loop {
+                match bezier.eval_at_distance((spacing + offset) as f64, 0.01) {
+                    Ok(p) => {
+                        result.push(point(p.x as f32, p.y as f32));
+                        offset += spacing;
+                    }
+                    Err(geometry_utilities::CurveTooShort { remaining }) => {
+                        offset = -remaining as f32;
+                        debug_assert!(remaining >= 0.0);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    result
+}
+
+#[derive(Copy, Clone)]
+struct BrushUniforms {
+    dummy: i32,
+}
+
+impl BrushRenderer {
+    fn new(brush_data: &BrushData, view: &CanvasView, device: &Device, encoder: &mut CommandEncoder, bind_group_layout: &wgpu::BindGroupLayout, scene_ubo: &Buffer, scene_ubo_size: u64, render_pipeline_brush: &Rc<RenderPipeline>, texture: &Texture) -> BrushRenderer {
+        let points = sample_points_along_curve(&brush_data.path, brush_data.brush.spacing);
+        let size = 20.0;
+
+        let vertices: Vec<CanvasPoint> = points.iter().flat_map(|&x| vec![x + vector(-size, -size), x + vector(size, -size), x + vector(size, size), x + vector(-size, size)]).collect();
+
+        let vbo = device
+            .create_buffer_mapped(vertices.len(), wgpu::BufferUsage::VERTEX)
+            .fill_from_slice(&vertices);
+        
+        let indices: Vec<u32> = (0..points.len() as u32).flat_map(|x| vec![
+            4*x + 0, 4*x + 1, 4*x + 2,
+            4*x + 3, 4*x + 2, 4*x + 0
+        ]).collect();
+        let ibo = device
+            .create_buffer_mapped(indices.len(), wgpu::BufferUsage::INDEX)
+            .fill_from_slice(&indices);
+        
+        let primitive_ubo_transfer = device
+            .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
+            .fill_from_slice(&[BrushUniforms { dummy: 0 }]);
+
+        let primitive_ubo_size = std::mem::size_of::<BrushUniforms>() as u64;
+        let primitive_ubo = device.create_buffer(&wgpu::BufferDescriptor {
+            size: primitive_ubo_size,
+            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+        });
+        encoder.copy_buffer_to_buffer(&primitive_ubo_transfer, 0, &primitive_ubo, 0, primitive_ubo_size);
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            lod_min_clamp: -100.0,
+            lod_max_clamp: 100.0,
+            compare_function: wgpu::CompareFunction::Always,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bind_group_layout,
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &scene_ubo,
+                        range: 0..scene_ubo_size,
+                    },
+                },
+                wgpu::Binding {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &primitive_ubo,
+                        range: 0..primitive_ubo_size,
+                    },
+                },
+                wgpu::Binding {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::Binding {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&texture.view),
+                },
+            ],
+        });
+
+        BrushRenderer {
+            vbo,
+            ibo,
+            // ubo,
+            index_buffer_length: indices.len(),
+            bind_group,
+            render_pipeline: render_pipeline_brush.clone()
+        }
+    }
+
+    fn update(&mut self, view: &CanvasView, device: &Device, encoder: &mut CommandEncoder) {
+        // let scene_ubo_transfer = device
+        // .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
+        // .fill_from_slice(&[Globals {
+        //     resolution: [view.resolution.width as f32, view.resolution.height as f32],
+        //     zoom: view.zoom,
+        //     scroll_offset: view.scroll.to_array(),
+        // }]);
+
+        // let scene_ubo_size = std::mem::size_of::<Globals>() as u64;
+        // encoder.copy_buffer_to_buffer(&scene_ubo_transfer, 0, &self.scene_ubo, 0, scene_ubo_size);
+    }
+
+    fn render(&self, pass: &mut RenderPass) {
+        dbg!(self.index_buffer_length);
+        pass.set_pipeline(&self.render_pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_index_buffer(&self.ibo, 0);
+        pass.set_vertex_buffers(0, &[(&self.vbo, 0)]);
+        pass.draw_indexed(0..(self.index_buffer_length as u32), 0, 0..1);
+    }
 }
 
 impl DocumentRenderer {
-    fn new(document: &Document, view: &CanvasView, device: &Device, encoder: &mut CommandEncoder, bind_group_layout: &wgpu::BindGroupLayout, wireframe: bool) -> DocumentRenderer {
+    fn new(document: &Document, view: &CanvasView, device: &Device, encoder: &mut CommandEncoder, bind_group_layout: &wgpu::BindGroupLayout, wireframe: bool, render_pipeline: &Rc<RenderPipeline>, wireframe_render_pipeline: &Rc<RenderPipeline>, render_pipeline_brush: &Rc<RenderPipeline>, bind_group_layout_brush: &wgpu::BindGroupLayout) -> DocumentRenderer {
         let mut builder = Path::builder();
         document.build(&mut builder);
         let p = builder.build();
@@ -114,7 +273,7 @@ impl DocumentRenderer {
         // It's important to clamp the tolerance to a not too small value
         // If the tesselator is fed a too small value it may get stuck in an infinite loop due to floating point precision errors
         canvas_tolerance = CanvasLength::new(canvas_tolerance.get().max(0.001));
-        let canvas_line_width = ScreenLength::new(1.0) * view.screen_to_canvas_scale();
+        let canvas_line_width = ScreenLength::new(4.0) * view.screen_to_canvas_scale();
         StrokeTessellator::new()
             .tessellate_path(
                 &p,
@@ -196,6 +355,8 @@ impl DocumentRenderer {
         encoder.copy_buffer_to_buffer(&scene_ubo_transfer, 0, &scene_ubo, 0, scene_ubo_size);
         encoder.copy_buffer_to_buffer(&primitive_ubo_transfer, 0, &primitive_ubo, 0, primitive_ubo_size);
 
+        let brush_renderer = BrushRenderer::new(&document.brushes, view,device, encoder, bind_group_layout_brush, &scene_ubo, scene_ubo_size, render_pipeline_brush, &document.textures[0]);
+
         let mut res = DocumentRenderer {
             vbo,
             ibo,
@@ -203,6 +364,8 @@ impl DocumentRenderer {
             primitive_ubo,
             bind_group,
             index_buffer_length: indices.len(),
+            brush_renderer: brush_renderer,
+            render_pipeline: if !wireframe { render_pipeline.clone() } else { wireframe_render_pipeline.clone() }
         };
         res.update(view, device, encoder);
         res
@@ -222,10 +385,12 @@ impl DocumentRenderer {
     }
 
     fn render(&self, pass: &mut RenderPass) {
+        pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_index_buffer(&self.ibo, 0);
         pass.set_vertex_buffers(0, &[(&self.vbo, 0)]);
         pass.draw_indexed(0..(self.index_buffer_length as u32), 0, 0..1);
+        self.brush_renderer.render(pass);
     }
 }
 
@@ -305,19 +470,25 @@ pub fn main() {
 
     let document = Document {
         paths: PathCollection { paths: vec![] },
+        brushes: crate::brush_editor::BrushData::new(),
+        textures: vec![],
     };
     let mut ui_document = Document {
         paths: PathCollection { paths: vec![] },
+        brushes: crate::brush_editor::BrushData::new(),
+        textures: vec![],
     };
 
     let mut gui = gui::Root::new();
-    gui.add(Toolbar::new(&mut ui_document));
+    let gui_root = gui.add(GUIRoot::new());
 
     let mut editor = Editor {
         path_editor: PathEditor::new(&mut ui_document),
+        brush_editor: BrushEditor::new(),
         document: document,
         ui_document: ui_document,
         gui: gui,
+        gui_root: gui_root,
         scene: SceneParams {
             target_zoom: 1.0,
             view: CanvasView {
@@ -384,6 +555,8 @@ pub fn main() {
     let fs_module = load_shader(&device, include_bytes!("./../shaders/geometry.frag.spv"));
     let bg_vs_module = load_shader(&device, include_bytes!("./../shaders/background.vert.spv"));
     let bg_fs_module = load_shader(&device, include_bytes!("./../shaders/background.frag.spv"));
+    let brush_vs_module = load_shader(&device, include_bytes!("./../shaders/brush.vert.spv"));
+    let brush_fs_module = load_shader(&device, include_bytes!("./../shaders/brush.frag.spv"));
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         bindings: &[
@@ -494,12 +667,12 @@ pub fn main() {
         alpha_to_coverage_enabled: false,
     };
 
-    let render_pipeline = device.create_render_pipeline(&render_pipeline_descriptor);
+    let render_pipeline = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor));
 
     // TODO: this isn't what we want: we'd need the equivalent of VK_POLYGON_MODE_LINE,
     // but it doesn't seem to be exposed by wgpu?
     render_pipeline_descriptor.primitive_topology = wgpu::PrimitiveTopology::LineList;
-    let wireframe_render_pipeline = device.create_render_pipeline(&render_pipeline_descriptor);
+    let wireframe_render_pipeline = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor));
 
     let bg_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         layout: &pipeline_layout,
@@ -541,6 +714,83 @@ pub fn main() {
         alpha_to_coverage_enabled: false,
     });
 
+    let render_pipeline_descriptor_brush = wgpu::RenderPipelineDescriptor {
+        layout: &pipeline_layout,
+        vertex_stage: wgpu::ProgrammableStageDescriptor {
+            module: &brush_vs_module,
+            entry_point: "main",
+        },
+        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            module: &brush_fs_module,
+            entry_point: "main",
+        }),
+        rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: wgpu::CullMode::None,
+            depth_bias: 0,
+            depth_bias_slope_scale: 0.0,
+            depth_bias_clamp: 0.0,
+        }),
+        primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+        color_states: &[wgpu::ColorStateDescriptor {
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            color_blend: wgpu::BlendDescriptor {
+                src_factor: wgpu::BlendFactor::SrcAlpha,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha_blend: wgpu::BlendDescriptor {
+                src_factor: wgpu::BlendFactor::SrcAlpha,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            write_mask: wgpu::ColorWrite::ALL,
+        }],
+        depth_stencil_state: depth_stencil_state.clone(),
+        index_format: wgpu::IndexFormat::Uint32,
+        vertex_buffers: &[wgpu::VertexBufferDescriptor {
+            stride: std::mem::size_of::<CanvasPoint>() as u64,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttributeDescriptor {
+                    offset: 0,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 0,
+                },
+            ],
+        }],
+        sample_count: sample_count,
+        sample_mask: !0,
+        alpha_to_coverage_enabled: false,
+    };
+
+    let render_pipeline_brush = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor_brush));
+
+    let bind_group_layout_brush = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        bindings: &[
+            wgpu::BindGroupLayoutBinding {
+                binding: 0,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+            },
+            wgpu::BindGroupLayoutBinding {
+                binding: 1,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+            },
+            wgpu::BindGroupLayoutBinding {
+                binding: 2,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::Sampler,
+            },
+            wgpu::BindGroupLayoutBinding {
+                binding: 3,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::SampledTexture { multisampled: true, dimension: wgpu::TextureViewDimension::D2 },
+            },
+        ],
+    });
+
     let event_loop = EventLoop::new();
     let window = Window::new(&event_loop).unwrap();
     let size = window.inner_size();
@@ -568,6 +818,12 @@ pub fn main() {
     let mut document_renderer1 = None;
     let mut document_renderer2 = None;
 
+    let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
+    let tex = std::sync::Arc::new(Texture::load_from_file(std::path::Path::new("brush.png"), &device, &mut init_encoder).unwrap());
+    editor.document.textures.push(tex.clone());
+    editor.ui_document.textures.push(tex);
+    init_encoder.finish();
+
     event_loop.run(move |event, _, control_flow| {
         let scene = &mut editor.scene;
         let new_time = Instant::now();
@@ -581,9 +837,18 @@ pub fn main() {
 
         let t0 = Instant::now();
         editor.gui.update();
+        editor.gui.input(&mut editor.ui_document, &mut editor.input);
         editor.gui.render(&mut editor.ui_document, &scene.view);
         // editor.toolbar.update_ui(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
-        if editor.path_editor.update(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input) {
+        editor.path_editor.update(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input, &editor.gui_root.get(&editor.gui).tool);
+        editor.brush_editor.update(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input, &editor.gui_root.get(&editor.gui).tool);
+
+        if editor.input.on_combination(
+            &KeyCombination::new()
+                .and(VirtualKeyCode::LControl)
+                .and(VirtualKeyCode::W),
+        ) {
+            // Quit
             *control_flow = ControlFlow::Exit;
             PROFILER.lock().unwrap().stop().expect("Couldn't stop");
             return;
@@ -640,9 +905,9 @@ pub fn main() {
 
         let t3 = Instant::now();
         let hash = editor.document.hash() ^ scene.view.hash();
-        if hash != last_hash1 || document_renderer1.is_none() {
+        if hash != last_hash1 || document_renderer1.is_none() || true {
             last_hash1 = hash;
-            document_renderer1 = Some(DocumentRenderer::new(&editor.document, &scene.view, &device, &mut encoder, &bind_group_layout, scene.show_wireframe));
+            document_renderer1 = Some(DocumentRenderer::new(&editor.document, &scene.view, &device, &mut encoder, &bind_group_layout, scene.show_wireframe, &render_pipeline, &wireframe_render_pipeline, &render_pipeline_brush, &bind_group_layout_brush));
         }
 
         let ui_view = CanvasView {
@@ -651,9 +916,9 @@ pub fn main() {
             resolution: scene.view.resolution,
         };
         let hash = editor.ui_document.hash() ^ ui_view.hash();
-        if hash != last_hash2 || document_renderer2.is_none() {
+        if hash != last_hash2 || document_renderer2.is_none() || true {
             last_hash2 = hash;
-            document_renderer2 = Some(DocumentRenderer::new(&editor.ui_document, &ui_view, &device, &mut encoder, &bind_group_layout, scene.show_wireframe));
+            document_renderer2 = Some(DocumentRenderer::new(&editor.ui_document, &ui_view, &device, &mut encoder, &bind_group_layout, scene.show_wireframe, &render_pipeline, &wireframe_render_pipeline, &render_pipeline_brush, &bind_group_layout_brush));
         }
 
         document_renderer1.as_mut().unwrap().update(&scene.view, &device, &mut encoder);
@@ -700,12 +965,6 @@ pub fn main() {
                 pass.set_vertex_buffers(0, &[(&bg_vbo, 0)]);
 
                 pass.draw_indexed(0..6, 0, 0..1);
-            }
-
-            if scene.show_wireframe {
-                pass.set_pipeline(&wireframe_render_pipeline);
-            } else {
-                pass.set_pipeline(&render_pipeline);
             }
 
             document_renderer1.as_ref().unwrap().render(&mut pass);
@@ -762,306 +1021,82 @@ impl StrokeVertexConstructor<GpuVertex> for WithId {
     }
 }
 
-#[derive(Eq, Clone)]
-pub struct Selection {
-    /// Items in the selection.
-    /// Should not contain any duplicates
-    items: Vec<SelectionReference>,
-}
-
-impl PartialEq for Selection {
-    fn eq(&self, other: &Self) -> bool {
-        if self.items.len() != other.items.len() {
-            return false;
-        }
-
-        let mut refs = HashSet::new();
-        for item in &self.items {
-            // Insert everything into the set
-            // Also assert to make sure there are no duplicates in the selection
-            // as this will break the algorithm
-            assert!(refs.insert(item));
-        }
-
-        for item in &other.items {
-            if !refs.contains(item) {
-                return false;
-            }
-        }
-
-        // The selections have the same length and self contains everything in other.
-        // This means they are identical since selections do not contain duplicates
-        true
-    }
-}
-
-pub struct ClosestInSelection {
-    distance: CanvasLength,
-    point: CanvasPoint,
-    closest: ClosestItemInSelection,
-}
-pub enum ClosestItemInSelection {
-    Curve { start: VertexReference },
-    ControlPoint(ControlPointReference),
-}
-
-impl Selection {
-    // pub fn distance_to(&self, paths: &PathCollection, point: CanvasPoint) -> Option<ClosestInSelection> {
-    //     let mut min_dist = std::f32::INFINITY;
-    //     let mut closest_point = None;
-    //     let mut closest_ref = None;
-    //     let mut point_set = HashSet::new();
-    //     for vertex in &self.items {
-    //         if let SelectionReference::VertexReference(vertex) = vertex {
-    //             point_set.insert(vertex);
-    //         }
-    //     }
-    //     for vertex_ref in &self.items {
-    //         match vertex_ref {
-    //             SelectionReference::ControlPointReference(ctrl_ref) => {
-    //                 let vertex = paths.resolve(ctrl_ref);
-    //                 let dist = (vertex.position() - point).square_length();
-    //                 if dist < min_dist {
-    //                     min_dist = dist;
-    //                     closest_point = Some(vertex.position());
-    //                     closest_ref = Some(vertex_ref.clone());
-    //                 }
-    //             }
-    //             SelectionReference::VertexReference(vertex_ref2) => {
-    //                 let vertex = paths.resolve(vertex_ref2);
-    //                 if vertex_ref2
-    //                     .next(paths)
-    //                     .filter(|next| point_set.contains(&vertex_ref2))
-    //                     .is_some()
-    //                 {
-    //                     let (dist, closest_on_curve) = sqr_distance_bezier_point(
-    //                         vertex.position(),
-    //                         vertex.control_after(),
-    //                         vertex.next().unwrap().control_before(),
-    //                         vertex.next().unwrap().position(),
-    //                         point,
-    //                     );
-    //                     if dist < min_dist {
-    //                         min_dist = dist;
-    //                         closest_point = Some(closest_on_curve);
-    //                         closest_ref = Some(vertex_ref.clone());
-    //                     }
-    //                 } else {
-    //                     let dist = (vertex.position() - point).square_length();
-    //                     if dist < min_dist {
-    //                         min_dist = dist;
-    //                         closest_point = Some(vertex.position());
-    //                         closest_ref = Some(vertex_ref.clone());
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     if let Some(p) = closest_ref {
-    //         match p {
-    //             SelectionReference::VertexReference(vertex_ref2) => Some(ClosestInSelection {
-    //                 distance: CanvasLength::new(min_dist.sqrt()),
-    //                 point: closest_point.unwrap(),
-    //                 closest: ClosestItemInSelection::Curve { start: vertex_ref2 },
-    //             }),
-    //             SelectionReference::ControlPointReference(ctrl_ref) => Some(ClosestInSelection {
-    //                 distance: CanvasLength::new(min_dist.sqrt()),
-    //                 point: closest_point.unwrap(),
-    //                 closest: ClosestItemInSelection::ControlPoint(ctrl_ref),
-    //             }),
-    //         }
-    //     } else {
-    //         None
-    //     }
-    // }
-
-    pub fn distance_to_curve(
-        &self,
-        paths: &PathCollection,
-        point: CanvasPoint,
-    ) -> Option<(VertexReference, CanvasPoint, CanvasLength)> {
-        let mut min_dist = std::f32::INFINITY;
-        let mut closest_point = None;
-        let mut closest_ref = None;
-        let mut point_set = HashSet::new();
-        for vertex in &self.items {
-            if let SelectionReference::VertexReference(vertex) = vertex {
-                point_set.insert(vertex);
-            }
-        }
-        for vertex_ref in &self.items {
-            match vertex_ref {
-                SelectionReference::VertexReference(vertex_ref2) => {
-                    let vertex = paths.resolve(vertex_ref2);
-                    if vertex_ref2
-                        .next(paths)
-                        .filter(|next| point_set.contains(&vertex_ref2))
-                        .is_some()
-                    {
-                        let a = vertex.position();
-                        let b = vertex.control_after();
-                        let c = vertex.next().unwrap().control_before();
-                        let d = vertex.next().unwrap().position();
-                        if sqr_distance_bezier_point_lower_bound(a, b, c, d, point) < min_dist {
-                            let (dist, closest_on_curve) = sqr_distance_bezier_point_binary(a, b, c, d, point);
-                            if dist < min_dist {
-                                min_dist = dist;
-                                closest_point = Some(closest_on_curve);
-                                closest_ref = Some(vertex_ref2.clone());
-                            }
-                        }
-                    } else {
-                        let dist = (vertex.position() - point).square_length();
-                        if dist < min_dist {
-                            min_dist = dist;
-                            closest_point = Some(vertex.position());
-                            closest_ref = Some(vertex_ref2.clone());
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if let Some(closest_point) = closest_point {
-            Some((closest_ref.unwrap(), closest_point, CanvasLength::new(min_dist.sqrt())))
-        } else {
-            None
-        }
-    }
-}
-
-fn smooth_vertices(selection: &Selection, paths: &mut PathCollection) {
-    for vertex in &selection.items {
-        if let SelectionReference::VertexReference(vertex) = vertex {
-            let mut vertex = paths.resolve_mut(vertex);
-            let pos = vertex.position();
-            let prev = vertex.prev();
-            let next = vertex.next();
-            let dir = if prev.is_some() && next.is_some() {
-                next.unwrap().position() - prev.unwrap().position()
-            } else if let Some(prev) = prev {
-                pos - prev.position()
-            } else if let Some(next) = next {
-                next.position() - pos
-            } else {
-                continue;
-            };
-
-            vertex.set_control_before(pos - dir * 0.25);
-            vertex.set_control_after(pos + dir * 0.25);
-        }
-    }
-}
-
-fn drag_at_point(
-    selection: &Selection,
-    paths: &PathCollection,
-    point: CanvasPoint,
-    distance_threshold: CanvasLength,
-) -> Option<Selection> {
-
-    let selected_vertices: Vec<VertexReference> = selection
-        .items
-        .iter()
-        .filter_map(|v| {
-            if let SelectionReference::VertexReference(v_ref) = v {
-                Some(*v_ref)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let distance_to_controls = selected_vertices
-            .iter()
-            .flat_map(|v| vec![v.control_before(&paths), v.control_after(&paths)])
-            .map(|v| (v, (paths.resolve(&v).position() - point).length()))
-            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-
-    // view.screen_to_canvas_point(capture.mouse_start)
-    let closest_vertex = selected_vertices
-        .iter()
-        .map(|v| (v, (paths.resolve(v).position() - point).length()))
-        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-    let distance_to_curve = selection.distance_to_curve(&paths, point);
-
-    // Figure out which item is the best to drag
-    let mut best_score = CanvasLength::new(std::f32::INFINITY);
-    // Lower weights means they are prioritized higher when picking
-    const VERTEX_WEIGHT: f32 = 0.5;
-    const CONTROL_WEIGHT: f32 = 0.7;
-    const CURVE_WEIGHT: f32 = 1.0;
-
-    if let Some(closest_vertex) = &closest_vertex {
-        let dist = CanvasLength::new(closest_vertex.1);
-        let score = dist * VERTEX_WEIGHT;
-        if score < best_score && dist < distance_threshold {
-            best_score = score;
-        }
-    }
-    if let Some(distance_to_controls) = &distance_to_controls {
-        let dist = CanvasLength::new(distance_to_controls.1);
-        let score = dist * CONTROL_WEIGHT;
-        if score < best_score && dist < distance_threshold {
-            best_score = score;
-        }
-    }
-    if let Some(distance_to_curve) = &distance_to_curve {
-        let score = distance_to_curve.2 * CURVE_WEIGHT;
-        if score < best_score && distance_to_curve.2 < distance_threshold {
-            best_score = score;
-        }
-    }
-
-    // Figure out which item had the best score and then return that result
-    if let Some(closest_vertex) = &closest_vertex {
-        let dist = CanvasLength::new(closest_vertex.1);
-        let score = dist * VERTEX_WEIGHT;
-        if score == best_score {
-            // The mouse started at a vertex, this means the user probably wants to drag the existing selection.
-            return Some(selection.clone());
-        }
-    }
-
-    if let Some(distance_to_controls) = &distance_to_controls {
-        let dist = CanvasLength::new(distance_to_controls.1);
-        let score = dist * CONTROL_WEIGHT;
-        if score == best_score {
-            return Some(Selection {
-                items: vec![distance_to_controls.0.into()],
-            });
-        }
-    }
-
-    if let Some(distance_to_curve) = &distance_to_curve {
-        let score = distance_to_curve.2 * CURVE_WEIGHT;
-        if score == best_score {
-            // The mouse started at a selected curve, this means the user probably wants to drag the existing selection.
-            return Some(selection.clone());
-        }
-    }
-
-    // Nothing was close enough
-    None
-}
-
-enum SelectState {
-    Down(CapturedClick, Selection),
-    DragSelect(CapturedClick),
-    Dragging(CapturedClick, Selection, Vec<CanvasPoint>),
-}
-
 pub struct Editor {
     gui: gui::Root,
+    gui_root: gui::TypedWidgetReference<crate::toolbar::GUIRoot>,
     path_editor: PathEditor,
+    brush_editor: BrushEditor,
     scene: SceneParams,
     ui_document: Document,
     document: Document,
     input: InputManager,
 }
 
+pub struct Texture {
+    buffer: wgpu::Texture,
+    view: wgpu::TextureView,
+}
+
+impl Texture {
+    fn load_from_file(path: &std::path::Path, device: &Device, encoder: &mut CommandEncoder) -> Result<Texture, image::ImageError> {
+        let loaded_image = image::open(path)?;
+
+        let rgba = loaded_image.into_rgba();
+        let width = rgba.width();
+        let height = rgba.height();
+
+        let texture_extent = wgpu::Extent3d {
+            width: width,
+            height: height,
+            depth: 1,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            size: texture_extent,
+            array_layer_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+        });
+
+        let texture_view = texture.create_default_view();
+        let raw = rgba.into_raw();
+
+        let transfer_buffer = device
+            .create_buffer_mapped(raw.len(), wgpu::BufferUsage::COPY_SRC)
+            .fill_from_slice(&raw);
+
+        encoder.copy_buffer_to_texture(
+            wgpu::BufferCopyView {
+                buffer: &transfer_buffer,
+                offset: 0,
+                row_pitch: 4 * width * std::mem::size_of::<u8>() as u32,
+                image_height: height,
+            },
+            wgpu::TextureCopyView {
+                texture: &texture,
+                mip_level: 0,
+                array_layer: 0,
+                origin: wgpu::Origin3d {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+            },
+            texture_extent,
+        );
+
+        Ok(Texture {
+            buffer: texture,
+            view: texture_view,
+        })
+    }
+}
+
 pub struct Document {
+    pub textures: Vec<std::sync::Arc<Texture>>,
+    pub brushes: crate::brush_editor::BrushData,
     pub paths: PathCollection,
 }
 
@@ -1107,408 +1142,7 @@ impl Document {
     }
 }
 
-pub struct PathEditor {
-    ui_path: PathReference,
-    selected: Option<Selection>,
-    select_state: Option<SelectState>,
-    vector_field: VectorField,
-}
 
-impl PathEditor {
-    fn new(document: &mut Document) -> PathEditor {
-        PathEditor {
-            ui_path: document.paths.push(PathData::new()),
-            selected: None,
-            select_state: None,
-            vector_field: VectorField {
-                primitives: vec![
-                    VectorFieldPrimitive::Curl {
-                        center: point(0.0, 0.0),
-                        strength: 1.0,
-                        radius: 500.0,
-                    },
-                    VectorFieldPrimitive::Curl {
-                        center: point(0.0, 50.0),
-                        strength: 1.0,
-                        radius: 500.0,
-                    },
-                    VectorFieldPrimitive::Curl {
-                        center: point(100.0, 50.0),
-                        strength: 1.0,
-                        radius: 500.0,
-                    },
-                    VectorFieldPrimitive::Curl {
-                        center: point(200.0, 300.0),
-                        strength: 1.0,
-                        radius: 2000.0,
-                    },
-                    VectorFieldPrimitive::Linear {
-                        direction: vector(1.0, 1.0),
-                        strength: 1.1,
-                    },
-                ],
-            }
-        }
-    }
-
-    fn update_ui(&mut self, ui_document: &mut Document, document: &mut Document, view: &CanvasView, input: &InputManager) {
-        let ui_path = ui_document.paths.resolve_path_mut(&self.ui_path);
-        ui_path.clear();
-        ui_path.add_rounded_rect(
-            &rect(100.0, 100.0, 200.0, 100.0),
-            BorderRadii {
-                top_left: 0.0,
-                top_right: 1000.0,
-                bottom_right: 50.0,
-                bottom_left: 50.0,
-            },
-        );
-
-        let mouse_pos_canvas = view.screen_to_canvas_point(input.mouse_position);
-
-        if let Some(selected) = &self.selected {
-            // let closest = selected.distance_to_curve(&document.paths, mouse_pos_canvas).unwrap();
-            // ui_path.add_circle(view.canvas_to_screen_point(closest.1).cast_unit(), 3.0);
-
-            for vertex in &selected.items {
-                if let SelectionReference::VertexReference(vertex) = vertex {
-                    let vertex = document.paths.resolve(vertex);
-                    ui_path.add_circle(
-                        view.canvas_to_screen_point(vertex.position()).cast_unit(),
-                        5.0,
-                    );
-
-                    if vertex.control_before() != vertex.position() {
-                        ui_path.add_circle(
-                            view.canvas_to_screen_point(vertex.control_before()).cast_unit(),
-                            3.0,
-                        );
-                    }
-                    if vertex.control_after() != vertex.position() {
-                        ui_path.add_circle(
-                            view.canvas_to_screen_point(vertex.control_after()).cast_unit(),
-                            3.0,
-                        );
-                    }
-
-                    if vertex.control_before() != vertex.position() {
-                        ui_path.move_to(view.canvas_to_screen_point(vertex.control_before()).cast_unit());
-                        ui_path.line_to(view.canvas_to_screen_point(vertex.position()).cast_unit());
-                    }
-                    if vertex.control_after() != vertex.position() {
-                        ui_path.move_to(view.canvas_to_screen_point(vertex.control_after()).cast_unit());
-                        ui_path.line_to(view.canvas_to_screen_point(vertex.position()).cast_unit());
-                    }
-                }
-            }
-
-            let drag = drag_at_point(
-                selected,
-                &document.paths,
-                mouse_pos_canvas,
-                ScreenLength::new(5.0) * view.screen_to_canvas_scale(),
-            );
-            if let Some(drag) = drag {
-                for item in &drag.items {
-                    if let SelectionReference::VertexReference(vertex) = item {
-                        let vertex = document.paths.resolve(vertex);
-                        ui_path.add_circle(
-                            view.canvas_to_screen_point(vertex.position()).cast_unit(),
-                            4.0,
-                        );
-                    }
-                    if let SelectionReference::ControlPointReference(vertex) = item {
-                        let vertex = document.paths.resolve(vertex);
-                        ui_path.add_circle(
-                            view.canvas_to_screen_point(vertex.position()).cast_unit(),
-                            2.0,
-                        );
-                    }
-                }
-            }
-        }
-        if let Some(SelectState::DragSelect(capture)) = &self.select_state {
-            let start = capture.mouse_start;
-            let end = input.mouse_position;
-            ui_path.move_to(point(start.x, start.y));
-            ui_path.line_to(point(end.x, start.y));
-            ui_path.line_to(point(end.x, end.y));
-            ui_path.line_to(point(start.x, end.y));
-            ui_path.line_to(point(start.x, start.y));
-            ui_path.close();
-        }
-
-        // let everything = self.select_everything();
-        // if let Some((_, closest_point)) = everything.distance_to(mouse_pos) {
-        //     dbg!(closest_point);
-        //     ui_path.move_to(mouse_pos);
-        //     ui_path.line_to(closest_point);
-        //     ui_path.end();
-        // }
-        ui_path.add_circle(
-            input.mouse_position.cast_unit(),
-            3.0,
-        );
-
-        if document.paths.len() == 0 {
-            document.paths.push(PathData::new());
-        }
-
-        let path = &mut document.paths.paths[0];
-        if path.len() == 0 {
-            path.clear();
-            for p in &self.vector_field.primitives {
-                match p {
-                    &VectorFieldPrimitive::Curl { center, .. } => {
-                        path.add_circle(center, 1.0);
-                    }
-                    &VectorFieldPrimitive::Linear { .. } => {}
-                }
-            }
-
-            let mut rng: StdRng = SeedableRng::seed_from_u64(0);
-            let samples = poisson_disc_sampling(rect(-100.0, -100.0, 300.0, 300.0), 80.0, &mut rng);
-            for (i, &p) in samples.iter().enumerate() {
-                // if let VectorFieldPrimitive::Linear { ref mut strength, .. } = self.vector_field.primitives.last_mut().unwrap() {
-                // *strength = i as f32;
-                // }
-                path.move_to(p);
-                let (vertices, closed) = self.vector_field.trace(p);
-                for &p in vertices.iter().skip(1) {
-                    path.line_to(p);
-                }
-                if closed {
-                    path.close();
-                } else {
-                    path.end();
-                }
-            }
-            // if let VectorFieldPrimitive::Linear { ref mut strength, .. } = self.vector_field.primitives.last_mut().unwrap() {
-            // *strength = 2.0;
-            // }
-        }
-        // let d = f32::sin(0.01 * (input.frame_count as f32));
-        // for x in 0..100 {
-        //     for y in 0..100 {
-        //         let p = (point(x as f32, y as f32) - vector(50.0, 50.0)) * 4.0;
-        //         let dir = self.vector_field.sample(p).unwrap();
-        //         path.move_to(p);
-        //         path.line_to(p + dir.normalize() * 5.0 * d);
-        //         path.end();
-        //     }
-        // }
-    }
-
-    fn update_selection(&mut self, document: &mut Document, view: &CanvasView, input: &mut InputManager) {
-        self.select_state = match self.select_state.take() {
-            None => {
-                if let Some(mut capture) = input.capture_click_batch(winit::event::MouseButton::Left) {
-                    for (path_index, path) in document.paths.iter().enumerate() {
-                        for point in path.iter_points() {
-                            let reference = VertexReference::new(path_index as u32, point.index() as u32);
-                            capture.add(
-                                CircleShape {
-                                    center: view.canvas_to_screen_point(point.position()),
-                                    radius: 5.0,
-                                },
-                                reference,
-                            );
-                        }
-                    }
-
-                    if let Some((capture, best)) = capture.capture(input) {
-                        // Something was close enough to the cursor, we should select it
-                        Some(SelectState::Down(
-                            capture,
-                            Selection {
-                                items: vec![best.into()],
-                            },
-                        ))
-                    } else if let Some(capture) = input.capture_click(winit::event::MouseButton::Left) {
-                        // Start with empty selection
-                        Some(SelectState::Down(capture, Selection { items: vec![] }))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            Some(state) => match state {
-                // Note: !pressed matches should come first, otherwise mouse_up might be missed if multiple state transitions were to happen in a single frame
-                SelectState::DragSelect(capture) if !capture.is_pressed(input) => {
-                    // Only select if mouse was released inside the window
-                    if capture.on_up(input) {
-                        // Select
-                        // TODO: Start point should be stored in canvas space, in case the view is zoomed or moved
-                        let selection_rect = CanvasRect::from_points(vec![
-                            view.screen_to_canvas_point(capture.mouse_start),
-                            view.screen_to_canvas_point(input.mouse_position),
-                        ]);
-                        self.selected = Some(document.select_rect(selection_rect));
-                        None
-                    } else {
-                        self.selected = None;
-                        None
-                    }
-                }
-                SelectState::Down(capture, selection) if !capture.is_pressed(input) => {
-                    if capture.on_up(input) {
-                        // Select
-                        self.selected = Some(selection);
-                    }
-                    None
-                }
-                SelectState::Down(capture, _)
-                    if (capture.mouse_start - input.mouse_position).square_length() > 5.0 * 5.0 =>
-                {
-                    if let Some(selection) = &self.selected {
-                        let drag = drag_at_point(
-                            selection,
-                            &document.paths,
-                            view.screen_to_canvas_point(capture.mouse_start),
-                            ScreenLength::new(5.0) * view.screen_to_canvas_scale(),
-                        );
-
-                        if let Some(drag) = drag {
-                            let original_position = drag.items.iter().map(|x| x.position(&document.paths)).collect();
-                            Some(SelectState::Dragging(capture, drag, original_position))
-                        } else {
-                            Some(SelectState::DragSelect(capture))
-                        }
-                    } else {
-                        // Nothing selected. We should do a drag-select
-                        Some(SelectState::DragSelect(capture))
-                    }
-                }
-                SelectState::Dragging(capture, selection, original_positions) => {
-                    let offset = view.screen_to_canvas_vector(input.mouse_position - capture.mouse_start);
-
-                    // Move all points
-                    for (vertex, &original_position) in selection.items.iter().zip(original_positions.iter()) {
-                        if let SelectionReference::VertexReference(vertex) = vertex {
-                            document.paths.resolve_mut(vertex).set_position(original_position + offset);
-                        }
-                    }
-
-                    // Move all control points
-                    // Doing this before moving points will lead to weird results
-                    for (vertex, &original_position) in selection.items.iter().zip(original_positions.iter()) {
-                        if let SelectionReference::ControlPointReference(vertex) = vertex {
-                            // Move control point
-                            document.paths.resolve_mut(vertex).set_position(original_position + offset);
-
-                            // Move opposite control point
-                            let center = document.paths.resolve(vertex).vertex().position();
-                            let dir = original_position + offset - center;
-                            document.paths
-                                .resolve_mut(&vertex.opposite_control(&document.paths))
-                                .set_position(center - dir);
-                        }
-                    }
-
-                    if !capture.is_pressed(input) {
-                        // Stop drag
-                        None
-                    } else {
-                        Some(SelectState::Dragging(capture, selection, original_positions))
-                    }
-                }
-                SelectState::DragSelect(..) => {
-                    // Change visualization?
-                    Some(state)
-                }
-                SelectState::Down(..) => Some(state),
-            },
-        };
-
-        // self.select_state = state;
-        // self.select_state.take
-
-        // if let SelectState::Down(capture, selection) = &self.select_state {
-        //     if (capture.mouse_start - input.mouse_position).square_length() > 5.0*5.0 {
-        //         self.select_state = SelectState::Dragging(*capture, *selection)
-        //     }
-        // }
-
-        //     }
-        //     SelectState::Down(capture, selection) => {
-        //         if (capture.mouse_start - input.mouse_position).square_length() > 5.0*5.0 {
-        //             SelectState::Dragging(capture, selection)
-        //         } else {
-        //             SelectState::Down(capture, selection)
-        //         }
-        //     }
-        //     state => state
-        // }
-    }
-
-    fn update(&mut self, ui_document: &mut Document, document: &mut Document, view: &CanvasView, input: &mut InputManager) -> bool {
-        let canvas_mouse_pos = view.screen_to_canvas_point(input.mouse_position);
-
-        if input.is_pressed(VirtualKeyCode::T) {
-            if let Some(_) = input.capture_click(winit::event::MouseButton::Left) {
-                if document.paths.len() == 0 {
-                    document.paths.push(PathData::new());
-                }
-                let path = document.paths.paths.last_mut().unwrap();
-                path.line_to(canvas_mouse_pos);
-            }
-        }
-        if input.on_combination(
-            &KeyCombination::new()
-                .and(VirtualKeyCode::LControl)
-                .and(VirtualKeyCode::S),
-        ) {
-            // Make smooth
-            if let Some(selected) = &self.selected {
-                smooth_vertices(selected, &mut document.paths);
-            }
-        }
-
-        if input.on_combination(&KeyCombination::new().and(VirtualKeyCode::LControl).and(VirtualKeyCode::A)) {
-            let everything = Some(document.select_everything());
-            if self.selected == everything {
-                self.selected = None;
-            } else {
-                self.selected = everything;
-            }
-        }
-
-        if input.on_combination(
-            &KeyCombination::new()
-                .and(VirtualKeyCode::LControl)
-                .and(VirtualKeyCode::P),
-        ) {
-            // Debug print selected vertex
-            if let Some(selected) = &self.selected {
-                if let Some(SelectionReference::VertexReference(vertex)) = selected.items.first() {
-                    let vertex = document.paths.resolve(vertex);
-                    let prev = vertex.prev().unwrap();
-                    let next = vertex.next().unwrap();
-                    println!("builder.move_to(point{});", prev.position());
-                    println!("builder.cubic_bezier_to(point{}, point{}, point{});", prev.control_after(), vertex.control_before(), vertex.position());
-                    println!("builder.cubic_bezier_to(point{}, point{}, point{});", vertex.control_after(), next.control_before(), next.position());
-                    println!("Tolerance: {}", (ScreenLength::new(0.1) * view.screen_to_canvas_scale()).get().max(0.001));
-                }
-            }
-        }
-
-        if input.on_combination(
-            &KeyCombination::new()
-                .and(VirtualKeyCode::LControl)
-                .and(VirtualKeyCode::W),
-        ) {
-            // Quit
-            return true;
-        }
-
-
-        self.update_selection(document, view, input);
-        self.update_ui(ui_document, document, view, input);
-        false
-    }
-}
 
 pub struct SceneParams {
     pub view: CanvasView,

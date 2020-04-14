@@ -1,6 +1,6 @@
-use crate::main::{PathEditor, Document};
+use crate::main::{Document};
 use crate::canvas::CanvasView;
-use crate::input::InputManager;
+use crate::input::{InputManager, MouseButton, CapturedClick};
 use crate::path_collection::PathReference;
 use crate::path::{PathData, BorderRadii};
 use lyon::math::*;
@@ -13,73 +13,100 @@ pub trait Tool {
     fn update_ui(&mut self);
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum ToolType {
     Pencil,
     Brush,
     Select,
 }
 
-pub enum ToolbarEvent {
-    ToolSelected(ToolType)
-}
+pub struct ToolSelected(ToolType);
 
 pub struct Toolbar {
-    ui: PathReference,
-    tools: Vec<Box<dyn Tool>>,
+    ui: Option<PathReference>,
+    tools: Vec<ToolType>,
 }
 
 impl Toolbar {
-    pub fn new(document: &mut Document) -> Toolbar {
+    pub fn new() -> Toolbar {
         Toolbar {
-            ui: document.paths.push(PathData::new()),
-            tools: vec![],
+            ui: None,
+            tools: vec![
+                ToolType::Select,
+                ToolType::Pencil,
+                ToolType::Brush,
+            ],
         }
-    }
-
-    fn on_click(&mut self, context: &mut WidgetContext<Self>, button_index: i32) {
-
     }
 }
 
 impl WidgetTrait for Toolbar {
-    type EventType = ToolbarEvent;
+    type EventType = ToolSelected;
 
     fn mount(&mut self, context: &mut WidgetContext<Self>) {
-        let tools = vec![
-            ToolType::Select,
-            ToolType::Pencil,
-            ToolType::Brush,
-        ];
-        for (i, &tool) in tools.iter().enumerate() {
+        for (i, &tool) in self.tools.iter().enumerate() {
             // context.add(Button { rect: rect(50.0 + 50.0*(i as f32), 50.0, 40.0, 40.0), path: None }).listen(context, |s, context, event| { s.on_click(context, i) })
-            context.add(Button { rect: rect(50.0 + 50.0*(i as f32), 50.0, 40.0, 40.0), path: None })
-                .listen_closure(context, move|_, context, _| {
-                    context.send(&ToolbarEvent::ToolSelected(tool))
+            let reference = context.reference();
+            context.add(Button::new(rect(50.0 + 50.0*(i as f32), 10.0, 40.0, 40.0)))
+                .listen_closure(&reference, move|_, context, _| {
+                    println!("Got callback!");
+                    context.send(&ToolSelected(tool))
                 })
         }
     }
 
     fn render(&mut self, ui_document: &mut Document, view: &CanvasView) {
-        // let path = ui_document.paths.resolve_path_mut(&self.ui);
-        // path.clear();
-        // path.add_rounded_rect(
-        //     &rect(50.0, -10.0, view.resolution.width as f32 - 50.0 * 2.0, 60.0).round().outer_rect(SideOffsets2D::new_all_same(0.5)),
-        //     BorderRadii::new_uniform(3.0)
-        // );
+        if self.ui.is_none() {
+            self.ui = Some(ui_document.paths.push(PathData::new()));
+        }
+
+        let path = ui_document.paths.resolve_path_mut(&self.ui.unwrap());
+        path.clear();
+        path.add_rounded_rect(
+            &rect(40.0, -10.0, view.resolution.width as f32 - 40.0 * 2.0, 70.0).round().outer_rect(SideOffsets2D::new_all_same(0.5)),
+            BorderRadii::new_uniform(3.0)
+        );
+    }
+}
+
+pub struct GUIRoot {
+    pub tool: ToolType,
+}
+
+impl GUIRoot {
+    pub fn new() -> GUIRoot {
+        GUIRoot {
+            tool: ToolType::Select,
+        }
+    }
+
+    fn on_change_tool(&mut self, context: &mut WidgetContext<Self>, ev: &ToolSelected) {
+        let tool = ev.0;
+        self.tool = tool;
+    }
+}
+
+impl WidgetTrait for GUIRoot {
+    type EventType = ();
+
+    fn mount(&mut self, context: &mut WidgetContext<Self>) {
+        let reference = context.reference();
+        context.add(Toolbar::new()).listen_closure(&reference, Self::on_change_tool);
     }
 }
 
 struct Button {
     rect: Rect,
     path: Option<PathReference>,
+    capture: Option<CapturedClick>,
 }
 
 impl Button {
-    fn new() -> Button {
+    fn new(rect: Rect) -> Button {
         Button {
-            rect: rect(10.0, 10.0, 10.0, 10.0),
+            rect,
             path: None,
+            capture: None,
         }
     }
 }
@@ -88,23 +115,39 @@ impl WidgetTrait for Button {
     type EventType = ButtonEvent;
 
     fn mount(&mut self, context: &mut WidgetContext<Self>) {
-        // context.send(&ButtonEvent::Click);
     }
 
     fn render(&mut self, ui_document: &mut Document, view: &CanvasView) {
-        // if self.path.is_none() {
-        //     self.path = Some(ui_document.paths.push(PathData::new()));
-        // }
-        // let path = ui_document.paths.resolve_path_mut(&self.path.unwrap());
-        // path.clear();
-        // path.add_rounded_rect(
-        //     &self.rect,
-        //     BorderRadii::new_uniform(3.0)
-        // );
+        if self.path.is_none() {
+            self.path = Some(ui_document.paths.push(PathData::new()));
+        }
+        let path = ui_document.paths.resolve_path_mut(&self.path.unwrap());
+        path.clear();
+        let active = self.capture.is_some();
+        path.add_rounded_rect(
+            &self.rect.round().outer_rect(SideOffsets2D::new_all_same(0.5)).inner_rect(SideOffsets2D::new_all_same(if active { 1.0 } else { 0.0 })),
+            BorderRadii::new_uniform(3.0)
+        );
     }
 
     fn update(&mut self, context: &mut WidgetContext<Self>) {
 
+    }
+
+    fn input(&mut self, context: &mut WidgetContext<Self>, input: &mut InputManager) {
+        let inside = self.rect.contains(input.mouse_position.to_untyped());
+        if inside && self.capture.is_none() {
+            self.capture = input.capture_click(MouseButton::Left);
+        }
+
+        if let Some(capture) = &self.capture {
+            if capture.on_up(input) {
+                self.capture = None;
+                if inside {
+                    context.send(&ButtonEvent::Click);
+                }
+            }
+        }
     }
 }
 
@@ -118,7 +161,7 @@ enum ButtonEvent {
 
 impl Widget {
     fn on_click(&mut self, context: &mut WidgetContext<Self>, ev: &ButtonEvent) {
-        context.add(Button::new());
+        context.add(Button::new(rect(0.0, 0.0, 0.0, 0.0)));
         context.send(ev);
     }
 }
@@ -127,12 +170,12 @@ impl WidgetTrait for Widget {
     type EventType = ButtonEvent;
 
     fn mount(&mut self, context: &mut WidgetContext<Self>) {
-        let reference = context.add(Button::new());
-        reference.listen(context, Self::on_click);
+        let reference = context.reference();
+        context.add(Button::new(rect(0.0, 0.0, 0.0, 0.0))).listen_closure(&reference, Self::on_click);
 
         // let v = reference.get(context);
         // let v2 = reference.get(context);
-        context.remove(reference);
+        // context.remove(reference.reference());
         // context.listen(reference, Self::on_click);
 
         // self.listeners.send(root, &ButtonEvent::Click);

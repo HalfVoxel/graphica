@@ -472,6 +472,14 @@ impl PathData {
         self.in_path = false;
     }
 
+    pub fn current(&self) -> Option<ImmutablePathPoint> {
+        if self.points.len() > 0 && self.in_path {
+            Some(self.point(self.points.len() as i32 - 3))
+        } else {
+            None
+        }
+    }
+
     pub fn line_to(&mut self, pt: CanvasPoint) -> i32 {
         self.start_if_necessary();
         self.points.push(pt);
@@ -479,7 +487,7 @@ impl PathData {
         self.points.push(point(0.0, 0.0));
         self.extend_current();
 
-        self.points.len() as i32 - 2
+        self.points.len() as i32 - 3
     }
 
     pub fn move_to(&mut self, pt: CanvasPoint) -> i32 {
@@ -493,7 +501,7 @@ impl PathData {
         }
     }
 
-    pub fn start(&mut self) {
+    fn start(&mut self) {
         self.end();
         self.sub_paths.push(SubPathData {
             range: self.points.len()..self.points.len(),

@@ -4,6 +4,7 @@ use std::ops::DerefMut;
 use std::marker::PhantomData;
 use crate::main::Document;
 use crate::canvas::CanvasView;
+use crate::input::InputManager;
 
 pub struct WidgetWrapper<T:WidgetTrait+'static> {
     widget: T,
@@ -11,15 +12,23 @@ pub struct WidgetWrapper<T:WidgetTrait+'static> {
     index: u32,
 }
 
+impl<T:WidgetTrait+'static> WidgetWrapper<T> {
+    pub fn listen_closure<'a, U:WidgetTrait+'static, C:Fn(&mut U, &mut WidgetContext<U>, &T::EventType)+'static>(&mut self, reference: &TypedWidgetReference<U>, callback: C) {
+        self.listeners.listen_closure(&reference, callback);
+    }
+}
+
 impl<T:WidgetTrait> WidgetTypeTrait for WidgetWrapper<T> {
-    fn mount(&mut self, root: &mut Root) {
+    fn mount(&mut self, root: &mut RootWrapper) {
         self.widget.mount(&mut WidgetContext { root, listeners: &mut self.listeners, index: self.index });
     }
-    fn update(&mut self, root: &mut Root) {
+    fn update(&mut self, root: &mut RootWrapper) {
         self.widget.update(&mut WidgetContext { root, listeners: &mut self.listeners, index: self.index });
     }
-    fn render(&mut self, root: &mut Root, document: &mut Document, view: &CanvasView) {
-        *root = Root::new();
+    fn input(&mut self, root: &mut RootWrapper, input: &mut InputManager) {
+        self.widget.input(&mut WidgetContext { root, listeners: &mut self.listeners, index: self.index }, input);
+    }
+    fn render(&mut self, root: &mut RootWrapper, document: &mut Document, view: &CanvasView) {
         self.widget.render(document, view);
     }
 
@@ -39,13 +48,13 @@ enum PointerEvent {
     PointerActive(bool),
 }
 
-pub struct WidgetContext<'a, T:WidgetTrait+'static+?Sized> {
-    root: &'a mut Root,
+pub struct WidgetContext<'a, 'b, T:WidgetTrait+'static+?Sized> {
+    root: &'a mut RootWrapper<'b>,
     listeners: &'a mut Listeners<T::EventType>,
     index: u32,
 }
 
-impl<'a, T:WidgetTrait> WidgetContext<'a, T> {
+impl<'a, 'b, T:WidgetTrait> WidgetContext<'a, 'b, T> {
     pub fn reference(&self) -> TypedWidgetReference<T> {
         TypedWidgetReference {
             reference: WidgetReference {
@@ -70,7 +79,7 @@ impl<'a, T:WidgetTrait> WidgetContext<'a, T> {
         self.listeners.send(self.root, event);
     }
 
-    pub fn add<U:WidgetTrait>(&mut self, widget: U) -> TypedWidgetReference<U> {
+    pub fn add<U:WidgetTrait>(&mut self, widget: U) -> RefMut<WidgetWrapper<U>> {
         self.root.add(widget)
     }
 
@@ -120,19 +129,19 @@ impl<T:WidgetTrait> TypedWidgetReference<T> {
         wrapper.listeners.listen_closure(&context.reference(), callback)
     }
 
-    fn get<'a>(&self, root: &'a Root) -> RefMut<'a, T> {
+    pub fn get<'a>(&self, root: &'a Root) -> RefMut<'a, T> {
         // Unwrap: We know the type if T since we have a typed reference to it
         RefMut::map(root.resolve_mut(&self.reference), |v| v.downcast_mut::<T>().unwrap())
     }
 }
 
 pub struct Listeners<U:Sized+'static> {
-    listeners: Vec<(WidgetReference, Box<dyn Fn(&mut dyn Any, &mut Root, &U)>)>
+    listeners: Vec<(WidgetReference, Box<dyn for<'a,'b> Fn(&mut dyn Any, &'b mut RootWrapper<'a>, &U)>)>
 }
 
 impl<U> Listeners<U> {
-    pub fn listen<T:WidgetTrait>(&mut self, reference: &TypedWidgetReference<T>, callback: fn(&mut T, &mut WidgetContext<T>, &U)) where T : 'static{
-        let c = move|v: &mut dyn Any, root: &mut Root, value: &U| {
+    pub fn listen<'a,T:WidgetTrait>(&mut self, reference: &TypedWidgetReference<T>, callback: fn(&mut T, &mut WidgetContext<T>, &U)) where T : 'static{
+        let c = move|v: &mut dyn Any, root: & mut RootWrapper, value: &U| {
             let v = v.downcast_mut::<WidgetWrapper<T>>().unwrap();
             let context = &mut WidgetContext { root, listeners: &mut v.listeners, index: v.index };
             callback(&mut v.widget, context, value);
@@ -140,8 +149,8 @@ impl<U> Listeners<U> {
         self.listeners.push((reference.reference, Box::new(c)));
     }
 
-    pub fn listen_closure<T:WidgetTrait, C:Fn(&mut T, &mut WidgetContext<T>, &U)+'static>(&mut self, reference: &TypedWidgetReference<T>, callback: C) where T : 'static{
-        let c = move|v: &mut dyn Any, root: &mut Root, value: &U| {
+    pub fn listen_closure<'a,T:WidgetTrait, C:Fn(&mut T, &mut WidgetContext<T>, &U)+'static>(&mut self, reference: &TypedWidgetReference<T>, callback: C) where T : 'static{
+        let c = move|v: &mut dyn Any, root: &mut RootWrapper, value: &U| {
             let v = v.downcast_mut::<WidgetWrapper<T>>().unwrap();
             let context = &mut WidgetContext { root, listeners: &mut v.listeners, index: v.index };
             callback(&mut v.widget, context, value);
@@ -149,14 +158,61 @@ impl<U> Listeners<U> {
         self.listeners.push((reference.reference, Box::new(c)));
     }
 
-    pub fn send(&self, root: &mut Root, value: &U) {
+    pub fn send(&self, root: &mut RootWrapper, value: &U) {
         for l in &self.listeners {
             let mut wrapper = RefMut::map(root.resolve_mut_wrapper(&l.0), |wrapper| wrapper.as_any_mut());
 
             // SAFETY: Same as in Root::add
-            let root_unsafe = unsafe { &mut *((root as *const Root) as *mut Root) };
-            l.1(wrapper.deref_mut(), root_unsafe, value)
+            // let root_unsafe = unsafe { &mut *((root as *const Root) as *mut Root) };
+            l.1(wrapper.deref_mut(), root, value)
         }
+    }
+}
+
+pub struct RootWrapper<'a> {
+    root: &'a Root,
+    to_add: Vec<Box<RefCell<dyn WidgetTypeTrait>>>,
+    to_remove: Vec<WidgetReference>,
+}
+
+impl<'a> RootWrapper<'a> {
+    fn new(root: &Root) -> RootWrapper {
+        RootWrapper {
+            root,
+            to_add: vec![],
+            to_remove: vec![],
+        }
+    }
+
+    pub fn resolve_mut(&self, reference: &WidgetReference) -> RefMut<dyn Any> {
+        self.root.resolve_mut(reference)
+    }
+
+    fn resolve_mut_wrapper(&self, reference: &WidgetReference) -> RefMut<'a, dyn WidgetTypeTrait> {
+        dbg!("Resolving", reference.index);
+        // if reference.index as usize >= self.root.widgets.len() {
+            // self.to_add[reference.index as usize].borrow_mut()
+        // } else {
+        self.root.resolve_mut_wrapper(reference)
+        // }
+    }
+
+    fn add<T:WidgetTrait>(&mut self, widget: T) -> RefMut<WidgetWrapper<T>> {
+        let index = (self.root.widgets.len() + self.to_add.len()) as u32;
+        self.to_add.push(into_wrapper(widget, index));
+
+        // TypedWidgetReference {
+        //     reference: WidgetReference {
+        //         index,
+        //         version: 0,
+        //     },
+        //     _p: PhantomData,
+        // }
+        return RefMut::map(self.to_add.last().unwrap().borrow_mut(), |x| x.as_any_mut().downcast_mut::<WidgetWrapper<T>>().unwrap());
+    }
+
+    fn remove(&mut self, reference: impl Into<WidgetReference>) {
+        self.to_remove.push(reference.into());
     }
 }
 
@@ -198,55 +254,69 @@ impl<'a> Root {
             },
             _p: PhantomData,
         };
-        let mut v = self.resolve_mut_wrapper(&reference.reference);
 
-        // SAFETY: Here we give a mutable pointer to &Root while
-        // still allowing #v to be mutated inside v.mount.
-        // This is safe because v.mount cannot access any part of Root mutably or immutably
-        // that overlaps with the reference in v.
-        // Note that even if another widget is added inside #mount which causes
-        // the #widgets vector to be resized the #v borrow points to inside the Box
-        // so it will not be affected.
-        // The only case where things could go wrong is if the Box that stores
-        // the widget is dropped. This is not allowed by the API however since
-        // all calls that do that must check if they have mutable access to the widget's RefCell first.
-        // Note that we *do* alias &mut self here, however no writes will be done to the pointer
-        // using root_unsafe.
-        // Quoting the rustonomicon: we don't actually care if aliasing occurs if there aren't any actual writes to memory happening.
-        // TODO: This is actually not safe as mount might modify the widgets list and therefore if we are iterating over that in a parent scope
-        // then things will go badly.
-        let root_unsafe = unsafe { &mut *((self as *const Root) as *mut Root) };
-        v.mount(root_unsafe);
+        let mut mods = RootWrapper::new(self);
+        self.resolve_mut_wrapper(&reference.reference).mount(&mut mods);
+
+        let RootWrapper {to_add, to_remove, ..} = mods;
+        self.apply_modifications(to_add, to_remove);
+
         reference
     }
 
-    pub fn update(&mut self) {
-        println!("Update");
-        for widget in &self.widgets {
-            if let Some(widget) = widget {
-                // SAFETY: Same as in #add
-                let root_unsafe = unsafe { &mut *((self as *const Root) as *mut Root) };
-                dbg!(widget.as_ptr());
-                widget.borrow_mut().update(root_unsafe);
-            }
+    fn apply_modifications(&mut self, to_add: Vec<Box<RefCell<dyn WidgetTypeTrait>>>, to_remove: Vec<WidgetReference>) {
+        for r in to_remove {
+            self.remove(r);
         }
-        for widget in &self.widgets {
-            if let Some(widget) = widget {
-                widget.borrow_mut();
+        if to_add.len() > 0 {
+            let i0 = self.widgets.len();
+            for w in to_add {
+                self.widgets.push(Some(w));
             }
+            let mut mods = RootWrapper::new(self);
+            for w in &self.widgets[i0..] {
+                w.as_ref().unwrap().borrow_mut().mount(&mut mods);
+            }
+            // Recurse to add children of children
+            let RootWrapper {to_add, to_remove, ..} = mods;
+            self.apply_modifications(to_add, to_remove);
         }
     }
 
-    pub fn render(&mut self, ui_document: &mut Document, view: &CanvasView) {
-        println!("Render");
+    pub fn update(&mut self) {
+        let mut mods = RootWrapper::new(self);
         for widget in &self.widgets {
             if let Some(widget) = widget {
-                // SAFETY: Same as in #add
-                let root_unsafe = unsafe { &mut *((self as *const Root) as *mut Root) };
-                dbg!(widget.as_ptr());
-                widget.borrow_mut().render(root_unsafe, ui_document, view);
+                widget.borrow_mut().update(&mut mods);
             }
         }
+
+        let RootWrapper {to_add, to_remove, ..} = mods;
+        self.apply_modifications(to_add, to_remove);
+    }
+
+    pub fn render(&mut self, ui_document: &mut Document, view: &CanvasView) {
+        let mut mods = RootWrapper::new(self);
+        for widget in &self.widgets {
+            if let Some(widget) = widget {
+                widget.borrow_mut().render(&mut mods, ui_document, view);
+            }
+        }
+
+        let RootWrapper {to_add, to_remove, ..} = mods;
+        self.apply_modifications(to_add, to_remove);
+    }
+
+    pub fn input(&mut self, ui_document: &mut Document, input: &mut InputManager) {
+        let mut mods = RootWrapper::new(self);
+        for widget in &self.widgets {
+            if let Some(widget) = widget {
+                widget.borrow_mut().input(&mut mods, input);
+            }
+        }
+
+        let RootWrapper {to_add, to_remove, ..} = mods;
+        self.apply_modifications(to_add, to_remove);
     }
 }
 
@@ -261,9 +331,10 @@ fn into_wrapper<T:WidgetTrait>(value: T, index: u32) -> Box<RefCell<dyn WidgetTy
 }
 
 trait WidgetTypeTrait:Any {
-    fn mount(&mut self, root: &mut Root);
-    fn update(&mut self, root: &mut Root);
-    fn render(&mut self, root: &mut Root, ui_document: &mut Document, view: &CanvasView);
+    fn mount(&mut self, root: &mut RootWrapper);
+    fn update(&mut self, root: &mut RootWrapper);
+    fn input(&mut self, root: &mut RootWrapper, input: &mut InputManager);
+    fn render(&mut self, root: &mut RootWrapper, ui_document: &mut Document, view: &CanvasView);
     fn borrow_inner_mut(&mut self) -> &mut dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -273,4 +344,5 @@ pub trait WidgetTrait:Any {
     fn mount(&mut self, _context: &mut WidgetContext<Self>) {}
     fn update(&mut self, _context: &mut WidgetContext<Self>) {}
     fn render(&mut self, ui_document: &mut Document, view: &CanvasView) {}
+    fn input(&mut self, context: &mut WidgetContext<Self>, input: &mut InputManager) {}
 }

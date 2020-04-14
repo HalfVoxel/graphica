@@ -73,6 +73,15 @@ impl PathCollection {
     pub fn iter(&self) -> impl Iterator<Item = &PathData> {
         self.paths.iter()
     }
+
+    pub fn last_mut(&mut self) -> Option<&mut PathData> {
+        if let Some(p) = self.paths.last_mut() {
+            p.dirty();
+            Some(p)
+        } else {
+            None
+        }
+    }
 }
 
 pub trait ReferenceResolver<'a, A, B> {

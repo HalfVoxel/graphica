@@ -3,7 +3,9 @@ use euclid::default::Vector2D;
 use lyon::math::*;
 use std::collections::HashMap;
 use std::time::Instant;
-use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
+use winit::event::{ElementState, Event, KeyboardInput, WindowEvent};
+
+pub use winit::event::{MouseButton, VirtualKeyCode};
 
 struct KeyState {
     last_down_time: Option<Instant>,
