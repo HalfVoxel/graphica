@@ -7,6 +7,14 @@ use lazy_static::lazy_static;
 use packed_simd::*;
 use packed_simd::f32x4;
 use std::convert::TryInto;
+use kurbo::CubicBez;
+use kurbo::ParamCurveDeriv;
+use kurbo::common::GAUSS_LEGENDRE_COEFFS_9;
+use kurbo::common::GAUSS_LEGENDRE_COEFFS_5;
+use kurbo::common::GAUSS_LEGENDRE_COEFFS_3;
+use kurbo::ParamCurve;
+use kurbo::ParamCurveArclen;
+use kurbo::Point as KurboPoint;
 
 pub mod types {
     pub struct ScreenSpace;
@@ -53,6 +61,229 @@ pub fn evalute_cubic_bezier<U>(
     (p0 * t3 + p1 * (3.0 * t2 * t) + p2 * (3.0 * t1 * t * t) + p3 * (t * t * t))
         .to_point()
         .cast_unit()
+}
+
+pub enum MoveResult {
+    PassedEnd { remaining: f32 },
+    Point { t: f32 },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct CurveTooShort {
+    pub remaining: f64
+}
+
+/// Evaluates a curve based on an arc length distance from the start of the curve
+pub trait ParamCurveDistanceEval: ParamCurve {
+    /// Evaluates the curve at a given arc length distance from the start of the curve.
+    /// 
+    /// # Arguments
+    /// * `distance_from_start` - Distance from the start of the curve. Should be greater or equal to 0.0.
+    /// * `accuracy` - Maximum allowed error in the arc length.
+    /// 
+    /// Returns an error if the curve is shorter than `distance_from_start`. 
+    fn eval_at_distance(&self, distance_from_start: f64, accuracy: f64) -> Result<KurboPoint, CurveTooShort> {
+        let t = self.find_t_at_distance(distance_from_start, accuracy)?;
+        Ok(self.eval(t))
+    }
+
+    /// Finds the `t` value for a given arc length distance from the start of the curve.
+    /// 
+    /// # Arguments
+    /// * `distance_from_start` - Distance from the start of the curve. Should be greater or equal to 0.0.
+    /// * `accuracy` - Maximum allowed error in the arc length.
+    /// 
+    /// Returns an error if the curve is shorter than `distance_from_start`.
+    fn find_t_at_distance(&self, distance_from_start: f64, accuracy: f64) -> Result<f64, CurveTooShort>;
+}
+
+impl ParamCurveDistanceEval for CubicBez {
+    fn find_t_at_distance(&self, distance_from_start: f64, accuracy: f64) -> Result<f64, CurveTooShort> {
+        // Squared L2 norm of the second derivative of the cubic.
+        fn cubic_errnorm(c: &CubicBez) -> f64 {
+            let d = c.deriv().deriv();
+            let dd = d.end() - d.start();
+            d.start().to_vec2().hypot2() + d.start().to_vec2().dot(dd) + dd.hypot2() * (1.0 / 3.0)
+        }
+        fn est_gauss9_error(c: &CubicBez) -> f64 {
+            let lc2 = (c.p3 - c.p0).hypot2();
+            let lp = (c.p1 - c.p0).hypot() + (c.p2 - c.p1).hypot() + (c.p3 - c.p2).hypot();
+
+            2.56e-8 * (cubic_errnorm(c) / lc2).powi(8) * lp
+        }
+        const MAX_DEPTH: usize = 16;
+        fn rec(c: &CubicBez, distance_from_start: f64, accuracy: f64, depth: usize, t_range: std::ops::Range<f64>) -> Result<f64, CurveTooShort> {
+            if depth == MAX_DEPTH || est_gauss9_error(c) < accuracy {
+                let length = c.gauss_arclen(GAUSS_LEGENDRE_COEFFS_9);
+                if distance_from_start > length  {
+                    Err(CurveTooShort { remaining: distance_from_start - length })
+                } else {
+                    // Run a binary search to find the t value which corresponds to a given arclength from the start.
+                    // Note that in this part the gauss_arclen can be used to estimate arc length.
+                    // The binary search can be used to implement the whole point_at_distance function, but that is slower
+                    // as it then has to call the full arclen function multiple times.
+                    let mut mx_t = 1.0;
+                    let mut mx_d = length;
+                    let mut mn_t = 0.0;
+                    let mut mn_d = 0.0;
+
+                    loop {
+                        // Do a first degree estimate of where the desired point should be
+                        let t = ((distance_from_start - mn_d) / (mx_d - mn_d)) * (mx_t - mn_t) + mn_t;
+                        // Calculate arclength from 0.0 to t
+                        let d = c.subsegment(0.0..t).gauss_arclen(GAUSS_LEGENDRE_COEFFS_9);
+
+                        // The loop is guaranteed to exit since we have that
+                        // 1. gauss_arclen for t=0 is 0
+                        // 2. (gauss_arclen for t=1.0) > distance_from_start
+                        // 3. gauss_arclen is a continuous function
+                        // Due to the intermediate value theorem a value 0.0 <= t <= 1.0 exists such that d = distance_from_start
+                        if (d - distance_from_start).abs() < accuracy {
+                            return Ok(t * (t_range.end - t_range.start) + t_range.start);
+                        } else if distance_from_start > d {
+                            mn_t = t;
+                            mn_d = d;
+                        } else {
+                            mx_t = t;
+                            mx_d = d;
+                        }
+                    }
+                }
+            } else {
+                let (c0, c1) = c.subdivide();
+                let t_mid = (t_range.start + t_range.end) * 0.5;
+                let r0 = rec(&c0, distance_from_start, accuracy * 0.5, depth + 1, t_range.start..t_mid);
+                match r0 {
+                    Err(CurveTooShort { remaining }) => {
+                        // First part of the curve was too short, recurse into the second part
+                        rec(&c1, remaining, accuracy * 0.5, depth + 1, t_mid..t_range.end)
+                    }
+                    x => x,
+                }
+            }
+        }
+
+        assert!(distance_from_start >= 0.0);
+        rec(self, distance_from_start, accuracy, 0, 0.0..1.0)
+    }
+}
+
+#[test]
+fn test_find_t_at_distance() {
+    let b = CubicBez::new(KurboPoint::new(0.0, 0.0), KurboPoint::new(10.0, 10.0), KurboPoint::new(20.0, -10.0), KurboPoint::new(30.0, 0.0));
+    let len = b.arclen(0.001);
+    let precision = 0.001;
+
+    fn assert_within_tolerance(t: f64, target: f64, precision: f64) {
+        let error = (t - target).abs();
+        if error > precision {
+            panic!("Not within required tolerance: t: {}, target: {}. Error {} > {}", t, target, error, precision);
+        }
+    }
+
+    assert_eq!(b.find_t_at_distance(0.0, 0.001), Ok(0.0));
+    assert_within_tolerance(b.find_t_at_distance(len, precision).unwrap(), 1.0, precision);
+
+    for i in 0..10 {
+        let t = 0.1 * (i as f64);
+        let len = b.subsegment(0.0..t).arclen(precision);
+        assert_within_tolerance(b.find_t_at_distance(len, precision).unwrap(), t, precision);
+    }
+}
+
+fn point_at_distance_binary_search(c: &CubicBez, distance_from_start: f64, accuracy: f64) -> Result<f64, CurveTooShort> {
+    let full_length = c.gauss_arclen(GAUSS_LEGENDRE_COEFFS_9);
+    if distance_from_start > full_length {
+        Err(CurveTooShort { remaining: distance_from_start - full_length })
+    } else {
+        // Run a binary search to find the t value which corresponds to a given arclength from the start
+        let mut mx_t = 1.0;
+        let mut mx_d = full_length;
+        let mut mn_t = 0.0;
+        let mut mn_d = 0.0;
+
+        loop {
+            // Do a first degree approximation of where the desired point should be
+            let t = ((distance_from_start - mn_d) / (mx_d - mn_d)) * (mx_t - mn_t) + mn_t;
+            // Note: avoid evaluating arc length when t = mn_t, the arclen method doesn't handle degenerate beziers well
+            let d = if t <= mn_t { mn_d } else { mn_d + c.subsegment(mn_t..t).gauss_arclen(GAUSS_LEGENDRE_COEFFS_9) };
+
+            if (d - distance_from_start).abs() < accuracy {
+                return Ok(t);
+            } else if distance_from_start > d {
+                mn_t = t;
+                mn_d = d;
+            } else {
+                mx_t = t;
+                mx_d = d;
+            }
+        }
+    }
+}
+
+// TODO: Can fail with a very S like curve and the distance is large enough that it can "jump" further than its supposed to
+pub fn bezier_move_forward_distance<U>(
+    p0: euclid::Point2D<f32, U>,
+    p1: euclid::Point2D<f32, U>,
+    p2: euclid::Point2D<f32, U>,
+    p3: euclid::Point2D<f32, U>,
+    t: f32,
+    mut distance: f32,
+    step_multiplier: f32,
+) -> MoveResult {
+    debug_assert!(t >= 0.0);
+    debug_assert!(t <= 1.0);
+
+    let derivative = evalute_cubic_bezier_derivative(p0, p1, p2, p3, t);
+
+    const move_limit: f32 = 0.2;
+
+    // Calculate a very approximate step in t-space to move.
+    // Do not move too far in a single step to ensure the distance approximation
+    // is not too bad
+    // TODO: Approximate distance with second order curve?
+    let mut step = (distance / derivative.length()).min(move_limit).max(-move_limit);
+    if step.abs() < 0.01 {
+        return MoveResult::Point { t };
+    }
+
+    if step > 0.0 && t == 1.0 {
+        return MoveResult::PassedEnd { remaining: distance };
+    }
+
+    // When moving backwards, make sure we do not move all the way back to the start of the curve
+    // as that could potentially cause infinite loops
+    if step < 0.0 {
+        step = step.max(-t*0.5);
+    }
+
+    let t1 = (t + step).min(1.0);
+    let a = evalute_cubic_bezier(p0, p1, p2, p3, t);
+    let b = evalute_cubic_bezier(p0, p1, p2, p3, t1);
+    let mut step_distance = (b - a).length();
+    if step < 0.0 {
+        step_distance = -step_distance;
+    }
+    bezier_move_forward_distance(p0, p1, p2, p3, t1, distance - step_distance, step_multiplier * 0.8)
+}
+
+pub fn bezier_length<U>(
+    p0: euclid::Point2D<f32, U>,
+    p1: euclid::Point2D<f32, U>,
+    p2: euclid::Point2D<f32, U>,
+    p3: euclid::Point2D<f32, U>,
+    t_start: f32,
+    t_end: f32,
+) -> f32 {
+    let mut prev = p0;
+    let mut length  = 0.0f32;
+    for i in 0..10 {
+        let t = (i as f32 / 10.0f32) * (t_end - t_start) + t_start;
+        let p = evalute_cubic_bezier(p0, p1, p2, p3, t);
+        length += (p - prev).length();
+        prev = p;
+    }
+    length
 }
 
 pub fn evalute_cubic_bezier_derivative<U>(

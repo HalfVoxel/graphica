@@ -9,6 +9,12 @@ use graphica::geometry_utilities::sqr_distance_bezier_point_binary;
 use rand::{Rng, SeedableRng};
 use rand::prelude::*;
 
+use kurbo::CubicBez;
+use kurbo::ParamCurve;
+use kurbo::ParamCurveArclen;
+use kurbo::Point as KurboPoint;
+use graphica::geometry_utilities::ParamCurvePointAtDistance;
+
 // use wgpu_example::main::PathData;
 
 // fn bench_iter(data: &mut PathData) {
@@ -102,6 +108,27 @@ fn sqr_distance_bezier_point_bench_binary(points: &Vec<Point>) {
     }
 }
 
+fn bezier_point_at_distance(bez: &CubicBez) {
+    for i in 0..10 {
+        let k = bez.point_at_distance(i as f64 * 1.0, 0.01);
+        black_box(k);
+    }
+}
+
+fn bezier_arclen(bez: &CubicBez) {
+    for i in 0..10 {
+        let k = bez.arclen(0.1);
+        black_box(k);
+    }
+}
+
+fn bezier_move_forward_distance(p0: &Point, p1: &Point, p2: &Point, p3: &Point) {
+    for i in 0..10 {
+        let k = graphica::geometry_utilities::bezier_move_forward_distance(*p0, *p1, *p2, *p3, 0.0, i as f32 * 1.0, 1.0);
+        black_box(k);
+    }
+}
+
 pub fn criterion_benchmark(c: &mut Criterion) {
     // let mut data = PathData::new();
     // for _ in 0..1000 {
@@ -126,6 +153,21 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("sqr_distance_bezier_point_bench_simd", |b| b.iter(|| sqr_distance_bezier_point_bench_simd(&points)));
     c.bench_function("sqr_distance_bezier_point_bench_old", |b| b.iter(|| sqr_distance_bezier_point_bench_old(&points)));
     c.bench_function("sqr_distance_bezier_point_bench_naive", |b| b.iter(|| sqr_distance_bezier_point_bench_naive(&points)));
+
+    let p0 = KurboPoint::new(0.0, 10.0);
+    let p1 = KurboPoint::new(10.0, 30.0);
+    let p2 = KurboPoint::new(5.0, 20.0);
+    let p3 = KurboPoint::new(0.0, 20.0);
+    let bezier = CubicBez::new(p0, p1, p2, p3);
+
+    let c0 = point(0.0, 10.0);
+    let c1 = point(10.0, 30.0);
+    let c2 = point(5.0, 20.0);
+    let c3 = point(0.0, 20.0);
+    c.bench_function("bezier_point_at_distance", |b| b.iter(|| bezier_point_at_distance(&bezier)));
+    c.bench_function("bezier_arclen", |b| b.iter(|| bezier_arclen(&bezier)));
+    c.bench_function("bezier_move_forward_distance", |b| b.iter(|| bezier_move_forward_distance(&c0, &c1, &c2, &c3)));
+    
 }
 
 criterion_group!(benches, criterion_benchmark);
