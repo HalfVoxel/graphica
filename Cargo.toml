@@ -10,8 +10,12 @@ path = "src/bin/main.rs"
 
 [dependencies]
 lyon = { path = "../lyon", features = ["extra"] }
-wgpu = "0.4"
-wgpu-native = "0.4"
+# wgpu = { path = "../wgpu-rs" }
+wgpu = "0.5"
+# wgpu-native = "0.4"
+# wgpu-core = { path = "../wgpu/wgpu-core"}
+# wgpu-native = { path = "../wgpu/wgpu-native"}
+# wgpu = { path = "../wgpu-rs"}
 winit = "0.20.0"
 euclid = "0.20"
 log = "0.4"
@@ -24,6 +28,24 @@ packed_simd = "0.3"
 palette = "0.5"
 image = "0.23"
 kurbo = "0.5"
+async-std = "1.5"
+
+# [patch.crates-io]
+# gfx-hal = { path = "../gfx/src/hal"}
+# gfx-backend-vulkan = { path = "../gfx/src/backend/vulkan"}
+# gfx-backend-empty = { path = "../gfx/src/backend/empty"}
+# gfx-backend-dx11 = { path = "../gfx/src/backend/dx11"}
+# gfx-backend-dx12 = { path = "../gfx/src/backend/dx12"}
+# gfx-backend-gl = { path = "../gfx/src/backend/gl"}
+# gfx-backend-metal = { path = "../gfx/src/backend/metal"}
+# gfx-hal = { path = "../gfx/src/hal"}
+# gfx-hal = { path = "../gfx/src/hal"}
+# wgpu-core = { path = "../wgpu/wgpu-core"}
+# wgpu-native = { path = "../wgpu/wgpu-native"}
+# wgpu-remote = { path = "../wgpu/wgpu-remote"}
+# wgpu-types = { path = "../wgpu/wgpu-types"}
+# gfx-descriptor = { version = "0.1.0", path = "../gfx-extras/gfx-descriptor" }
+# gfx-memory = { version = "0.1.0", path = "../gfx-extras/gfx-memory" }
 
 [dev-dependencies]
 criterion = "0.3"
@@ -31,3 +53,11 @@ criterion = "0.3"
 [[bench]]
 name = "my_benchmark"
 harness = false
+
+[profile.release]
+debug = true
+# opt-level = 0
+
+# wgpu = { path = "../wgpu"}
+# wgpu-native = { path = "../wgpu/wgpu-native"}
+# wgpu-core = { path = "../wgpu/wgpu-core"}
