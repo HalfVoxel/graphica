@@ -9,7 +9,8 @@ name = "graphica"
 path = "src/bin/main.rs"
 
 [dependencies]
-lyon = { path = "../lyon", features = ["extra"] }
+# lyon = { path = "../lyon", features = ["extra"] }
+lyon = "0.15"
 # wgpu = { path = "../wgpu-rs" }
 wgpu = "0.5"
 # wgpu-native = "0.4"

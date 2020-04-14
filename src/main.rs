@@ -1,4 +1,3 @@
-use lyon::extra::rust_logo::build_logo_path;
 use lyon::math::*;
 use lyon::path::builder::*;
 use lyon::path::Path;
@@ -434,7 +433,7 @@ pub fn main() {
     let t0 = Instant::now();
     // Build a Path for the rust logo.
     let mut builder = SvgPathBuilder::new(Path::builder());
-    build_logo_path(&mut builder);
+    // build_logo_path(&mut builder);
     let path = builder.build();
 
     let t1 = Instant::now();
