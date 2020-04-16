@@ -541,7 +541,7 @@ pub fn main() {
         },
         limits: wgpu::Limits::default(),
     }));
-
+    
     let vs_module = load_shader(&device, include_bytes!("./../shaders/geometry.vert.spv"));
     let fs_module = load_shader(&device, include_bytes!("./../shaders/geometry.frag.spv"));
     let bg_vs_module = load_shader(&device, include_bytes!("./../shaders/background.vert.spv"));
@@ -634,7 +634,7 @@ pub fn main() {
                     },
                     wgpu::VertexAttributeDescriptor {
                         offset: 16,
-                        format: wgpu::VertexFormat::Float,
+                        format: wgpu::VertexFormat::Int,
                         shader_location: 2,
                     },
                 ],
