@@ -32,12 +32,15 @@ use crate::gui;
 use crate::toolbar::GUIRoot;
 use std::cell::{RefCell, RefMut, Ref};
 use std::ops::Rem;
-// use cpuprofiler::PROFILER;
+use cpuprofiler::PROFILER;
 use crate::path_editor::*;
 use crate::brush_editor::{BrushEditor, BrushData};
 use kurbo::Point as KurboPoint;
 use kurbo::CubicBez;
 use async_std::task;
+use palette::Srgba;
+use palette::Pixel;
+use arrayvec::ArrayVec;
 
 const PRIM_BUFFER_LEN: usize = 64;
 
@@ -56,6 +59,34 @@ struct GpuVertex {
     normal: [f32; 2],
     prim_id: i32,
 }
+
+type GPURGBA = [u8; 4];
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct BrushGpuVertex {
+    position: CanvasPoint,
+    uv: Point,
+    color: GPURGBA,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct CloneBrushGpuVertex {
+    position: CanvasPoint,
+    uv_background_source: Point,
+    uv_background_target: Point,
+    uv_brush: Point,
+    color: GPURGBA,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct BlitGpuVertex {
+    uv_source: Point,
+    uv_target: Point,
+}
+
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -120,7 +151,7 @@ struct BrushRenderer {
     render_pipeline: Rc<RenderPipeline>,
 }
 
-fn sample_points_along_curve(path: &PathData, spacing: f32) -> Vec<CanvasPoint> {
+fn sample_points_along_curve(path: &PathData, spacing: f32) -> Vec<(usize, CanvasPoint)> {
     let mut result = vec![];
     let mut builder = Path::builder();
     path.build(&mut builder);
@@ -139,11 +170,11 @@ fn sample_points_along_curve(path: &PathData, spacing: f32) -> Vec<CanvasPoint> 
             loop {
                 match bezier.eval_at_distance((spacing + offset) as f64, 0.01) {
                     Ok(p) => {
-                        result.push(point(p.x as f32, p.y as f32));
+                        result.push((start.index, point(p.x as f32, p.y as f32)));
                         offset += spacing;
                     }
                     Err(geometry_utilities::CurveTooShort { remaining }) => {
-                        offset = -remaining as f32;
+                        offset = remaining as f32 - spacing;
                         debug_assert!(remaining >= 0.0);
                         break;
                     }
@@ -204,10 +235,19 @@ fn update_buffer_via_transfer<T>(device: &Device, encoder: &mut CommandEncoder, 
 
 impl BrushRenderer {
     fn new(brush_data: &BrushData, view: &CanvasView, device: &Device, encoder: &mut CommandEncoder, bind_group_layout: &wgpu::BindGroupLayout, scene_ubo: &Buffer, scene_ubo_size: u64, render_pipeline_brush: &Rc<RenderPipeline>, texture: &Texture) -> BrushRenderer {
-        let points = sample_points_along_curve(&brush_data.path, brush_data.brush.spacing);
-        let size = 20.0;
+        let size = brush_data.brush.size;
+        let points = sample_points_along_curve(&brush_data.path, brush_data.brush.spacing * size);
 
-        let vertices: Vec<CanvasPoint> = points.iter().flat_map(|&x| vec![x + vector(-size, -size), x + vector(size, -size), x + vector(size, size), x + vector(-size, size)]).collect();
+        let vertices: Vec<BrushGpuVertex> = points.iter().flat_map(|&(vertex_index, pos)| {
+            let color = brush_data.colors[vertex_index/3].into_format().into_raw();
+            ArrayVec::from([
+                BrushGpuVertex { position: pos + vector(-size, -size), uv: point(0.0, 0.0), color },
+                BrushGpuVertex { position: pos + vector(size, -size), uv: point(1.0, 0.0), color },
+                BrushGpuVertex { position: pos + vector(size, size), uv: point(1.0, 1.0), color },
+                BrushGpuVertex { position: pos + vector(-size, size), uv: point(0.0, 1.0), color },
+            ])
+        }
+        ).collect();
 
         let (vbo, _) = create_buffer_with_data(device, &vertices, wgpu::BufferUsage::VERTEX);
         
@@ -431,53 +471,22 @@ pub fn main() {
     let tolerance = 0.02;
 
     let t0 = Instant::now();
-    // Build a Path for the rust logo.
-    let mut builder = SvgPathBuilder::new(Path::builder());
-    // build_logo_path(&mut builder);
-    let path = builder.build();
 
     let t1 = Instant::now();
 
-    let mut geometry: VertexBuffers<GpuVertex, u32> = VertexBuffers::new();
-
-    let stroke_prim_id = 0;
-    let fill_prim_id = 1;
-
-    let fill_count = FillTessellator::new()
-        .tessellate_path(
-            &path,
-            &FillOptions::tolerance(tolerance),
-            &mut BuffersBuilder::new(&mut geometry, WithId(fill_prim_id as i32)),
-        )
-        .unwrap();
-
-    let t2 = Instant::now();
-
-    StrokeTessellator::new()
-        .tessellate_path(
-            &path,
-            &StrokeOptions::tolerance(tolerance).dont_apply_line_width(),
-            &mut BuffersBuilder::new(&mut geometry, WithId(stroke_prim_id as i32)),
-        )
-        .unwrap();
-
     let t3 = Instant::now();
-
-    let fill_range = 0..fill_count.indices;
-    let stroke_range = fill_range.end..(geometry.indices.len() as u32);
 
     let mut bg_geometry: VertexBuffers<Point, u16> = VertexBuffers::new();
     lyon::tessellation::basic_shapes::fill_rectangle(
-        &Rect::new(point(-1.0, -1.0), size(2.0, 2.0)),
+        &Rect::new(point(-1.0 * 5.0, -1.0 * 5.0), size(2.0 * 5.0, 2.0 * 5.0)),
         &FillOptions::default(),
         &mut BuffersBuilder::new(&mut bg_geometry, Positions),
     )
     .unwrap();
+
     let t4 = Instant::now();
 
     println!("Loading svg: {:?}", (t1.duration_since(t0).as_secs_f32() * 1000.0));
-    println!("Fill path: {:?}", (t2.duration_since(t1).as_secs_f32() * 1000.0));
-    println!("Stroke path: {:?}", (t3.duration_since(t2).as_secs_f32() * 1000.0));
     println!("Memory: {:?}", (t4.duration_since(t3).as_secs_f32() * 1000.0));
 
     let document = Document {
@@ -540,6 +549,10 @@ pub fn main() {
     let bg_fs_module = load_shader(&device, include_bytes!("./../shaders/background.frag.spv"));
     let brush_vs_module = load_shader(&device, include_bytes!("./../shaders/brush.vert.spv"));
     let brush_fs_module = load_shader(&device, include_bytes!("./../shaders/brush.frag.spv"));
+    let clone_brush_vs_module = load_shader(&device, include_bytes!("./../shaders/clone_brush.vert.spv"));
+    let clone_brush_fs_module = load_shader(&device, include_bytes!("./../shaders/clone_brush.frag.spv"));
+    let clone_brush_blit_vs_module = load_shader(&device, include_bytes!("./../shaders/clone_brush_blit.vert.spv"));
+    let clone_brush_blit_fs_module = load_shader(&device, include_bytes!("./../shaders/clone_brush_blit.frag.spv"));
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Geometry Bind Group Layout"),
@@ -682,8 +695,38 @@ pub fn main() {
         alpha_to_coverage_enabled: false,
     });
 
+    let bind_group_layout_brush = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Bind group layout brush"),
+        bindings: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::Sampler { comparison: false },
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::SampledTexture { multisampled: true, dimension: wgpu::TextureViewDimension::D2, component_type: wgpu::TextureComponentType::Float },
+            },
+        ],
+    });
+
+    let pipeline_layout_brush = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        bind_group_layouts: &[&bind_group_layout_brush],
+    });
+
     let render_pipeline_descriptor_brush = wgpu::RenderPipelineDescriptor {
-        layout: &pipeline_layout,
+        layout: &pipeline_layout_brush,
         vertex_stage: wgpu::ProgrammableStageDescriptor {
             module: &brush_vs_module,
             entry_point: "main",
@@ -714,17 +757,35 @@ pub fn main() {
             },
             write_mask: wgpu::ColorWrite::ALL,
         }],
-        depth_stencil_state: depth_stencil_state.clone(),
+        depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+            stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+            stencil_read_mask: 0,
+            stencil_write_mask: 0,
+        }),
         vertex_state: wgpu::VertexStateDescriptor {
             index_format: wgpu::IndexFormat::Uint32,
             vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                stride: std::mem::size_of::<CanvasPoint>() as u64,
+                stride: std::mem::size_of::<BrushGpuVertex>() as u64,
                 step_mode: wgpu::InputStepMode::Vertex,
                 attributes: &[
                     wgpu::VertexAttributeDescriptor {
                         offset: 0,
                         format: wgpu::VertexFormat::Float2,
                         shader_location: 0,
+                    },
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 8,
+                        format: wgpu::VertexFormat::Float2,
+                        shader_location: 1,
+                    },
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 16,
+                        format: wgpu::VertexFormat::Uchar4Norm,
+                        shader_location: 2,
                     },
                 ],
             }],
@@ -736,8 +797,9 @@ pub fn main() {
 
     let render_pipeline_brush = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor_brush));
 
-    let bind_group_layout_brush = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Bind group layout brush"),
+
+    let bind_group_layout_clone_brush = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Bind group layout clone_brush"),
         bindings: &[
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -759,8 +821,166 @@ pub fn main() {
                 visibility: wgpu::ShaderStage::FRAGMENT,
                 ty: wgpu::BindingType::SampledTexture { multisampled: true, dimension: wgpu::TextureViewDimension::D2, component_type: wgpu::TextureComponentType::Float },
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::SampledTexture { multisampled: true, dimension: wgpu::TextureViewDimension::D2, component_type: wgpu::TextureComponentType::Float },
+            },
         ],
     });
+
+    let pipeline_layout_clone_brush = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        bind_group_layouts: &[&bind_group_layout_clone_brush],
+    });
+
+    let render_pipeline_descriptor_clone_brush = wgpu::RenderPipelineDescriptor {
+        layout: &pipeline_layout_clone_brush,
+        vertex_stage: wgpu::ProgrammableStageDescriptor {
+            module: &clone_brush_vs_module,
+            entry_point: "main",
+        },
+        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            module: &clone_brush_fs_module,
+            entry_point: "main",
+        }),
+        rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: wgpu::CullMode::None,
+            depth_bias: 0,
+            depth_bias_slope_scale: 0.0,
+            depth_bias_clamp: 0.0,
+        }),
+        primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+        color_states: &[wgpu::ColorStateDescriptor {
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            color_blend: wgpu::BlendDescriptor {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::Zero,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha_blend: wgpu::BlendDescriptor {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::Zero,
+                operation: wgpu::BlendOperation::Add,
+            },
+            write_mask: wgpu::ColorWrite::ALL,
+        }],
+        depth_stencil_state: None,
+        vertex_state: wgpu::VertexStateDescriptor {
+            index_format: wgpu::IndexFormat::Uint32,
+            vertex_buffers: &[wgpu::VertexBufferDescriptor {
+                stride: std::mem::size_of::<BrushGpuVertex>() as u64,
+                step_mode: wgpu::InputStepMode::Vertex,
+                attributes: &[
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 0,
+                        format: wgpu::VertexFormat::Float2,
+                        shader_location: 0,
+                    },
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 8,
+                        format: wgpu::VertexFormat::Float2,
+                        shader_location: 1,
+                    },
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 16,
+                        format: wgpu::VertexFormat::Float2,
+                        shader_location: 2,
+                    },
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 24,
+                        format: wgpu::VertexFormat::Float2,
+                        shader_location: 3,
+                    },
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 32,
+                        format: wgpu::VertexFormat::Uchar4Norm,
+                        shader_location: 4,
+                    },
+                ],
+            }],
+        },
+        sample_count: 1,
+        sample_mask: !0,
+        alpha_to_coverage_enabled: false,
+    };
+
+    let render_pipeline_clone_brush = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor_clone_brush));
+
+    let render_pipeline_descriptor_clone_brush_blit = wgpu::RenderPipelineDescriptor {
+        layout: &pipeline_layout_clone_brush,
+        vertex_stage: wgpu::ProgrammableStageDescriptor {
+            module: &clone_brush_blit_vs_module,
+            entry_point: "main",
+        },
+        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            module: &clone_brush_blit_fs_module,
+            entry_point: "main",
+        }),
+        rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: wgpu::CullMode::None,
+            depth_bias: 0,
+            depth_bias_slope_scale: 0.0,
+            depth_bias_clamp: 0.0,
+        }),
+        primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+        color_states: &[wgpu::ColorStateDescriptor {
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            color_blend: wgpu::BlendDescriptor {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::Zero,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha_blend: wgpu::BlendDescriptor {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::Zero,
+                operation: wgpu::BlendOperation::Add,
+            },
+            write_mask: wgpu::ColorWrite::ALL,
+        }],
+        depth_stencil_state: None,
+        vertex_state: wgpu::VertexStateDescriptor {
+            index_format: wgpu::IndexFormat::Uint32,
+            vertex_buffers: &[wgpu::VertexBufferDescriptor {
+                stride: std::mem::size_of::<BrushGpuVertex>() as u64,
+                step_mode: wgpu::InputStepMode::Vertex,
+                attributes: &[
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 0,
+                        format: wgpu::VertexFormat::Float2,
+                        shader_location: 0,
+                    },
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 8,
+                        format: wgpu::VertexFormat::Float2,
+                        shader_location: 1,
+                    },
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 16,
+                        format: wgpu::VertexFormat::Float2,
+                        shader_location: 2,
+                    },
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 24,
+                        format: wgpu::VertexFormat::Float2,
+                        shader_location: 3,
+                    },
+                    wgpu::VertexAttributeDescriptor {
+                        offset: 32,
+                        format: wgpu::VertexFormat::Uchar4Norm,
+                        shader_location: 4,
+                    },
+                ],
+            }],
+        },
+        sample_count: 1,
+        sample_mask: !0,
+        alpha_to_coverage_enabled: false,
+    };
+
+    let render_pipeline_clone_brush_blit = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor_clone_brush_blit));
+
 
     let event_loop = EventLoop::new();
     let window = Window::new(&event_loop).unwrap();
@@ -829,8 +1049,9 @@ pub fn main() {
 
     let tex = std::sync::Arc::new(Texture::load_from_file(std::path::Path::new("brush.png"), &device, &mut init_encoder).unwrap());
     editor.document.textures.push(tex.clone());
-    editor.ui_document.textures.push(tex);
-    init_encoder.finish();
+    editor.ui_document.textures.push(tex.clone());
+
+    queue.submit(&[init_encoder.finish()]);
 
     event_loop.run(move |event, _, control_flow| {
         let scene = &mut editor.scene;

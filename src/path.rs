@@ -3,6 +3,7 @@ use lyon::math::*;
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 
+#[derive(Clone)]
 pub struct SubPathData {
     pub range: std::ops::Range<usize>,
     closed: bool,
@@ -354,6 +355,13 @@ impl PathData {
             version: 0,
             last_hash: std::cell::Cell::new((0, 0)),
         }
+    }
+
+    pub fn copy_from(&mut self, other: &PathData) {
+        self.points = other.points.clone();
+        self.sub_paths = other.sub_paths.clone();
+        self.in_path = other.in_path;
+        self.dirty();
     }
 
     pub fn hash(&self) -> u64 {

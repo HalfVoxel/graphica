@@ -15,22 +15,61 @@ use rand::{rngs::StdRng, SeedableRng};
 use crate::toolbar::ToolType;
 use palette::Srgba;
 
+enum BrushEditorState {
+    Dragging(CapturedClick, CanvasPoint)
+}
+
 pub struct BrushEditor {
+    state: Option<BrushEditorState>,
+    debug_path: Option<PathReference>,
+    color: Srgba,
 }
 
 impl BrushEditor {
     pub fn new() -> BrushEditor {
-        BrushEditor {}
+        BrushEditor {
+            state: None,
+            debug_path: None,
+            color: Srgba::new(1.0, 0.0, 0.0, 1.0),
+        }
     }
     
     pub fn update(&mut self, ui_document: &mut Document, document: &mut Document, view: &CanvasView, input: &mut InputManager, tool: &ToolType) {
         let data = &mut document.brushes;
         let mouse_pos_canvas = view.screen_to_canvas_point(input.mouse_position);
+        if self.debug_path.is_none() {
+            self.debug_path = Some(document.paths.push(PathData::new()));
+        }
+
+        let p = document.paths.resolve_path_mut(&self.debug_path.unwrap());
+        p.clear();
 
         match tool {
             ToolType::Brush => {
-                if let Some(captured) = input.capture_click(MouseButton::Left) {
-                    data.line_to(mouse_pos_canvas, Srgba::new(1.0, 0.0, 0.0, 1.0));
+                p.copy_from(&data.path);
+                self.state = match self.state.take() {
+                    None => {
+                        if let Some(captured) = input.capture_click(MouseButton::Left) {
+                            data.move_to(mouse_pos_canvas, self.color);
+                            Some(BrushEditorState::Dragging(captured, mouse_pos_canvas))
+                        } else {
+                            None
+                        }
+                    }
+                    Some(brush_state) => match brush_state {
+                        BrushEditorState::Dragging(capture, last_point) => {
+                            if !capture.is_pressed(input) {
+                                None
+                            } else {
+                                if (last_point - mouse_pos_canvas).length() > 2.0 {
+                                    data.line_to(mouse_pos_canvas, self.color);
+                                    Some(BrushEditorState::Dragging(capture, mouse_pos_canvas))
+                                } else {
+                                    Some(BrushEditorState::Dragging(capture, last_point))
+                                }
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
@@ -54,6 +93,7 @@ pub struct TextureReference {
 pub struct Brush {
     pub tip_texture: TextureReference,
     pub spacing: f32,
+    pub size: f32,
 }
 
 pub struct BrushData {
@@ -69,9 +109,15 @@ impl BrushData {
             colors: vec![],
             brush: Brush {
                 tip_texture: TextureReference { id: 0 },
-                spacing: 5.0,
+                spacing: 0.25,
+                size: 20.0,
             }
         }
+    }
+
+    fn move_to(&mut self, p: CanvasPoint, color: Srgba) {
+        self.path.move_to(p);
+        self.colors.push(color);
     }
 
     fn line_to(&mut self, p: CanvasPoint, color: Srgba) {
