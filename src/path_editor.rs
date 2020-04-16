@@ -666,6 +666,7 @@ impl PathEditor {
             _ => self.select_state = None
         }
 
+        dbg!(tool);
         match tool {
             ToolType::Select => {
                 self.update_selection(document, view, input);
