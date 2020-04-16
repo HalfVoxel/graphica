@@ -32,7 +32,7 @@ use crate::gui;
 use crate::toolbar::GUIRoot;
 use std::cell::{RefCell, RefMut, Ref};
 use std::ops::Rem;
-use cpuprofiler::PROFILER;
+// use cpuprofiler::PROFILER;
 use crate::path_editor::*;
 use crate::brush_editor::{BrushEditor, BrushData};
 use kurbo::Point as KurboPoint;
