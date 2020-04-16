@@ -11,10 +11,10 @@ layout(location = 0) in V2F v_in;
 layout(location = 0) out vec4 out_color;
 
 layout(binding = 2)
-uniform texture2D t_Color;
+uniform sampler s_Color;
 
 layout(binding = 3)
-uniform sampler s_Color;
+uniform texture2D t_Color;
 
 void main() {
     out_color = v_in.color * texture(sampler2D(t_Color, s_Color), v_in.uv);
