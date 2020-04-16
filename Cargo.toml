@@ -23,13 +23,14 @@ log = "0.4"
 env_logger = "0.7"
 by_address = "1.0"
 rand = "0.7"
-# cpuprofiler = "0.0.4"
+cpuprofiler = "0.0.4"
 lazy_static = "1.4"
 packed_simd = "0.3"
 palette = "0.5"
 image = "0.23"
 kurbo = "0.5"
 async-std = "1.5"
+arrayvec = "0.5"
 
 # [patch.crates-io]
 # gfx-hal = { path = "../gfx/src/hal"}
