@@ -332,7 +332,6 @@ impl BrushRenderer {
     }
 
     fn render<'a>(&'a self, pass: &mut RenderPass<'a>) {
-        dbg!(self.index_buffer_length);
         pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_index_buffer(&self.ibo, 0, 0);
@@ -442,7 +441,7 @@ impl DocumentRenderer {
         pass.set_index_buffer(&self.ibo, 0, 0);
         pass.set_vertex_buffer(0, &self.vbo, 0, 0);
         pass.draw_indexed(0..(self.index_buffer_length as u32), 0, 0..1);
-        self.brush_renderer.render(pass);
+        // self.brush_renderer.render(pass);
     }
 }
 
@@ -465,7 +464,7 @@ pub fn main() {
 
     // Number of samples for anti-aliasing
     // Set to 1 to disable
-    let sample_count = 8;
+    let sample_count = 1;
 
     let num_instances: u32 = PRIM_BUFFER_LEN as u32 - 1;
     let tolerance = 0.02;
@@ -1191,7 +1190,7 @@ pub fn main() {
             }
 
             document_renderer1.as_ref().unwrap().render(&mut pass);
-            document_renderer2.as_ref().unwrap().render(&mut pass);
+            // document_renderer2.as_ref().unwrap().render(&mut pass);
 
             // pass.set_bind_group(0, &bind_group, &[]);
             // pass.set_index_buffer(&ibo, 0);
