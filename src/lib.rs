@@ -9,3 +9,6 @@ pub mod gui;
 mod brush_editor;
 mod path_editor;
 mod toolbar;
+mod shader;
+mod blitter;
+mod wgpu_utils;

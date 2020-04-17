@@ -35,6 +35,7 @@ layout(location = 0) out V2F v_out;
 void main() {
     float z = 1.0;
     vec2 transformed_pos = a_uv_brush * 2 - 1;
+    // transformed_pos.y = -transformed_pos.y;
     gl_Position = vec4(transformed_pos, z / 1000.0, 1.0);
     
     v_out.color = a_color;//vec4(1.0, 1.0, 1.0, 1.0);

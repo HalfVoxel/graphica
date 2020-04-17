@@ -27,6 +27,10 @@ impl CanvasView {
         rect(topleft.x, topleft.y, bottomright.x - topleft.x, bottomright.y - topleft.y)
     }
 
+    pub fn screen_to_normalized(&self, p: ScreenPoint) -> Point {
+        point(p.x / self.resolution.width as f32, 1.0 - p.y / self.resolution.height as f32)
+    }
+
     pub fn screen_to_canvas_scale(&self) -> euclid::Scale<f32, ScreenSpace, CanvasSpace> {
         euclid::Scale::new(1.0 / self.zoom)
     }

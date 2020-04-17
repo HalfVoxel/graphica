@@ -1,5 +1,3 @@
-use graphica::main;
-#[macro_use]
 extern crate log;
 
 fn main() {

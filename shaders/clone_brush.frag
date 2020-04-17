@@ -29,6 +29,7 @@ void main() {
     vec4 background_target = texture(sampler2D(t_background, samp), v_in.uv_background_target);
     float brush = texture(sampler2D(t_brush, samp), v_in.uv_brush).a;
     vec4 v = mix(background_target, background_src, brush);
+    // out_color = mix(v, vec4(1.0, 0.0, 0.0, 1.0), 0.1);
     out_color = v;
     // out_color = vec4(1.0, 1.0, 0.0, 1.0);
 }
