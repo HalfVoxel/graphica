@@ -12,3 +12,4 @@ mod toolbar;
 mod shader;
 mod blitter;
 mod wgpu_utils;
+mod brush_manager;

@@ -1,21 +1,5 @@
 #version 450
 
-#define PRIM_BUFFER_LEN 1
-
-layout(std140, binding = 0)
-uniform Globals {
-    vec2 u_resolution;
-    vec2 u_scroll_offset;
-    float u_zoom;
-};
-
-struct Primitive {
-    int dummy;
-};
-
-layout(std140, binding = 1)
-uniform u_primitives { Primitive primitives[PRIM_BUFFER_LEN]; };
-
 struct V2F {
     vec4 color;
     vec2 uv_background_src;

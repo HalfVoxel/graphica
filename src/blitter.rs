@@ -20,7 +20,7 @@ pub struct BlitterWithTextures<'a, 'b> {
 }
 
 pub struct Blitter {
-    render_pipeline: RenderPipeline,
+    render_pipelines: Vec<RenderPipeline>,
     bind_group_layout: BindGroupLayout,
     sampler: Sampler,
     ibo: Buffer,
@@ -66,70 +66,73 @@ impl Blitter {
             bind_group_layouts: &[&bind_group_layout],
         });
 
-        let render_pipeline_descriptor = RenderPipelineDescriptor {
-            layout: &pipeline_layout,
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &blit_vs,
-                entry_point: "main",
-            },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &blit_fs,
-                entry_point: "main",
-            }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::None,
-                depth_bias: 0,
-                depth_bias_slope_scale: 0.0,
-                depth_bias_clamp: 0.0,
-            }),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[wgpu::ColorStateDescriptor {
-                format: wgpu::TextureFormat::Bgra8Unorm,
-                color_blend: wgpu::BlendDescriptor {
-                    src_factor: BlendFactor::One,
-                    dst_factor: BlendFactor::Zero,
-                    operation: wgpu::BlendOperation::Add,
+        let render_pipelines = (&[1, 8]).iter().map(|&sample_count| {
+            let render_pipeline_descriptor = RenderPipelineDescriptor {
+                layout: &pipeline_layout,
+                vertex_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &blit_vs,
+                    entry_point: "main",
                 },
-                alpha_blend: wgpu::BlendDescriptor {
-                    src_factor: BlendFactor::One,
-                    dst_factor: BlendFactor::Zero,
-                    operation: wgpu::BlendOperation::Add,
-                },
-                write_mask: wgpu::ColorWrite::ALL,
-            }],
-            depth_stencil_state: None,
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint32,
-                vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                    stride: std::mem::size_of::<BlitGpuVertex>() as u64,
-                    step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttributeDescriptor {
-                            offset: 0,
-                            format: wgpu::VertexFormat::Float2,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttributeDescriptor {
-                            offset: 8,
-                            format: wgpu::VertexFormat::Float2,
-                            shader_location: 1,
-                        },
-                    ],
+                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                    module: &blit_fs,
+                    entry_point: "main",
+                }),
+                rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: wgpu::CullMode::None,
+                    depth_bias: 0,
+                    depth_bias_slope_scale: 0.0,
+                    depth_bias_clamp: 0.0,
+                }),
+                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+                color_states: &[wgpu::ColorStateDescriptor {
+                    format: wgpu::TextureFormat::Bgra8Unorm,
+                    color_blend: wgpu::BlendDescriptor {
+                        src_factor: BlendFactor::One,
+                        dst_factor: BlendFactor::Zero,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha_blend: wgpu::BlendDescriptor {
+                        src_factor: BlendFactor::One,
+                        dst_factor: BlendFactor::Zero,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    write_mask: wgpu::ColorWrite::ALL,
                 }],
-            },
-            sample_count: 1,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
-        };
-        let render_pipeline = device.create_render_pipeline(&render_pipeline_descriptor);
+                depth_stencil_state: None,
+                vertex_state: wgpu::VertexStateDescriptor {
+                    index_format: wgpu::IndexFormat::Uint32,
+                    vertex_buffers: &[wgpu::VertexBufferDescriptor {
+                        stride: std::mem::size_of::<BlitGpuVertex>() as u64,
+                        step_mode: wgpu::InputStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttributeDescriptor {
+                                offset: 0,
+                                format: wgpu::VertexFormat::Float2,
+                                shader_location: 0,
+                            },
+                            wgpu::VertexAttributeDescriptor {
+                                offset: 8,
+                                format: wgpu::VertexFormat::Float2,
+                                shader_location: 1,
+                            },
+                        ],
+                    }],
+                },
+                sample_count: sample_count,
+                sample_mask: !0,
+                alpha_to_coverage_enabled: false,
+            };
+            let render_pipeline = device.create_render_pipeline(&render_pipeline_descriptor);
+            render_pipeline
+        }).collect::<Vec<RenderPipeline>>();
 
         let indices = &[0, 1, 2, 3, 2, 0];
         let (ibo, ibo_size) =
             create_buffer_via_transfer(device, encoder, indices, wgpu::BufferUsage::INDEX, "Blitter IBO");
 
         Blitter {
-            render_pipeline,
+            render_pipelines,
             bind_group_layout,
             sampler,
             ibo,
@@ -172,18 +175,20 @@ impl Blitter {
         target_texture: &wgpu::TextureView,
         source_uv_rect: Rect,
         target_uv_rect: Rect,
+        sample_count: u32,
     ) {
         self.with_textures(device, source_texture, target_texture).blit(
             device,
             encoder,
             source_uv_rect,
             target_uv_rect,
+            sample_count
         );
     }
 }
 
 impl<'a, 'b> BlitterWithTextures<'a, 'b> {
-    pub fn blit(&self, device: &Device, encoder: &mut CommandEncoder, source_uv_rect: Rect, target_uv_rect: Rect) {
+    pub fn blit(&self, device: &Device, encoder: &mut CommandEncoder, source_uv_rect: Rect, target_uv_rect: Rect, sample_count: u32) {
         let vertices = &[
             BlitGpuVertex {
                 uv_source: point(source_uv_rect.min_x(), source_uv_rect.min_y()),
@@ -216,7 +221,12 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
             depth_stencil_attachment: None,
         });
 
-        pass.set_pipeline(&self.blitter.render_pipeline);
+        let pipeline = match sample_count {
+            1 => &self.blitter.render_pipelines[0],
+            8 => &self.blitter.render_pipelines[1],
+            _ => panic!("Unsupported blit sample count. Only 1 and 8 supported.")
+        };
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_index_buffer(&self.blitter.ibo, 0, 0);
         pass.set_vertex_buffer(0, &vbo, 0, 0);

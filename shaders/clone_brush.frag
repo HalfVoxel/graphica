@@ -12,17 +12,14 @@ layout(location = 0) in V2F v_in;
 // layout(location = 4) in vec2 v_uv;
 layout(location = 0) out vec4 out_color;
 
-layout(binding = 2)
+layout(binding = 0)
 uniform sampler samp;
 
-layout(binding = 3)
+layout(binding = 1)
 uniform texture2D t_background;
 
-layout(binding = 4)
+layout(binding = 2)
 uniform texture2D t_brush;
-
-
-
 
 void main() {
     vec4 background_src = texture(sampler2D(t_background, samp), v_in.uv_background_src);
