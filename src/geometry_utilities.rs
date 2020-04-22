@@ -1,20 +1,20 @@
 use crate::path::ImmutablePathPoint;
 use euclid;
-use lyon::math::*;
-use rand::Rng;
-use types::*;
-use lazy_static::lazy_static;
-use packed_simd::*;
-use packed_simd::f32x4;
-use std::convert::TryInto;
-use kurbo::CubicBez;
-use kurbo::ParamCurveDeriv;
-use kurbo::common::GAUSS_LEGENDRE_COEFFS_9;
-use kurbo::common::GAUSS_LEGENDRE_COEFFS_5;
 use kurbo::common::GAUSS_LEGENDRE_COEFFS_3;
+use kurbo::common::GAUSS_LEGENDRE_COEFFS_5;
+use kurbo::common::GAUSS_LEGENDRE_COEFFS_9;
+use kurbo::CubicBez;
 use kurbo::ParamCurve;
 use kurbo::ParamCurveArclen;
+use kurbo::ParamCurveDeriv;
 use kurbo::Point as KurboPoint;
+use lazy_static::lazy_static;
+use lyon::math::*;
+use packed_simd::f32x4;
+use packed_simd::*;
+use rand::Rng;
+use std::convert::TryInto;
+use types::*;
 
 pub mod types {
     pub struct ScreenSpace;
@@ -70,29 +70,29 @@ pub enum MoveResult {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct CurveTooShort {
-    pub remaining: f64
+    pub remaining: f64,
 }
 
 /// Evaluates a curve based on an arc length distance from the start of the curve
 pub trait ParamCurveDistanceEval: ParamCurve {
     /// Evaluates the curve at a given arc length distance from the start of the curve.
-    /// 
+    ///
     /// # Arguments
     /// * `distance_from_start` - Distance from the start of the curve. Should be greater or equal to 0.0.
     /// * `accuracy` - Maximum allowed error in the arc length.
-    /// 
-    /// Returns an error if the curve is shorter than `distance_from_start`. 
+    ///
+    /// Returns an error if the curve is shorter than `distance_from_start`.
     fn eval_at_distance(&self, distance_from_start: f64, accuracy: f64) -> Result<KurboPoint, CurveTooShort> {
         let t = self.find_t_at_distance(distance_from_start, accuracy)?;
         Ok(self.eval(t))
     }
 
     /// Finds the `t` value for a given arc length distance from the start of the curve.
-    /// 
+    ///
     /// # Arguments
     /// * `distance_from_start` - Distance from the start of the curve. Should be greater or equal to 0.0.
     /// * `accuracy` - Maximum allowed error in the arc length.
-    /// 
+    ///
     /// Returns an error if the curve is shorter than `distance_from_start`.
     fn find_t_at_distance(&self, distance_from_start: f64, accuracy: f64) -> Result<f64, CurveTooShort>;
 }
@@ -112,11 +112,19 @@ impl ParamCurveDistanceEval for CubicBez {
             2.56e-8 * (cubic_errnorm(c) / lc2).powi(8) * lp
         }
         const MAX_DEPTH: usize = 16;
-        fn rec(c: &CubicBez, distance_from_start: f64, accuracy: f64, depth: usize, t_range: std::ops::Range<f64>) -> Result<f64, CurveTooShort> {
+        fn rec(
+            c: &CubicBez,
+            distance_from_start: f64,
+            accuracy: f64,
+            depth: usize,
+            t_range: std::ops::Range<f64>,
+        ) -> Result<f64, CurveTooShort> {
             if depth == MAX_DEPTH || est_gauss9_error(c) < accuracy {
                 let length = c.gauss_arclen(GAUSS_LEGENDRE_COEFFS_9);
-                if distance_from_start > length  {
-                    Err(CurveTooShort { remaining: distance_from_start - length })
+                if distance_from_start > length {
+                    Err(CurveTooShort {
+                        remaining: distance_from_start - length,
+                    })
                 } else {
                     // Run a binary search to find the t value which corresponds to a given arclength from the start.
                     // Note that in this part the gauss_arclen can be used to estimate arc length.
@@ -152,7 +160,13 @@ impl ParamCurveDistanceEval for CubicBez {
             } else {
                 let (c0, c1) = c.subdivide();
                 let t_mid = (t_range.start + t_range.end) * 0.5;
-                let r0 = rec(&c0, distance_from_start, accuracy * 0.5, depth + 1, t_range.start..t_mid);
+                let r0 = rec(
+                    &c0,
+                    distance_from_start,
+                    accuracy * 0.5,
+                    depth + 1,
+                    t_range.start..t_mid,
+                );
                 match r0 {
                     Err(CurveTooShort { remaining }) => {
                         // First part of the curve was too short, recurse into the second part
@@ -170,14 +184,22 @@ impl ParamCurveDistanceEval for CubicBez {
 
 #[test]
 fn test_find_t_at_distance() {
-    let b = CubicBez::new(KurboPoint::new(0.0, 0.0), KurboPoint::new(10.0, 10.0), KurboPoint::new(20.0, -10.0), KurboPoint::new(30.0, 0.0));
+    let b = CubicBez::new(
+        KurboPoint::new(0.0, 0.0),
+        KurboPoint::new(10.0, 10.0),
+        KurboPoint::new(20.0, -10.0),
+        KurboPoint::new(30.0, 0.0),
+    );
     let len = b.arclen(0.001);
     let precision = 0.001;
 
     fn assert_within_tolerance(t: f64, target: f64, precision: f64) {
         let error = (t - target).abs();
         if error > precision {
-            panic!("Not within required tolerance: t: {}, target: {}. Error {} > {}", t, target, error, precision);
+            panic!(
+                "Not within required tolerance: t: {}, target: {}. Error {} > {}",
+                t, target, error, precision
+            );
         }
     }
 
@@ -191,10 +213,16 @@ fn test_find_t_at_distance() {
     }
 }
 
-fn point_at_distance_binary_search(c: &CubicBez, distance_from_start: f64, accuracy: f64) -> Result<f64, CurveTooShort> {
+fn point_at_distance_binary_search(
+    c: &CubicBez,
+    distance_from_start: f64,
+    accuracy: f64,
+) -> Result<f64, CurveTooShort> {
     let full_length = c.gauss_arclen(GAUSS_LEGENDRE_COEFFS_9);
     if distance_from_start > full_length {
-        Err(CurveTooShort { remaining: distance_from_start - full_length })
+        Err(CurveTooShort {
+            remaining: distance_from_start - full_length,
+        })
     } else {
         // Run a binary search to find the t value which corresponds to a given arclength from the start
         let mut mx_t = 1.0;
@@ -206,7 +234,11 @@ fn point_at_distance_binary_search(c: &CubicBez, distance_from_start: f64, accur
             // Do a first degree approximation of where the desired point should be
             let t = ((distance_from_start - mn_d) / (mx_d - mn_d)) * (mx_t - mn_t) + mn_t;
             // Note: avoid evaluating arc length when t = mn_t, the arclen method doesn't handle degenerate beziers well
-            let d = if t <= mn_t { mn_d } else { mn_d + c.subsegment(mn_t..t).gauss_arclen(GAUSS_LEGENDRE_COEFFS_9) };
+            let d = if t <= mn_t {
+                mn_d
+            } else {
+                mn_d + c.subsegment(mn_t..t).gauss_arclen(GAUSS_LEGENDRE_COEFFS_9)
+            };
 
             if (d - distance_from_start).abs() < accuracy {
                 return Ok(t);
@@ -254,7 +286,7 @@ pub fn bezier_move_forward_distance<U>(
     // When moving backwards, make sure we do not move all the way back to the start of the curve
     // as that could potentially cause infinite loops
     if step < 0.0 {
-        step = step.max(-t*0.5);
+        step = step.max(-t * 0.5);
     }
 
     let t1 = (t + step).min(1.0);
@@ -276,7 +308,7 @@ pub fn bezier_length<U>(
     t_end: f32,
 ) -> f32 {
     let mut prev = p0;
-    let mut length  = 0.0f32;
+    let mut length = 0.0f32;
     for i in 0..10 {
         let t = (i as f32 / 10.0f32) * (t_end - t_start) + t_start;
         let p = evalute_cubic_bezier(p0, p1, p2, p3, t);
@@ -300,19 +332,18 @@ pub fn evalute_cubic_bezier_derivative<U>(
     let t1 = 1.0 - t;
     let t2 = t1 * t1;
     let t3 = t1 * t1 * t1;
-    ((p1 - p0) * (3.0*t2) + (p2 - p1)*(6.0*t1*t) + (p3 - p2)*(3.0*t*t))
-        .cast_unit()
+    ((p1 - p0) * (3.0 * t2) + (p2 - p1) * (6.0 * t1 * t) + (p3 - p2) * (3.0 * t * t)).cast_unit()
 }
 
 #[repr(C, align(16))]
 struct WeightLookup {
-    data: [f32;4*(2187+1)],
+    data: [f32; 4 * (2187 + 1)],
 }
 
 #[repr(C, align(16))]
 struct WeightLookupBinary {
-    data: [f32;4*(4*1024+1)],
-    data_derivative: [f32;4*(4*1024+1)],
+    data: [f32; 4 * (4 * 1024 + 1)],
+    data_derivative: [f32; 4 * (4 * 1024 + 1)],
 }
 lazy_static! {
     #[repr(C, align(16))]
@@ -325,9 +356,9 @@ lazy_static! {
 }
 
 fn initialize_weights() -> WeightLookup {
-    let mut res = [0.0;4*(2187+1)];
+    let mut res = [0.0; 4 * (2187 + 1)];
     let step = 1.0 / 2187.0;
-    for i in 0..2187+1 {
+    for i in 0..2187 + 1 {
         let t = (i as f32) * step;
         let t1 = 1.0 - t;
         let t2 = t1 * t1;
@@ -337,19 +368,19 @@ fn initialize_weights() -> WeightLookup {
         let b = 3.0 * t2 * t;
         let c = 3.0 * t1 * t * t;
         let d = t * t * t;
-        res[4*i] = a;
-        res[4*i+1] = b;
-        res[4*i+2] = c;
-        res[4*i+3] = d;
+        res[4 * i] = a;
+        res[4 * i + 1] = b;
+        res[4 * i + 2] = c;
+        res[4 * i + 3] = d;
     }
     WeightLookup { data: res }
 }
 
 fn initialize_weights_binary() -> WeightLookupBinary {
-    let mut res = [0.0;4*(4*1024+1)];
-    let mut res2 = [0.0;4*(4*1024+1)];
-    let step = 1.0 / (4.0*1024.0);
-    for i in 0..(4*1024)+1 {
+    let mut res = [0.0; 4 * (4 * 1024 + 1)];
+    let mut res2 = [0.0; 4 * (4 * 1024 + 1)];
+    let step = 1.0 / (4.0 * 1024.0);
+    for i in 0..(4 * 1024) + 1 {
         let t = (i as f32) * step;
         let t1 = 1.0 - t;
         let t2 = t1 * t1;
@@ -359,31 +390,28 @@ fn initialize_weights_binary() -> WeightLookupBinary {
         let b = 3.0 * t2 * t;
         let c = 3.0 * t1 * t * t;
         let d = t * t * t;
-        res[4*i] = a;
-        res[4*i+1] = b;
-        res[4*i+2] = c;
-        res[4*i+3] = d;
+        res[4 * i] = a;
+        res[4 * i + 1] = b;
+        res[4 * i + 2] = c;
+        res[4 * i + 3] = d;
 
         // ((p1 - p0) * (3.0*t2) + (p2 - p1)*(6.0*t1*t) + (p3 - p2)*(3.0*t*t))
-        let ap = -3.0*t2;
-        let bp = 3.0*t2 - 6.0*t1*t;
-        let cp = 6.0*t1*t - 3.0*t*t;
-        let dp = 3.0*t*t;
-        res2[4*i] = ap;
-        res2[4*i+1] = bp;
-        res2[4*i+2] = cp;
-        res2[4*i+3] = dp;
+        let ap = -3.0 * t2;
+        let bp = 3.0 * t2 - 6.0 * t1 * t;
+        let cp = 6.0 * t1 * t - 3.0 * t * t;
+        let dp = 3.0 * t * t;
+        res2[4 * i] = ap;
+        res2[4 * i + 1] = bp;
+        res2[4 * i + 2] = cp;
+        res2[4 * i + 3] = dp;
     }
-    WeightLookupBinary { data: res, data_derivative: res2 }
+    WeightLookupBinary {
+        data: res,
+        data_derivative: res2,
+    }
 }
 
-fn evaluate_cubic_bezier(
-    p0: Vector,
-    p1: Vector,
-    p2: Vector,
-    p3: Vector,
-    weights: &[f32;4],
-) -> Vector {
+fn evaluate_cubic_bezier(p0: Vector, p1: Vector, p2: Vector, p3: Vector, weights: &[f32; 4]) -> Vector {
     p0 * weights[0] + p1 * weights[1] + p2 * weights[2] + p3 * weights[3]
 }
 
@@ -394,14 +422,26 @@ fn binary_search_distance(
     p3: Vector,
     p: Vector,
     mut start: u32,
-    mut end: u32
+    mut end: u32,
 ) -> (f32, f32) {
     let weights = &WEIGHT_LOOKUP_BINARY.data;
     let weights2 = &WEIGHT_LOOKUP_BINARY.data_derivative;
     for _ in 0..10 {
         let mid = (start + end) / 2;
-        let dp = evaluate_cubic_bezier(p0, p1, p2, p3, weights2[4*mid as usize..4*mid as usize+4].try_into().unwrap());
-        let curve_p = evaluate_cubic_bezier(p0, p1, p2, p3, weights[4*mid as usize..4*mid as usize+4].try_into().unwrap());
+        let dp = evaluate_cubic_bezier(
+            p0,
+            p1,
+            p2,
+            p3,
+            weights2[4 * mid as usize..4 * mid as usize + 4].try_into().unwrap(),
+        );
+        let curve_p = evaluate_cubic_bezier(
+            p0,
+            p1,
+            p2,
+            p3,
+            weights[4 * mid as usize..4 * mid as usize + 4].try_into().unwrap(),
+        );
         if (p - curve_p).dot(dp) > 0.0 {
             start = mid;
         } else {
@@ -409,26 +449,36 @@ fn binary_search_distance(
         }
     }
     let final_t = ((start + end) as f32) * 0.5 * (1.0 / 4096.0);
-    let final_dist = (evalute_cubic_bezier(p0.to_point(), p1.to_point(), p2.to_point(), p3.to_point(), final_t) - p.to_point()).square_length();
+    let final_dist = (evalute_cubic_bezier(p0.to_point(), p1.to_point(), p2.to_point(), p3.to_point(), final_t)
+        - p.to_point())
+    .square_length();
     (final_dist, final_t)
 }
 
-fn ternary_search_distance(
-    p0: Vector,
-    p1: Vector,
-    p2: Vector,
-    p3: Vector,
-    p: Vector,
-) -> (f32, f32) {
+fn ternary_search_distance(p0: Vector, p1: Vector, p2: Vector, p3: Vector, p: Vector) -> (f32, f32) {
     let mut a: u32 = 0;
     let mut b: u32 = 2187;
     let weights = &WEIGHT_LOOKUP.data;
     for _ in 0..7 {
         // 3.powi(7) == 2187
-        let mid1 = (2*a + b)/3;
-        let mid2 = (a + 2*b)/3;
-        let d1 = (evaluate_cubic_bezier(p0, p1, p2, p3, weights[4*mid1 as usize..4*mid1 as usize+4].try_into().unwrap()) - p).square_length();
-        let d2 = (evaluate_cubic_bezier(p0, p1, p2, p3, weights[4*mid2 as usize..4*mid2 as usize+4].try_into().unwrap()) - p).square_length();
+        let mid1 = (2 * a + b) / 3;
+        let mid2 = (a + 2 * b) / 3;
+        let d1 = (evaluate_cubic_bezier(
+            p0,
+            p1,
+            p2,
+            p3,
+            weights[4 * mid1 as usize..4 * mid1 as usize + 4].try_into().unwrap(),
+        ) - p)
+            .square_length();
+        let d2 = (evaluate_cubic_bezier(
+            p0,
+            p1,
+            p2,
+            p3,
+            weights[4 * mid2 as usize..4 * mid2 as usize + 4].try_into().unwrap(),
+        ) - p)
+            .square_length();
         if d1 < d2 {
             b = mid2;
         } else {
@@ -436,12 +486,24 @@ fn ternary_search_distance(
         }
     }
 
-    let pa = evaluate_cubic_bezier(p0, p1, p2, p3, weights[4*a as usize..4*a as usize+4].try_into().unwrap());
-    let pb = evaluate_cubic_bezier(p0, p1, p2, p3, weights[4*b as usize..4*b as usize+4].try_into().unwrap());
+    let pa = evaluate_cubic_bezier(
+        p0,
+        p1,
+        p2,
+        p3,
+        weights[4 * a as usize..4 * a as usize + 4].try_into().unwrap(),
+    );
+    let pb = evaluate_cubic_bezier(
+        p0,
+        p1,
+        p2,
+        p3,
+        weights[4 * b as usize..4 * b as usize + 4].try_into().unwrap(),
+    );
     let t = closest_point_on_segment_t(pa, pb, p);
 
     let final_t = ((a as f32) + (b - a) as f32 * t) / 2187.0;
-    let final_dist = (pa + (pb - pa)*t - p).square_length();
+    let final_dist = (pa + (pb - pa) * t - p).square_length();
     (final_dist, final_t)
 }
 
@@ -450,7 +512,7 @@ fn reduce_xs(v: f32x8) -> f32x2 {
     // 0 1 2 3 + 4 5 6 7
     let v1: f32x4 = shuffle!(v, [0, 1, 2, 3]);
     let v2: f32x4 = shuffle!(v, [4, 5, 6, 7]);
-    let v : f32x4 = v1 + v2;
+    let v: f32x4 = v1 + v2;
     // 0 1 2 3
     // 0 1 + 2 3
     let v1: f32x2 = shuffle!(v, [0, 1]);
@@ -459,38 +521,31 @@ fn reduce_xs(v: f32x8) -> f32x2 {
     v
 }
 
-fn evaluate_cubic_bezier_simd(
-    points: f32x8,
-    weights: f32x4,
-) -> Vector {
+fn evaluate_cubic_bezier_simd(points: f32x8, weights: f32x4) -> Vector {
     let weights = shuffle!(weights, [0, 0, 1, 1, 2, 2, 3, 3]);
     let v = points * weights;
     unsafe {
         let k = reduce_xs(v);
-        return vector(k.extract_unchecked(0),k.extract_unchecked(1));
+        return vector(k.extract_unchecked(0), k.extract_unchecked(1));
     }
 }
 
-pub fn ternary_search_distance_simd(
-    p0: Vector,
-    p1: Vector,
-    p2: Vector,
-    p3: Vector,
-    p: Vector,
-) -> (f32, f32) {
-    let mut a : u32 = 0;
-    let mut b : u32 = 2187;
+pub fn ternary_search_distance_simd(p0: Vector, p1: Vector, p2: Vector, p3: Vector, p: Vector) -> (f32, f32) {
+    let mut a: u32 = 0;
+    let mut b: u32 = 2187;
     let weights = &WEIGHT_LOOKUP.data;
     let points = f32x8::new(p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
 
     for _ in 0..7 {
         // 3.powi(7) == 2187
-        let mid1 = (2*a + b)/3;
-        let mid2 = (a + 2*b)/3;
+        let mid1 = (2 * a + b) / 3;
+        let mid2 = (a + 2 * b) / 3;
         // SAFETY: the WeightLookup struct has an alignment of 16, which is the same as f32x4
-        let weights1 = unsafe { f32x4::from_slice_aligned_unchecked(&weights[4*mid1 as usize..4*mid1 as usize+4]) };
+        let weights1 =
+            unsafe { f32x4::from_slice_aligned_unchecked(&weights[4 * mid1 as usize..4 * mid1 as usize + 4]) };
         let d1 = (evaluate_cubic_bezier_simd(points, weights1) - p).square_length();
-        let weights2 = unsafe { f32x4::from_slice_aligned_unchecked(&weights[4*mid2 as usize..4*mid2 as usize+4]) };
+        let weights2 =
+            unsafe { f32x4::from_slice_aligned_unchecked(&weights[4 * mid2 as usize..4 * mid2 as usize + 4]) };
         let d2 = (evaluate_cubic_bezier_simd(points, weights2) - p).square_length();
         if d1 < d2 {
             b = mid2;
@@ -499,15 +554,15 @@ pub fn ternary_search_distance_simd(
         }
     }
 
-    let weights_a = unsafe { f32x4::from_slice_aligned_unchecked(&weights[4*a as usize..4*a as usize+4]) };
-    let weights_b = unsafe { f32x4::from_slice_aligned_unchecked(&weights[4*b as usize..4*b as usize+4]) };
+    let weights_a = unsafe { f32x4::from_slice_aligned_unchecked(&weights[4 * a as usize..4 * a as usize + 4]) };
+    let weights_b = unsafe { f32x4::from_slice_aligned_unchecked(&weights[4 * b as usize..4 * b as usize + 4]) };
     let pa = evaluate_cubic_bezier_simd(points, weights_a);
     let pb = evaluate_cubic_bezier_simd(points, weights_b);
     // let dist = (evaluate_cubic_bezier_simd(points, a) - p).square_length();
     let t = closest_point_on_segment_t(pa, pb, p);
 
     let final_t = ((a as f32) + (b - a) as f32 * t) / 2187.0;
-    let final_dist = (pa + (pb - pa)*t - p).square_length();
+    let final_dist = (pa + (pb - pa) * t - p).square_length();
     (final_dist, final_t)
 }
 
@@ -516,30 +571,24 @@ pub fn split(
     p1: Vector,
     p2: Vector,
     p3: Vector,
-    t: f32) -> ((Vector, Vector, Vector, Vector), (Vector, Vector, Vector, Vector)) {
-        let ctrl1a = p0 + (p1 - p0) * t;
-        let ctrl2a = p1 + (p2 - p1) * t;
-        let ctrl1aa = ctrl1a + (ctrl2a - ctrl1a) * t;
-        let ctrl3a = p2 + (p3 - p2) * t;
-        let ctrl2aa = ctrl2a + (ctrl3a - ctrl2a) * t;
-        let ctrl1aaa = ctrl1aa + (ctrl2aa - ctrl1aa) * t;
-        let to = p3;
+    t: f32,
+) -> ((Vector, Vector, Vector, Vector), (Vector, Vector, Vector, Vector)) {
+    let ctrl1a = p0 + (p1 - p0) * t;
+    let ctrl2a = p1 + (p2 - p1) * t;
+    let ctrl1aa = ctrl1a + (ctrl2a - ctrl1a) * t;
+    let ctrl3a = p2 + (p3 - p2) * t;
+    let ctrl2aa = ctrl2a + (ctrl3a - ctrl2a) * t;
+    let ctrl1aaa = ctrl1aa + (ctrl2aa - ctrl1aa) * t;
+    let to = p3;
 
-        (
-            (p0, ctrl1a, ctrl1aa, ctrl1aaa),
-            (ctrl1aaa, ctrl2aa, ctrl3a, to),
-        )
+    ((p0, ctrl1a, ctrl1aa, ctrl1aaa), (ctrl1aaa, ctrl2aa, ctrl3a, to))
 }
 
-fn remap01(v: f32, to_range: (f32,f32)) -> f32 {
-    to_range.0 + v * (to_range.1-to_range.0)
+fn remap01(v: f32, to_range: (f32, f32)) -> f32 {
+    to_range.0 + v * (to_range.1 - to_range.0)
 }
 
-fn closest_point_on_segment_t(
-    start: Vector,
-    end: Vector,
-    point: Vector,
-) -> f32 {
+fn closest_point_on_segment_t(start: Vector, end: Vector, point: Vector) -> f32 {
     let dir = end - start;
     let sqr_length = dir.square_length();
 
@@ -609,7 +658,16 @@ pub fn sqr_distance_bezier_point<U>(
         t = remap01(t4, (0.75, 1.0));
     }
 
-    (d, evalute_cubic_bezier::<U>(p0.to_point().cast_unit(), p1.to_point().cast_unit(), p2.to_point().cast_unit(), p3.to_point().cast_unit(), t))
+    (
+        d,
+        evalute_cubic_bezier::<U>(
+            p0.to_point().cast_unit(),
+            p1.to_point().cast_unit(),
+            p2.to_point().cast_unit(),
+            p3.to_point().cast_unit(),
+            t,
+        ),
+    )
 }
 
 pub fn sqr_distance_bezier_point_binary<U>(
@@ -646,7 +704,16 @@ pub fn sqr_distance_bezier_point_binary<U>(
         t = t4;
     }
 
-    (d, evalute_cubic_bezier::<U>(p0.to_point().cast_unit(), p1.to_point().cast_unit(), p2.to_point().cast_unit(), p3.to_point().cast_unit(), t))
+    (
+        d,
+        evalute_cubic_bezier::<U>(
+            p0.to_point().cast_unit(),
+            p1.to_point().cast_unit(),
+            p2.to_point().cast_unit(),
+            p3.to_point().cast_unit(),
+            t,
+        ),
+    )
 }
 
 pub fn sqr_distance_bezier_point_simd<U>(
@@ -687,7 +754,16 @@ pub fn sqr_distance_bezier_point_simd<U>(
         t = remap01(t4, (0.75, 1.0));
     }
 
-    (d, evalute_cubic_bezier::<U>(p0.to_point().cast_unit(), p1.to_point().cast_unit(), p2.to_point().cast_unit(), p3.to_point().cast_unit(), t))
+    (
+        d,
+        evalute_cubic_bezier::<U>(
+            p0.to_point().cast_unit(),
+            p1.to_point().cast_unit(),
+            p2.to_point().cast_unit(),
+            p3.to_point().cast_unit(),
+            t,
+        ),
+    )
 }
 
 pub fn sqr_distance_bezier_point2<U>(

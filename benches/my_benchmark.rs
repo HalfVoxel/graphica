@@ -1,19 +1,19 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 //use mycrate::fibonacci;
-use lyon::math::*;
-use std::time::Instant;
-use graphica::geometry_utilities::sqr_distance_bezier_point_simd;
 use graphica::geometry_utilities::sqr_distance_bezier_point;
 use graphica::geometry_utilities::sqr_distance_bezier_point2;
 use graphica::geometry_utilities::sqr_distance_bezier_point_binary;
-use rand::{Rng, SeedableRng};
+use graphica::geometry_utilities::sqr_distance_bezier_point_simd;
+use lyon::math::*;
 use rand::prelude::*;
+use rand::{Rng, SeedableRng};
+use std::time::Instant;
 
+use graphica::geometry_utilities::ParamCurvePointAtDistance;
 use kurbo::CubicBez;
 use kurbo::ParamCurve;
 use kurbo::ParamCurveArclen;
 use kurbo::Point as KurboPoint;
-use graphica::geometry_utilities::ParamCurvePointAtDistance;
 
 // use wgpu_example::main::PathData;
 
@@ -82,28 +82,28 @@ fn bench3() {
 
 fn sqr_distance_bezier_point_bench_simd(points: &Vec<Point>) {
     for i in 0..100 {
-        let k = sqr_distance_bezier_point_simd(points[i], points[i+1], points[i+2], points[i+3], points[i+4]);
+        let k = sqr_distance_bezier_point_simd(points[i], points[i + 1], points[i + 2], points[i + 3], points[i + 4]);
         black_box(k);
     }
 }
 
 fn sqr_distance_bezier_point_bench_old(points: &Vec<Point>) {
     for i in 0..100 {
-        let k = sqr_distance_bezier_point(points[i], points[i+1], points[i+2], points[i+3], points[i+4]);
+        let k = sqr_distance_bezier_point(points[i], points[i + 1], points[i + 2], points[i + 3], points[i + 4]);
         black_box(k);
     }
 }
 
 fn sqr_distance_bezier_point_bench_naive(points: &Vec<Point>) {
     for i in 0..100 {
-        let k = sqr_distance_bezier_point2(points[i], points[i+1], points[i+2], points[i+3], points[i+4]);
+        let k = sqr_distance_bezier_point2(points[i], points[i + 1], points[i + 2], points[i + 3], points[i + 4]);
         black_box(k);
     }
 }
 
 fn sqr_distance_bezier_point_bench_binary(points: &Vec<Point>) {
     for i in 0..100 {
-        let k = sqr_distance_bezier_point_binary(points[i], points[i+1], points[i+2], points[i+3], points[i+4]);
+        let k = sqr_distance_bezier_point_binary(points[i], points[i + 1], points[i + 2], points[i + 3], points[i + 4]);
         black_box(k);
     }
 }
@@ -124,7 +124,8 @@ fn bezier_arclen(bez: &CubicBez) {
 
 fn bezier_move_forward_distance(p0: &Point, p1: &Point, p2: &Point, p3: &Point) {
     for i in 0..10 {
-        let k = graphica::geometry_utilities::bezier_move_forward_distance(*p0, *p1, *p2, *p3, 0.0, i as f32 * 1.0, 1.0);
+        let k =
+            graphica::geometry_utilities::bezier_move_forward_distance(*p0, *p1, *p2, *p3, 0.0, i as f32 * 1.0, 1.0);
         black_box(k);
     }
 }
@@ -149,10 +150,18 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             points.push(point(rng.gen(), rng.gen()));
         }
     }
-    c.bench_function("sqr_distance_bezier_point_bench_binary", |b| b.iter(|| sqr_distance_bezier_point_bench_binary(&points)));
-    c.bench_function("sqr_distance_bezier_point_bench_simd", |b| b.iter(|| sqr_distance_bezier_point_bench_simd(&points)));
-    c.bench_function("sqr_distance_bezier_point_bench_old", |b| b.iter(|| sqr_distance_bezier_point_bench_old(&points)));
-    c.bench_function("sqr_distance_bezier_point_bench_naive", |b| b.iter(|| sqr_distance_bezier_point_bench_naive(&points)));
+    c.bench_function("sqr_distance_bezier_point_bench_binary", |b| {
+        b.iter(|| sqr_distance_bezier_point_bench_binary(&points))
+    });
+    c.bench_function("sqr_distance_bezier_point_bench_simd", |b| {
+        b.iter(|| sqr_distance_bezier_point_bench_simd(&points))
+    });
+    c.bench_function("sqr_distance_bezier_point_bench_old", |b| {
+        b.iter(|| sqr_distance_bezier_point_bench_old(&points))
+    });
+    c.bench_function("sqr_distance_bezier_point_bench_naive", |b| {
+        b.iter(|| sqr_distance_bezier_point_bench_naive(&points))
+    });
 
     let p0 = KurboPoint::new(0.0, 10.0);
     let p1 = KurboPoint::new(10.0, 30.0);
@@ -164,10 +173,13 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let c1 = point(10.0, 30.0);
     let c2 = point(5.0, 20.0);
     let c3 = point(0.0, 20.0);
-    c.bench_function("bezier_point_at_distance", |b| b.iter(|| bezier_point_at_distance(&bezier)));
+    c.bench_function("bezier_point_at_distance", |b| {
+        b.iter(|| bezier_point_at_distance(&bezier))
+    });
     c.bench_function("bezier_arclen", |b| b.iter(|| bezier_arclen(&bezier)));
-    c.bench_function("bezier_move_forward_distance", |b| b.iter(|| bezier_move_forward_distance(&c0, &c1, &c2, &c3)));
-    
+    c.bench_function("bezier_move_forward_distance", |b| {
+        b.iter(|| bezier_move_forward_distance(&c0, &c1, &c2, &c3))
+    });
 }
 
 criterion_group!(benches, criterion_benchmark);

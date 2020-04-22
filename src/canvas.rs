@@ -1,8 +1,8 @@
 use crate::geometry_utilities::types::*;
 use lyon::math::*;
-use winit::dpi::PhysicalSize;
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use winit::dpi::PhysicalSize;
 
 #[derive(Copy, Clone)]
 pub struct CanvasView {
@@ -23,12 +23,21 @@ impl CanvasView {
 
     pub fn visible_rect(&self) -> euclid::Rect<f32, CanvasSpace> {
         let topleft = self.screen_to_canvas_point(point(0.0, 0.0));
-        let bottomright = self.screen_to_canvas_point(point(self.resolution.width as f32, self.resolution.height as f32));
-        rect(topleft.x, topleft.y, bottomright.x - topleft.x, bottomright.y - topleft.y)
+        let bottomright =
+            self.screen_to_canvas_point(point(self.resolution.width as f32, self.resolution.height as f32));
+        rect(
+            topleft.x,
+            topleft.y,
+            bottomright.x - topleft.x,
+            bottomright.y - topleft.y,
+        )
     }
 
     pub fn screen_to_normalized(&self, p: ScreenPoint) -> Point {
-        point(p.x / self.resolution.width as f32, 1.0 - p.y / self.resolution.height as f32)
+        point(
+            p.x / self.resolution.width as f32,
+            1.0 - p.y / self.resolution.height as f32,
+        )
     }
 
     pub fn screen_to_canvas_scale(&self) -> euclid::Scale<f32, ScreenSpace, CanvasSpace> {

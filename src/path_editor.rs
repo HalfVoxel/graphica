@@ -1,17 +1,20 @@
-use crate::main::{Document};
-use crate::path::*;
-use lyon::math::*;
-use crate::input::*;
 use crate::canvas::CanvasView;
 use crate::geometry_utilities::types::*;
-use crate::geometry_utilities::{poisson_disc_sampling, sqr_distance_bezier_point, sqr_distance_bezier_point_binary, sqr_distance_bezier_point_lower_bound, VectorField, VectorFieldPrimitive};
-use crate::path_collection::{
-    ControlPointReference, MutableReferenceResolver, PathCollection, ReferenceResolver, SelectionReference,
-    VertexReference, PathReference
+use crate::geometry_utilities::{
+    poisson_disc_sampling, sqr_distance_bezier_point, sqr_distance_bezier_point_binary,
+    sqr_distance_bezier_point_lower_bound, VectorField, VectorFieldPrimitive,
 };
-use std::collections::{HashMap, HashSet};
-use rand::{rngs::StdRng, SeedableRng};
+use crate::input::*;
+use crate::main::Document;
+use crate::path::*;
+use crate::path_collection::{
+    ControlPointReference, MutableReferenceResolver, PathCollection, PathReference, ReferenceResolver,
+    SelectionReference, VertexReference,
+};
 use crate::toolbar::ToolType;
+use lyon::math::*;
+use rand::{rngs::StdRng, SeedableRng};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Eq, Clone)]
 pub struct Selection {
@@ -211,7 +214,6 @@ fn drag_at_point(
     point: CanvasPoint,
     distance_threshold: CanvasLength,
 ) -> Option<Selection> {
-
     let selected_vertices: Vec<VertexReference> = selection
         .items
         .iter()
@@ -225,10 +227,10 @@ fn drag_at_point(
         .collect();
 
     let distance_to_controls = selected_vertices
-            .iter()
-            .flat_map(|v| vec![v.control_before(&paths), v.control_after(&paths)])
-            .map(|v| (v, (paths.resolve(&v).position() - point).length()))
-            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        .iter()
+        .flat_map(|v| vec![v.control_before(&paths), v.control_after(&paths)])
+        .map(|v| (v, (paths.resolve(&v).position() - point).length()))
+        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
     // view.screen_to_canvas_point(capture.mouse_start)
     let closest_vertex = selected_vertices
@@ -343,11 +345,18 @@ impl PathEditor {
                         strength: 1.1,
                     },
                 ],
-            }
+            },
         }
     }
 
-    fn update_ui(&mut self, ui_document: &mut Document, document: &mut Document, view: &CanvasView, input: &InputManager, tool: &ToolType) {
+    fn update_ui(
+        &mut self,
+        ui_document: &mut Document,
+        document: &mut Document,
+        view: &CanvasView,
+        input: &InputManager,
+        tool: &ToolType,
+    ) {
         let ui_path = ui_document.paths.resolve_path_mut(&self.ui_path);
         ui_path.clear();
         ui_path.add_rounded_rect(
@@ -369,16 +378,15 @@ impl PathEditor {
                 if let Some(start) = path.current() {
                     let i = ui_path.move_to(view.canvas_to_screen_point(start.position()).cast_unit());
                     ui_path.line_to(view.canvas_to_screen_point(mouse_pos_canvas).cast_unit());
-                    ui_path.point_mut(i).set_control_after(view.canvas_to_screen_point(start.control_after()).cast_unit());
+                    ui_path
+                        .point_mut(i)
+                        .set_control_after(view.canvas_to_screen_point(start.control_after()).cast_unit());
                     ui_path.end();
                 }
             }
             ToolType::Select => {
-                ui_path.add_circle(
-                    input.mouse_position.cast_unit(),
-                    3.0,
-                );
-                
+                ui_path.add_circle(input.mouse_position.cast_unit(), 3.0);
+
                 // Hover visualization for dragging
                 if let Some(selected) = &self.selected {
                     let drag = drag_at_point(
@@ -391,17 +399,11 @@ impl PathEditor {
                         for item in &drag.items {
                             if let SelectionReference::VertexReference(vertex) = item {
                                 let vertex = document.paths.resolve(vertex);
-                                ui_path.add_circle(
-                                    view.canvas_to_screen_point(vertex.position()).cast_unit(),
-                                    4.0,
-                                );
+                                ui_path.add_circle(view.canvas_to_screen_point(vertex.position()).cast_unit(), 4.0);
                             }
                             if let SelectionReference::ControlPointReference(vertex) = item {
                                 let vertex = document.paths.resolve(vertex);
-                                ui_path.add_circle(
-                                    view.canvas_to_screen_point(vertex.position()).cast_unit(),
-                                    2.0,
-                                );
+                                ui_path.add_circle(view.canvas_to_screen_point(vertex.position()).cast_unit(), 2.0);
                             }
                         }
                     }
@@ -417,22 +419,13 @@ impl PathEditor {
             for vertex in &selected.items {
                 if let SelectionReference::VertexReference(vertex) = vertex {
                     let vertex = document.paths.resolve(vertex);
-                    ui_path.add_circle(
-                        view.canvas_to_screen_point(vertex.position()).cast_unit(),
-                        5.0,
-                    );
+                    ui_path.add_circle(view.canvas_to_screen_point(vertex.position()).cast_unit(), 5.0);
 
                     if vertex.control_before() != vertex.position() {
-                        ui_path.add_circle(
-                            view.canvas_to_screen_point(vertex.control_before()).cast_unit(),
-                            3.0,
-                        );
+                        ui_path.add_circle(view.canvas_to_screen_point(vertex.control_before()).cast_unit(), 3.0);
                     }
                     if vertex.control_after() != vertex.position() {
-                        ui_path.add_circle(
-                            view.canvas_to_screen_point(vertex.control_after()).cast_unit(),
-                            3.0,
-                        );
+                        ui_path.add_circle(view.canvas_to_screen_point(vertex.control_after()).cast_unit(), 3.0);
                     }
 
                     if vertex.control_before() != vertex.position() {
@@ -602,7 +595,10 @@ impl PathEditor {
                     // Move all points
                     for (vertex, &original_position) in selection.items.iter().zip(original_positions.iter()) {
                         if let SelectionReference::VertexReference(vertex) = vertex {
-                            document.paths.resolve_mut(vertex).set_position(original_position + offset);
+                            document
+                                .paths
+                                .resolve_mut(vertex)
+                                .set_position(original_position + offset);
                         }
                     }
 
@@ -611,12 +607,16 @@ impl PathEditor {
                     for (vertex, &original_position) in selection.items.iter().zip(original_positions.iter()) {
                         if let SelectionReference::ControlPointReference(vertex) = vertex {
                             // Move control point
-                            document.paths.resolve_mut(vertex).set_position(original_position + offset);
+                            document
+                                .paths
+                                .resolve_mut(vertex)
+                                .set_position(original_position + offset);
 
                             // Move opposite control point
                             let center = document.paths.resolve(vertex).vertex().position();
                             let dir = original_position + offset - center;
-                            document.paths
+                            document
+                                .paths
                                 .resolve_mut(&vertex.opposite_control(&document.paths))
                                 .set_position(center - dir);
                         }
@@ -658,12 +658,19 @@ impl PathEditor {
         // }
     }
 
-    pub fn update(&mut self, ui_document: &mut Document, document: &mut Document, view: &CanvasView, input: &mut InputManager, tool: &ToolType) {
+    pub fn update(
+        &mut self,
+        ui_document: &mut Document,
+        document: &mut Document,
+        view: &CanvasView,
+        input: &mut InputManager,
+        tool: &ToolType,
+    ) {
         let canvas_mouse_pos = view.screen_to_canvas_point(input.mouse_position);
 
         match tool {
             ToolType::Select => {}
-            _ => self.select_state = None
+            _ => self.select_state = None,
         }
 
         match tool {
@@ -693,7 +700,11 @@ impl PathEditor {
             }
         }
 
-        if input.on_combination(&KeyCombination::new().and(VirtualKeyCode::LControl).and(VirtualKeyCode::A)) {
+        if input.on_combination(
+            &KeyCombination::new()
+                .and(VirtualKeyCode::LControl)
+                .and(VirtualKeyCode::A),
+        ) {
             let everything = Some(document.select_everything());
             if self.selected == everything {
                 self.selected = None;
@@ -714,9 +725,24 @@ impl PathEditor {
                     let prev = vertex.prev().unwrap();
                     let next = vertex.next().unwrap();
                     println!("builder.move_to(point{});", prev.position());
-                    println!("builder.cubic_bezier_to(point{}, point{}, point{});", prev.control_after(), vertex.control_before(), vertex.position());
-                    println!("builder.cubic_bezier_to(point{}, point{}, point{});", vertex.control_after(), next.control_before(), next.position());
-                    println!("Tolerance: {}", (ScreenLength::new(0.1) * view.screen_to_canvas_scale()).get().max(0.001));
+                    println!(
+                        "builder.cubic_bezier_to(point{}, point{}, point{});",
+                        prev.control_after(),
+                        vertex.control_before(),
+                        vertex.position()
+                    );
+                    println!(
+                        "builder.cubic_bezier_to(point{}, point{}, point{});",
+                        vertex.control_after(),
+                        next.control_before(),
+                        next.position()
+                    );
+                    println!(
+                        "Tolerance: {}",
+                        (ScreenLength::new(0.1) * view.screen_to_canvas_scale())
+                            .get()
+                            .max(0.001)
+                    );
                 }
             }
         }

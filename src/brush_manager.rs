@@ -1,7 +1,7 @@
-use crate::shader::load_shader;
-use wgpu::{RenderPipeline, Device};
 use crate::geometry_utilities::types::*;
+use crate::shader::load_shader;
 use lyon::math::*;
+use wgpu::{Device, RenderPipeline};
 
 type GPURGBA = [u8; 4];
 
@@ -56,20 +56,24 @@ impl BrushManager {
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture { multisampled: true, dimension: wgpu::TextureViewDimension::D2, component_type: wgpu::TextureComponentType::Float },
+                    ty: wgpu::BindingType::SampledTexture {
+                        multisampled: true,
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
+                    },
                 },
             ],
         });
-        
+
         let brush_vs_module = load_shader(&device, include_bytes!("./../shaders/brush.vert.spv"));
         let brush_fs_module = load_shader(&device, include_bytes!("./../shaders/brush.frag.spv"));
         let clone_brush_vs_module = load_shader(&device, include_bytes!("./../shaders/clone_brush.vert.spv"));
         let clone_brush_fs_module = load_shader(&device, include_bytes!("./../shaders/clone_brush.frag.spv"));
-        
+
         let pipeline_layout_brush = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             bind_group_layouts: &[&bind_group_layout_brush],
         });
-        
+
         let render_pipeline_descriptor_brush = wgpu::RenderPipelineDescriptor {
             layout: &pipeline_layout_brush,
             vertex_stage: wgpu::ProgrammableStageDescriptor {
@@ -139,8 +143,7 @@ impl BrushManager {
             sample_mask: !0,
             alpha_to_coverage_enabled: false,
         };
-        
-        
+
         let bind_group_layout_clone_brush = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Bind group layout clone_brush"),
             bindings: &[
@@ -152,20 +155,28 @@ impl BrushManager {
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture { multisampled: true, dimension: wgpu::TextureViewDimension::D2, component_type: wgpu::TextureComponentType::Float },
+                    ty: wgpu::BindingType::SampledTexture {
+                        multisampled: true,
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
+                    },
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture { multisampled: true, dimension: wgpu::TextureViewDimension::D2, component_type: wgpu::TextureComponentType::Float },
+                    ty: wgpu::BindingType::SampledTexture {
+                        multisampled: true,
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
+                    },
                 },
             ],
         });
-        
+
         let pipeline_layout_clone_brush = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             bind_group_layouts: &[&bind_group_layout_clone_brush],
         });
-        
+
         let render_pipeline_descriptor_clone_brush = wgpu::RenderPipelineDescriptor {
             layout: &pipeline_layout_clone_brush,
             vertex_stage: wgpu::ProgrammableStageDescriptor {
@@ -237,7 +248,7 @@ impl BrushManager {
             sample_mask: !0,
             alpha_to_coverage_enabled: false,
         };
-        
+
         BrushManager {
             splat: ShaderBundle {
                 bind_group_layout: bind_group_layout_brush,
@@ -246,7 +257,7 @@ impl BrushManager {
             splat_with_readback: ShaderBundle {
                 bind_group_layout: bind_group_layout_clone_brush,
                 pipeline: device.create_render_pipeline(&render_pipeline_descriptor_clone_brush),
-            }
+            },
         }
     }
 }

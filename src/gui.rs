@@ -1,32 +1,55 @@
-use std::any::Any;
-use std::cell::{RefCell, RefMut};
-use std::ops::DerefMut;
-use std::marker::PhantomData;
-use crate::main::Document;
 use crate::canvas::CanvasView;
 use crate::input::InputManager;
+use crate::main::Document;
+use std::any::Any;
+use std::cell::{RefCell, RefMut};
+use std::marker::PhantomData;
+use std::ops::DerefMut;
 
-pub struct WidgetWrapper<T:WidgetTrait+'static> {
+pub struct WidgetWrapper<T: WidgetTrait + 'static> {
     widget: T,
     listeners: Listeners<T::EventType>,
     index: u32,
 }
 
-impl<T:WidgetTrait+'static> WidgetWrapper<T> {
-    pub fn listen_closure<'a, U:WidgetTrait+'static, C:Fn(&mut U, &mut WidgetContext<U>, &T::EventType)+'static>(&mut self, reference: &TypedWidgetReference<U>, callback: C) {
+impl<T: WidgetTrait + 'static> WidgetWrapper<T> {
+    pub fn listen_closure<
+        'a,
+        U: WidgetTrait + 'static,
+        C: Fn(&mut U, &mut WidgetContext<U>, &T::EventType) + 'static,
+    >(
+        &mut self,
+        reference: &TypedWidgetReference<U>,
+        callback: C,
+    ) {
         self.listeners.listen_closure(&reference, callback);
     }
 }
 
-impl<T:WidgetTrait> WidgetTypeTrait for WidgetWrapper<T> {
+impl<T: WidgetTrait> WidgetTypeTrait for WidgetWrapper<T> {
     fn mount(&mut self, root: &mut RootWrapper) {
-        self.widget.mount(&mut WidgetContext { root, listeners: &mut self.listeners, index: self.index });
+        self.widget.mount(&mut WidgetContext {
+            root,
+            listeners: &mut self.listeners,
+            index: self.index,
+        });
     }
     fn update(&mut self, root: &mut RootWrapper) {
-        self.widget.update(&mut WidgetContext { root, listeners: &mut self.listeners, index: self.index });
+        self.widget.update(&mut WidgetContext {
+            root,
+            listeners: &mut self.listeners,
+            index: self.index,
+        });
     }
     fn input(&mut self, root: &mut RootWrapper, input: &mut InputManager) {
-        self.widget.input(&mut WidgetContext { root, listeners: &mut self.listeners, index: self.index }, input);
+        self.widget.input(
+            &mut WidgetContext {
+                root,
+                listeners: &mut self.listeners,
+                index: self.index,
+            },
+            input,
+        );
     }
     fn render(&mut self, root: &mut RootWrapper, document: &mut Document, view: &CanvasView) {
         self.widget.render(document, view);
@@ -48,13 +71,13 @@ enum PointerEvent {
     PointerActive(bool),
 }
 
-pub struct WidgetContext<'a, 'b, T:WidgetTrait+'static+?Sized> {
+pub struct WidgetContext<'a, 'b, T: WidgetTrait + 'static + ?Sized> {
     root: &'a mut RootWrapper<'b>,
     listeners: &'a mut Listeners<T::EventType>,
     index: u32,
 }
 
-impl<'a, 'b, T:WidgetTrait> WidgetContext<'a, 'b, T> {
+impl<'a, 'b, T: WidgetTrait> WidgetContext<'a, 'b, T> {
     pub fn reference(&self) -> TypedWidgetReference<T> {
         TypedWidgetReference {
             reference: WidgetReference {
@@ -64,7 +87,7 @@ impl<'a, 'b, T:WidgetTrait> WidgetContext<'a, 'b, T> {
             _p: PhantomData,
         }
     }
-    pub fn wrap<U>(&self, callback: fn(&mut T, &mut WidgetContext<T>, &U)) -> WrappedCallback<T,U> {
+    pub fn wrap<U>(&self, callback: fn(&mut T, &mut WidgetContext<T>, &U)) -> WrappedCallback<T, U> {
         WrappedCallback {
             callback,
             reference: self.reference(),
@@ -79,7 +102,7 @@ impl<'a, 'b, T:WidgetTrait> WidgetContext<'a, 'b, T> {
         self.listeners.send(self.root, event);
     }
 
-    pub fn add<U:WidgetTrait>(&mut self, widget: U) -> RefMut<WidgetWrapper<U>> {
+    pub fn add<U: WidgetTrait>(&mut self, widget: U) -> RefMut<WidgetWrapper<U>> {
         self.root.add(widget)
     }
 
@@ -92,38 +115,46 @@ impl<'a, 'b, T:WidgetTrait> WidgetContext<'a, 'b, T> {
     }
 }
 
-pub struct WrappedCallback<T:WidgetTrait+'static,U:'static> {
+pub struct WrappedCallback<T: WidgetTrait + 'static, U: 'static> {
     callback: fn(&mut T, &mut WidgetContext<T>, &U),
     reference: TypedWidgetReference<T>,
 }
 
-#[derive(Copy,Clone)]
+#[derive(Copy, Clone)]
 pub struct WidgetReference {
     index: u32,
     version: u32,
 }
 
-#[derive(Copy,Clone)]
-pub struct TypedWidgetReference<T:WidgetTrait> {
+#[derive(Copy, Clone)]
+pub struct TypedWidgetReference<T: WidgetTrait> {
     reference: WidgetReference,
-    _p : PhantomData<T>
+    _p: PhantomData<T>,
 }
 
-impl<T:WidgetTrait> From<TypedWidgetReference<T>> for WidgetReference {
+impl<T: WidgetTrait> From<TypedWidgetReference<T>> for WidgetReference {
     fn from(v: TypedWidgetReference<T>) -> WidgetReference {
         v.reference
     }
 }
 
-impl<T:WidgetTrait> TypedWidgetReference<T> {
-    pub fn listen<U:WidgetTrait>(&self, context: &WidgetContext<U>, callback: fn(&mut U, &mut WidgetContext<U>, &T::EventType)) {
+impl<T: WidgetTrait> TypedWidgetReference<T> {
+    pub fn listen<U: WidgetTrait>(
+        &self,
+        context: &WidgetContext<U>,
+        callback: fn(&mut U, &mut WidgetContext<U>, &T::EventType),
+    ) {
         let callback = context.wrap(callback);
         let mut wrapper = context.root.resolve_mut_wrapper(&self.reference);
         let wrapper: &mut WidgetWrapper<T> = wrapper.as_any_mut().downcast_mut::<WidgetWrapper<T>>().unwrap();
         wrapper.listeners.listen(&callback.reference, callback.callback)
     }
 
-    pub fn listen_closure<U:WidgetTrait, C:Fn(&mut U, &mut WidgetContext<U>, &T::EventType)+'static>(&self, context: &WidgetContext<U>, callback: C) {
+    pub fn listen_closure<U: WidgetTrait, C: Fn(&mut U, &mut WidgetContext<U>, &T::EventType) + 'static>(
+        &self,
+        context: &WidgetContext<U>,
+        callback: C,
+    ) {
         let mut wrapper = context.root.resolve_mut_wrapper(&self.reference);
         let wrapper: &mut WidgetWrapper<T> = wrapper.as_any_mut().downcast_mut::<WidgetWrapper<T>>().unwrap();
         wrapper.listeners.listen_closure(&context.reference(), callback)
@@ -135,24 +166,47 @@ impl<T:WidgetTrait> TypedWidgetReference<T> {
     }
 }
 
-pub struct Listeners<U:Sized+'static> {
-    listeners: Vec<(WidgetReference, Box<dyn for<'a,'b> Fn(&mut dyn Any, &'b mut RootWrapper<'a>, &U)>)>
+pub struct Listeners<U: Sized + 'static> {
+    listeners: Vec<(
+        WidgetReference,
+        Box<dyn for<'a, 'b> Fn(&mut dyn Any, &'b mut RootWrapper<'a>, &U)>,
+    )>,
 }
 
 impl<U> Listeners<U> {
-    pub fn listen<'a,T:WidgetTrait>(&mut self, reference: &TypedWidgetReference<T>, callback: fn(&mut T, &mut WidgetContext<T>, &U)) where T : 'static{
-        let c = move|v: &mut dyn Any, root: & mut RootWrapper, value: &U| {
+    pub fn listen<'a, T: WidgetTrait>(
+        &mut self,
+        reference: &TypedWidgetReference<T>,
+        callback: fn(&mut T, &mut WidgetContext<T>, &U),
+    ) where
+        T: 'static,
+    {
+        let c = move |v: &mut dyn Any, root: &mut RootWrapper, value: &U| {
             let v = v.downcast_mut::<WidgetWrapper<T>>().unwrap();
-            let context = &mut WidgetContext { root, listeners: &mut v.listeners, index: v.index };
+            let context = &mut WidgetContext {
+                root,
+                listeners: &mut v.listeners,
+                index: v.index,
+            };
             callback(&mut v.widget, context, value);
         };
         self.listeners.push((reference.reference, Box::new(c)));
     }
 
-    pub fn listen_closure<'a,T:WidgetTrait, C:Fn(&mut T, &mut WidgetContext<T>, &U)+'static>(&mut self, reference: &TypedWidgetReference<T>, callback: C) where T : 'static{
-        let c = move|v: &mut dyn Any, root: &mut RootWrapper, value: &U| {
+    pub fn listen_closure<'a, T: WidgetTrait, C: Fn(&mut T, &mut WidgetContext<T>, &U) + 'static>(
+        &mut self,
+        reference: &TypedWidgetReference<T>,
+        callback: C,
+    ) where
+        T: 'static,
+    {
+        let c = move |v: &mut dyn Any, root: &mut RootWrapper, value: &U| {
             let v = v.downcast_mut::<WidgetWrapper<T>>().unwrap();
-            let context = &mut WidgetContext { root, listeners: &mut v.listeners, index: v.index };
+            let context = &mut WidgetContext {
+                root,
+                listeners: &mut v.listeners,
+                index: v.index,
+            };
             callback(&mut v.widget, context, value);
         };
         self.listeners.push((reference.reference, Box::new(c)));
@@ -191,13 +245,13 @@ impl<'a> RootWrapper<'a> {
     fn resolve_mut_wrapper(&self, reference: &WidgetReference) -> RefMut<'a, dyn WidgetTypeTrait> {
         dbg!("Resolving", reference.index);
         // if reference.index as usize >= self.root.widgets.len() {
-            // self.to_add[reference.index as usize].borrow_mut()
+        // self.to_add[reference.index as usize].borrow_mut()
         // } else {
         self.root.resolve_mut_wrapper(reference)
         // }
     }
 
-    fn add<T:WidgetTrait>(&mut self, widget: T) -> RefMut<WidgetWrapper<T>> {
+    fn add<T: WidgetTrait>(&mut self, widget: T) -> RefMut<WidgetWrapper<T>> {
         let index = (self.root.widgets.len() + self.to_add.len()) as u32;
         self.to_add.push(into_wrapper(widget, index));
 
@@ -208,7 +262,9 @@ impl<'a> RootWrapper<'a> {
         //     },
         //     _p: PhantomData,
         // }
-        return RefMut::map(self.to_add.last().unwrap().borrow_mut(), |x| x.as_any_mut().downcast_mut::<WidgetWrapper<T>>().unwrap());
+        return RefMut::map(self.to_add.last().unwrap().borrow_mut(), |x| {
+            x.as_any_mut().downcast_mut::<WidgetWrapper<T>>().unwrap()
+        });
     }
 
     fn remove(&mut self, reference: impl Into<WidgetReference>) {
@@ -222,13 +278,14 @@ pub struct Root {
 
 impl<'a> Root {
     pub fn new() -> Root {
-        Root {
-            widgets: vec![]
-        }
+        Root { widgets: vec![] }
     }
 
     pub fn resolve_mut(&'a self, reference: &WidgetReference) -> RefMut<dyn Any> {
-        RefMut::map(self.widgets[reference.index as usize].as_ref().unwrap().borrow_mut(), |v| v.borrow_inner_mut())
+        RefMut::map(
+            self.widgets[reference.index as usize].as_ref().unwrap().borrow_mut(),
+            |v| v.borrow_inner_mut(),
+        )
         // self.root.borrow_mut()
     }
 
@@ -241,11 +298,15 @@ impl<'a> Root {
         // SAFATEY: Borrow the item mutably before dropping it.
         // This is important to guarantee we cannot get
         // undefined behaviour as mentioned in #add.
-        self.widgets[reference.index as usize].as_ref().unwrap().try_borrow_mut().expect("Cannot remove a widget that is borrowed somewhere.");
+        self.widgets[reference.index as usize]
+            .as_ref()
+            .unwrap()
+            .try_borrow_mut()
+            .expect("Cannot remove a widget that is borrowed somewhere.");
         self.widgets[reference.index as usize].take();
     }
 
-    pub fn add<T:WidgetTrait>(&mut self, widget: T) -> TypedWidgetReference<T> {
+    pub fn add<T: WidgetTrait>(&mut self, widget: T) -> TypedWidgetReference<T> {
         self.widgets.push(Some(into_wrapper(widget, self.widgets.len() as u32)));
         let reference = TypedWidgetReference {
             reference: WidgetReference {
@@ -258,7 +319,7 @@ impl<'a> Root {
         let mut mods = RootWrapper::new(self);
         self.resolve_mut_wrapper(&reference.reference).mount(&mut mods);
 
-        let RootWrapper {to_add, to_remove, ..} = mods;
+        let RootWrapper { to_add, to_remove, .. } = mods;
         self.apply_modifications(to_add, to_remove);
 
         reference
@@ -278,7 +339,7 @@ impl<'a> Root {
                 w.as_ref().unwrap().borrow_mut().mount(&mut mods);
             }
             // Recurse to add children of children
-            let RootWrapper {to_add, to_remove, ..} = mods;
+            let RootWrapper { to_add, to_remove, .. } = mods;
             self.apply_modifications(to_add, to_remove);
         }
     }
@@ -291,7 +352,7 @@ impl<'a> Root {
             }
         }
 
-        let RootWrapper {to_add, to_remove, ..} = mods;
+        let RootWrapper { to_add, to_remove, .. } = mods;
         self.apply_modifications(to_add, to_remove);
     }
 
@@ -303,7 +364,7 @@ impl<'a> Root {
             }
         }
 
-        let RootWrapper {to_add, to_remove, ..} = mods;
+        let RootWrapper { to_add, to_remove, .. } = mods;
         self.apply_modifications(to_add, to_remove);
     }
 
@@ -315,22 +376,20 @@ impl<'a> Root {
             }
         }
 
-        let RootWrapper {to_add, to_remove, ..} = mods;
+        let RootWrapper { to_add, to_remove, .. } = mods;
         self.apply_modifications(to_add, to_remove);
     }
 }
 
-fn into_wrapper<T:WidgetTrait>(value: T, index: u32) -> Box<RefCell<dyn WidgetTypeTrait>> {
+fn into_wrapper<T: WidgetTrait>(value: T, index: u32) -> Box<RefCell<dyn WidgetTypeTrait>> {
     Box::new(RefCell::new(WidgetWrapper {
         widget: value,
-        listeners: Listeners {
-            listeners: vec![],
-        },
+        listeners: Listeners { listeners: vec![] },
         index,
     }))
 }
 
-trait WidgetTypeTrait:Any {
+trait WidgetTypeTrait: Any {
     fn mount(&mut self, root: &mut RootWrapper);
     fn update(&mut self, root: &mut RootWrapper);
     fn input(&mut self, root: &mut RootWrapper, input: &mut InputManager);
@@ -339,7 +398,7 @@ trait WidgetTypeTrait:Any {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-pub trait WidgetTrait:Any {
+pub trait WidgetTrait: Any {
     type EventType;
     fn mount(&mut self, _context: &mut WidgetContext<Self>) {}
     fn update(&mut self, _context: &mut WidgetContext<Self>) {}

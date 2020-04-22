@@ -1,22 +1,25 @@
-use crate::main::{Document};
-use crate::path::*;
-use lyon::math::*;
-use std::sync::Arc;
-use crate::input::*;
 use crate::canvas::CanvasView;
 use crate::geometry_utilities::types::*;
-use crate::geometry_utilities::{poisson_disc_sampling, sqr_distance_bezier_point, sqr_distance_bezier_point_binary, sqr_distance_bezier_point_lower_bound, VectorField, VectorFieldPrimitive};
-use crate::path_collection::{
-    ControlPointReference, MutableReferenceResolver, PathCollection, ReferenceResolver, SelectionReference,
-    VertexReference, PathReference
+use crate::geometry_utilities::{
+    poisson_disc_sampling, sqr_distance_bezier_point, sqr_distance_bezier_point_binary,
+    sqr_distance_bezier_point_lower_bound, VectorField, VectorFieldPrimitive,
 };
-use std::collections::{HashMap, HashSet};
-use rand::{rngs::StdRng, SeedableRng};
+use crate::input::*;
+use crate::main::Document;
+use crate::path::*;
+use crate::path_collection::{
+    ControlPointReference, MutableReferenceResolver, PathCollection, PathReference, ReferenceResolver,
+    SelectionReference, VertexReference,
+};
 use crate::toolbar::ToolType;
+use lyon::math::*;
 use palette::Srgba;
+use rand::{rngs::StdRng, SeedableRng};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 enum BrushEditorState {
-    Dragging(CapturedClick, CanvasPoint)
+    Dragging(CapturedClick, CanvasPoint),
 }
 
 pub struct BrushEditor {
@@ -33,8 +36,15 @@ impl BrushEditor {
             color: Srgba::new(1.0, 0.0, 0.0, 1.0),
         }
     }
-    
-    pub fn update(&mut self, ui_document: &mut Document, document: &mut Document, view: &CanvasView, input: &mut InputManager, tool: &ToolType) {
+
+    pub fn update(
+        &mut self,
+        ui_document: &mut Document,
+        document: &mut Document,
+        view: &CanvasView,
+        input: &mut InputManager,
+        tool: &ToolType,
+    ) {
         let data = &mut document.brushes;
         let mouse_pos_canvas = view.screen_to_canvas_point(input.mouse_position);
         if self.debug_path.is_none() {
@@ -69,7 +79,7 @@ impl BrushEditor {
                                 }
                             }
                         }
-                    }
+                    },
                 }
             }
             _ => {}
@@ -111,7 +121,7 @@ impl BrushData {
                 tip_texture: TextureReference { id: 0 },
                 spacing: 0.25,
                 size: 20.0,
-            }
+            },
         }
     }
 
@@ -185,7 +195,7 @@ impl BrushData {
 
 // impl Storage for Data {
 //     fn sub_storage(&self) -> impl Iterator<Item=SubStorage> {
-        
+
 //     }
 // }
 
@@ -207,7 +217,7 @@ impl BrushData {
 
 // }
 // trait GeometryStorage: PathStorage, PositionStorage, ControlBeforeStorage, ControlAfterStorage {
-    
+
 // }
 
 // for vertex in path {

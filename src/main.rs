@@ -3,44 +3,44 @@ use lyon::path::builder::*;
 use lyon::path::Path;
 use lyon::tessellation;
 use lyon::tessellation::geometry_builder::*;
-use lyon::tessellation::{FillOptions};
+use lyon::tessellation::FillOptions;
 use lyon::tessellation::{StrokeOptions, StrokeTessellator};
 
 use euclid;
+use std::rc::Rc;
 use std::time::Instant;
+use wgpu::{BindGroup, Buffer, CommandEncoder, Device, RenderPass, RenderPipeline};
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
-use wgpu::{Device, Buffer, BindGroup, CommandEncoder, RenderPass, RenderPipeline};
-use std::rc::Rc;
 
+use crate::blitter::Blitter;
+use crate::brush_editor::{BrushData, BrushEditor};
+use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex, ShaderBundle};
 use crate::canvas::CanvasView;
 use crate::fps_limiter::FPSLimiter;
+use crate::geometry_utilities;
 use crate::geometry_utilities::types::*;
-use crate::geometry_utilities::{ParamCurveDistanceEval};
+use crate::geometry_utilities::ParamCurveDistanceEval;
+use crate::gui;
 use crate::input::{InputManager, KeyCombination};
 use crate::path::*;
 use crate::path_collection::{
-    ControlPointReference, MutableReferenceResolver, PathCollection, ReferenceResolver, SelectionReference,
-    VertexReference, PathReference
+    ControlPointReference, MutableReferenceResolver, PathCollection, PathReference, ReferenceResolver,
+    SelectionReference, VertexReference,
 };
-use crate::geometry_utilities;
-use crate::gui;
-use crate::toolbar::GUIRoot;
-use cpuprofiler::PROFILER;
 use crate::path_editor::*;
-use crate::brush_editor::{BrushEditor, BrushData};
-use kurbo::Point as KurboPoint;
-use kurbo::CubicBez;
-use async_std::task;
-use palette::Srgba;
-use palette::Pixel;
-use arrayvec::ArrayVec;
-use crate::wgpu_utils::*;
-use crate::blitter::Blitter;
 use crate::shader::load_shader;
-use crate::brush_manager::{BrushManager, BrushGpuVertex, CloneBrushGpuVertex, ShaderBundle};
+use crate::toolbar::GUIRoot;
+use crate::wgpu_utils::*;
+use arrayvec::ArrayVec;
+use async_std::task;
+use cpuprofiler::PROFILER;
+use kurbo::CubicBez;
+use kurbo::Point as KurboPoint;
+use palette::Pixel;
+use palette::Srgba;
 use std::sync::Arc;
 
 #[repr(C)]
@@ -58,7 +58,6 @@ struct GpuVertex {
     normal: [f32; 2],
     prim_id: i32,
 }
-
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -88,7 +87,7 @@ fn create_multisampled_framebuffer(
         array_layer_count: 1,
         sample_count: sample_count,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Bgra8Unorm,//sc_desc.format,
+        format: wgpu::TextureFormat::Bgra8Unorm, //sc_desc.format,
         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
         label: Some("Framebuffer"),
     };
@@ -123,7 +122,7 @@ fn sample_points_along_curve(path: &PathData, spacing: f32) -> Vec<(usize, Canva
     let mut result = vec![];
     let mut builder = Path::builder();
     path.build(&mut builder);
-    
+
     for sub_path in path.iter_sub_paths() {
         let mut offset = 0f32;
 
@@ -133,7 +132,12 @@ fn sample_points_along_curve(path: &PathData, spacing: f32) -> Vec<(usize, Canva
             let p1 = start.control_after();
             let p2 = end.control_before();
             let p3 = end.position();
-            let bezier = CubicBez::new(KurboPoint::new(p0.x as f64, p0.y as f64), KurboPoint::new(p1.x as f64, p1.y as f64), KurboPoint::new(p2.x as f64, p2.y as f64), KurboPoint::new(p3.x as f64, p3.y as f64));
+            let bezier = CubicBez::new(
+                KurboPoint::new(p0.x as f64, p0.y as f64),
+                KurboPoint::new(p1.x as f64, p1.y as f64),
+                KurboPoint::new(p2.x as f64, p2.y as f64),
+                KurboPoint::new(p3.x as f64, p3.y as f64),
+            );
 
             loop {
                 match bezier.eval_at_distance((spacing + offset) as f64, 0.01) {
@@ -176,34 +180,66 @@ struct BrushRendererWithReadback {
 }
 
 impl BrushRendererWithReadback {
-    fn new(brush_data: &BrushData, view: &CanvasView, device: &Device, encoder: &mut CommandEncoder, scene_ubo: &Buffer, scene_ubo_size: u64, brush_manager: &Rc<BrushManager>, texture: &Arc<Texture>) -> BrushRendererWithReadback {
+    fn new(
+        brush_data: &BrushData,
+        view: &CanvasView,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        scene_ubo: &Buffer,
+        scene_ubo_size: u64,
+        brush_manager: &Rc<BrushManager>,
+        texture: &Arc<Texture>,
+    ) -> BrushRendererWithReadback {
         let points = sample_points_along_curve(&brush_data.path, 1.41);
 
-        let to_normalized_pos = |v: CanvasPoint| {
-            view.screen_to_normalized(view.canvas_to_screen_point(v))
-        };
+        let to_normalized_pos = |v: CanvasPoint| view.screen_to_normalized(view.canvas_to_screen_point(v));
 
         let size = 20.0;
         let color = Srgba::new(1.0, 1.0, 1.0, 1.0).into_format().into_raw();
-        let vertices: Vec<CloneBrushGpuVertex> = points.windows(2).flat_map(|window| {
-            let prev = window[0].1;
-            let pos = window[1].1;
-            let clone_pos = prev;
-            ArrayVec::from([
-                CloneBrushGpuVertex { position: pos + vector(-size, -size), uv_background_source: to_normalized_pos(clone_pos + vector(-size, -size)), uv_background_target: to_normalized_pos(pos + vector(-size, -size)), uv_brush: point(0.0, 0.0), color },
-                CloneBrushGpuVertex { position: pos + vector(size, -size), uv_background_source: to_normalized_pos(clone_pos + vector(size, -size)), uv_background_target: to_normalized_pos(pos + vector(size, -size)), uv_brush: point(1.0, 0.0), color },
-                CloneBrushGpuVertex { position: pos + vector(size, size), uv_background_source: to_normalized_pos(clone_pos + vector(size, size)), uv_background_target: to_normalized_pos(pos + vector(size, size)), uv_brush: point(1.0, 1.0), color },
-                CloneBrushGpuVertex { position: pos + vector(-size, size), uv_background_source: to_normalized_pos(clone_pos + vector(-size, size)), uv_background_target: to_normalized_pos(pos + vector(-size, size)), uv_brush: point(0.0, 1.0), color },
-            ])
-        }
-        ).collect();
+        let vertices: Vec<CloneBrushGpuVertex> = points
+            .windows(2)
+            .flat_map(|window| {
+                let prev = window[0].1;
+                let pos = window[1].1;
+                let clone_pos = prev;
+                ArrayVec::from([
+                    CloneBrushGpuVertex {
+                        position: pos + vector(-size, -size),
+                        uv_background_source: to_normalized_pos(clone_pos + vector(-size, -size)),
+                        uv_background_target: to_normalized_pos(pos + vector(-size, -size)),
+                        uv_brush: point(0.0, 0.0),
+                        color,
+                    },
+                    CloneBrushGpuVertex {
+                        position: pos + vector(size, -size),
+                        uv_background_source: to_normalized_pos(clone_pos + vector(size, -size)),
+                        uv_background_target: to_normalized_pos(pos + vector(size, -size)),
+                        uv_brush: point(1.0, 0.0),
+                        color,
+                    },
+                    CloneBrushGpuVertex {
+                        position: pos + vector(size, size),
+                        uv_background_source: to_normalized_pos(clone_pos + vector(size, size)),
+                        uv_background_target: to_normalized_pos(pos + vector(size, size)),
+                        uv_brush: point(1.0, 1.0),
+                        color,
+                    },
+                    CloneBrushGpuVertex {
+                        position: pos + vector(-size, size),
+                        uv_background_source: to_normalized_pos(clone_pos + vector(-size, size)),
+                        uv_background_target: to_normalized_pos(pos + vector(-size, size)),
+                        uv_brush: point(0.0, 1.0),
+                        color,
+                    },
+                ])
+            })
+            .collect();
 
         let (vbo, _) = create_buffer_with_data(&device, &vertices, wgpu::BufferUsage::VERTEX);
-        
-        let indices: Vec<u32> = (0..points.len() as u32).flat_map(|x| vec![
-            4*x + 0, 4*x + 1, 4*x + 2,
-            4*x + 3, 4*x + 2, 4*x + 0
-        ]).collect();
+
+        let indices: Vec<u32> = (0..points.len() as u32)
+            .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
+            .collect();
         let (ibo, _) = create_buffer_with_data(&device, &indices, wgpu::BufferUsage::INDEX);
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -218,7 +254,7 @@ impl BrushRendererWithReadback {
             compare: wgpu::CompareFunction::Always,
         });
 
-        let width_in_pixels = (2.0*(CanvasLength::new(size) * view.canvas_to_screen_scale()).get()).round() as u32;
+        let width_in_pixels = (2.0 * (CanvasLength::new(size) * view.canvas_to_screen_scale()).get()).round() as u32;
 
         let texture_extent = wgpu::Extent3d {
             width: width_in_pixels,
@@ -252,7 +288,10 @@ impl BrushRendererWithReadback {
     }
 
     fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
-        let temp_to_frame_blitter = encoder.blitter.with_textures(encoder.device, &self.temp_texture_view, encoder.target_texture);
+        let temp_to_frame_blitter =
+            encoder
+                .blitter
+                .with_textures(encoder.device, &self.temp_texture_view, encoder.target_texture);
 
         let bind_group = encoder.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &self.brush_manager.splat_with_readback.bind_group_layout,
@@ -273,9 +312,7 @@ impl BrushRendererWithReadback {
             ],
         });
 
-        let to_normalized_pos = |v: CanvasPoint| {
-            view.screen_to_normalized(view.canvas_to_screen_point(v))
-        };
+        let to_normalized_pos = |v: CanvasPoint| view.screen_to_normalized(view.canvas_to_screen_point(v));
 
         for (mut i, (_, p)) in self.points.iter().enumerate() {
             // First point is a noop
@@ -283,20 +320,17 @@ impl BrushRendererWithReadback {
                 continue;
             }
             i -= 1;
-            
 
             // First pass
             {
                 let mut pass = encoder.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    color_attachments: &[
-                        wgpu::RenderPassColorAttachmentDescriptor {
-                            attachment: &self.temp_texture_view,
-                            load_op: wgpu::LoadOp::Clear,
-                            store_op: wgpu::StoreOp::Store,
-                            clear_color: wgpu::Color::RED,
-                            resolve_target: None,
-                        }
-                    ],
+                    color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                        attachment: &self.temp_texture_view,
+                        load_op: wgpu::LoadOp::Clear,
+                        store_op: wgpu::StoreOp::Store,
+                        clear_color: wgpu::Color::RED,
+                        resolve_target: None,
+                    }],
                     depth_stencil_attachment: None,
                 });
 
@@ -304,7 +338,7 @@ impl BrushRendererWithReadback {
                 pass.set_bind_group(0, &bind_group, &[]);
                 pass.set_index_buffer(&self.ibo, 0, 0);
                 pass.set_vertex_buffer(0, &self.vbo, 0, 0);
-                pass.draw_indexed((i * 6) as u32..((i+1) * 6) as u32, 0, 0..1);
+                pass.draw_indexed((i * 6) as u32..((i + 1) * 6) as u32, 0, 0..1);
             }
 
             // Second pass, copy back
@@ -317,35 +351,75 @@ impl BrushRendererWithReadback {
                 temp_to_frame_blitter.blit(&encoder.device, encoder.encoder, rect(0.0, 1.0, 1.0, -1.0), r, 1);
             }
         }
-        
-        encoder.blitter.blit(encoder.device, encoder.encoder, encoder.target_texture, encoder.multisampled_render_target.unwrap(), rect(0.0, 0.0, 1.0, 1.0), rect(0.0, 0.0, 1.0, 1.0), 8);
+
+        encoder.blitter.blit(
+            encoder.device,
+            encoder.encoder,
+            encoder.target_texture,
+            encoder.multisampled_render_target.unwrap(),
+            rect(0.0, 0.0, 1.0, 1.0),
+            rect(0.0, 0.0, 1.0, 1.0),
+            8,
+        );
     }
 }
 impl BrushRenderer {
-    fn new(brush_data: &BrushData, _view: &CanvasView, device: &Device, encoder: &mut CommandEncoder, scene_ubo: &Buffer, scene_ubo_size: u64, brush_manager: &Rc<BrushManager>, texture: &Arc<Texture>) -> BrushRenderer {
+    fn new(
+        brush_data: &BrushData,
+        _view: &CanvasView,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        scene_ubo: &Buffer,
+        scene_ubo_size: u64,
+        brush_manager: &Rc<BrushManager>,
+        texture: &Arc<Texture>,
+    ) -> BrushRenderer {
         let size = brush_data.brush.size;
         let points = sample_points_along_curve(&brush_data.path, brush_data.brush.spacing * size);
 
-        let vertices: Vec<BrushGpuVertex> = points.iter().flat_map(|&(vertex_index, pos)| {
-            let color = brush_data.colors[vertex_index/3].into_format().into_raw();
-            ArrayVec::from([
-                BrushGpuVertex { position: pos + vector(-size, -size), uv: point(0.0, 0.0), color },
-                BrushGpuVertex { position: pos + vector(size, -size), uv: point(1.0, 0.0), color },
-                BrushGpuVertex { position: pos + vector(size, size), uv: point(1.0, 1.0), color },
-                BrushGpuVertex { position: pos + vector(-size, size), uv: point(0.0, 1.0), color },
-            ])
-        }
-        ).collect();
+        let vertices: Vec<BrushGpuVertex> = points
+            .iter()
+            .flat_map(|&(vertex_index, pos)| {
+                let color = brush_data.colors[vertex_index / 3].into_format().into_raw();
+                ArrayVec::from([
+                    BrushGpuVertex {
+                        position: pos + vector(-size, -size),
+                        uv: point(0.0, 0.0),
+                        color,
+                    },
+                    BrushGpuVertex {
+                        position: pos + vector(size, -size),
+                        uv: point(1.0, 0.0),
+                        color,
+                    },
+                    BrushGpuVertex {
+                        position: pos + vector(size, size),
+                        uv: point(1.0, 1.0),
+                        color,
+                    },
+                    BrushGpuVertex {
+                        position: pos + vector(-size, size),
+                        uv: point(0.0, 1.0),
+                        color,
+                    },
+                ])
+            })
+            .collect();
 
         let (vbo, _) = create_buffer_with_data(device, &vertices, wgpu::BufferUsage::VERTEX);
-        
-        let indices: Vec<u32> = (0..points.len() as u32).flat_map(|x| vec![
-            4*x + 0, 4*x + 1, 4*x + 2,
-            4*x + 3, 4*x + 2, 4*x + 0
-        ]).collect();
+
+        let indices: Vec<u32> = (0..points.len() as u32)
+            .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
+            .collect();
         let (ibo, _) = create_buffer_with_data(device, &indices, wgpu::BufferUsage::INDEX);
-        
-        let (primitive_ubo, primitive_ubo_size) = create_buffer_via_transfer(device, encoder, &[BrushUniforms { _dummy: 0 }], wgpu::BufferUsage::UNIFORM, "Uniform buffer");
+
+        let (primitive_ubo, primitive_ubo_size) = create_buffer_via_transfer(
+            device,
+            encoder,
+            &[BrushUniforms { _dummy: 0 }],
+            wgpu::BufferUsage::UNIFORM,
+            "Uniform buffer",
+        );
 
         // let primitive_ubo_transfer = device.create_buffer_with_data(as_u8_slice(&[BrushUniforms { dummy: 0 }]), wgpu::BufferUsage::COPY_SRC);
         // let primitive_ubo_size = std::mem::size_of::<BrushUniforms>() as u64;
@@ -439,12 +513,16 @@ struct Encoder<'a, 'b, 'c, 'd> {
     pub blitter: &'d Blitter,
 }
 
-impl Encoder<'_,'_,'_,'_> {
-    fn begin_msaa_render_pass<'a> (&'a mut self, clear: Option<wgpu::Color>) -> wgpu::RenderPass<'a> {
+impl Encoder<'_, '_, '_, '_> {
+    fn begin_msaa_render_pass<'a>(&'a mut self, clear: Option<wgpu::Color>) -> wgpu::RenderPass<'a> {
         let color_attachment = if let Some(msaa_target) = &self.multisampled_render_target {
             wgpu::RenderPassColorAttachmentDescriptor {
                 attachment: msaa_target,
-                load_op: if clear.is_some() { wgpu::LoadOp::Clear } else { wgpu::LoadOp::Load },
+                load_op: if clear.is_some() {
+                    wgpu::LoadOp::Clear
+                } else {
+                    wgpu::LoadOp::Load
+                },
                 store_op: wgpu::StoreOp::Store,
                 clear_color: clear.unwrap_or(wgpu::Color::BLACK),
                 resolve_target: Some(&self.target_texture),
@@ -473,8 +551,8 @@ impl Encoder<'_,'_,'_,'_> {
         })
     }
 
-    fn begin_render_pass<'a> (&'a mut self, depth: bool) -> wgpu::RenderPass<'a> {
-        let color_attachment =wgpu::RenderPassColorAttachmentDescriptor {
+    fn begin_render_pass<'a>(&'a mut self, depth: bool) -> wgpu::RenderPass<'a> {
+        let color_attachment = wgpu::RenderPassColorAttachmentDescriptor {
             attachment: &self.target_texture,
             load_op: wgpu::LoadOp::Load,
             store_op: wgpu::StoreOp::Store,
@@ -494,13 +572,25 @@ impl Encoder<'_,'_,'_,'_> {
                     clear_depth: 0.0,
                     clear_stencil: 0,
                 })
-            } else { None }
+            } else {
+                None
+            },
         })
     }
 }
 
 impl DocumentRenderer {
-    fn new(document: &Document, view: &CanvasView, device: &Device, encoder: &mut CommandEncoder, bind_group_layout: &wgpu::BindGroupLayout, wireframe: bool, render_pipeline: &Rc<RenderPipeline>, wireframe_render_pipeline: &Rc<RenderPipeline>, brush_manager: &Rc<BrushManager>) -> DocumentRenderer {
+    fn new(
+        document: &Document,
+        view: &CanvasView,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        bind_group_layout: &wgpu::BindGroupLayout,
+        wireframe: bool,
+        render_pipeline: &Rc<RenderPipeline>,
+        wireframe_render_pipeline: &Rc<RenderPipeline>,
+        brush_manager: &Rc<BrushManager>,
+    ) -> DocumentRenderer {
         let mut builder = Path::builder();
         document.build(&mut builder);
         let p = builder.build();
@@ -519,7 +609,13 @@ impl DocumentRenderer {
             )
             .unwrap();
 
-        let (vbo, _) = create_buffer_via_transfer(device, encoder, &geometry.vertices, wgpu::BufferUsage::VERTEX, "Document VBO");
+        let (vbo, _) = create_buffer_via_transfer(
+            device,
+            encoder,
+            &geometry.vertices,
+            wgpu::BufferUsage::VERTEX,
+            "Document VBO",
+        );
 
         let indices: Vec<u32> = if wireframe {
             // Transform the triangle primitives into line primitives: (0,1,2) => (0,1),(1,2),(2,0)
@@ -534,19 +630,31 @@ impl DocumentRenderer {
         // last_index_count = indices.len();
 
         let (ibo, _) = create_buffer_via_transfer(device, encoder, &indices, wgpu::BufferUsage::INDEX, "Document IBO");
-        
-        let (scene_ubo, scene_ubo_size) = create_buffer_via_transfer(device, encoder, &[Globals {
-            resolution: [view.resolution.width as f32, view.resolution.height as f32],
-            zoom: view.zoom,
-            scroll_offset: view.scroll.to_array(),
-        }], wgpu::BufferUsage::UNIFORM, "Document UBO");
 
-        let (primitive_ubo, primitive_ubo_size) = create_buffer_via_transfer(device, encoder, &[Primitive {
-            color: [1.0, 1.0, 1.0, 1.0],
-            translate: [0.0, 0.0],
-            z_index: 100,
-            width: 0.0,
-        }], wgpu::BufferUsage::UNIFORM, "Document Primitive UBO");
+        let (scene_ubo, scene_ubo_size) = create_buffer_via_transfer(
+            device,
+            encoder,
+            &[Globals {
+                resolution: [view.resolution.width as f32, view.resolution.height as f32],
+                zoom: view.zoom,
+                scroll_offset: view.scroll.to_array(),
+            }],
+            wgpu::BufferUsage::UNIFORM,
+            "Document UBO",
+        );
+
+        let (primitive_ubo, primitive_ubo_size) = create_buffer_via_transfer(
+            device,
+            encoder,
+            &[Primitive {
+                color: [1.0, 1.0, 1.0, 1.0],
+                translate: [0.0, 0.0],
+                z_index: 100,
+                width: 0.0,
+            }],
+            wgpu::BufferUsage::UNIFORM,
+            "Document Primitive UBO",
+        );
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
@@ -569,7 +677,16 @@ impl DocumentRenderer {
             ],
         });
 
-        let brush_renderer = BrushRendererWithReadback::new(&document.brushes, view,device, encoder, &scene_ubo, scene_ubo_size, brush_manager, &document.textures[0]);
+        let brush_renderer = BrushRendererWithReadback::new(
+            &document.brushes,
+            view,
+            device,
+            encoder,
+            &scene_ubo,
+            scene_ubo_size,
+            brush_manager,
+            &document.textures[0],
+        );
 
         let mut res = DocumentRenderer {
             vbo,
@@ -579,7 +696,11 @@ impl DocumentRenderer {
             bind_group,
             index_buffer_length: indices.len(),
             brush_renderer: brush_renderer,
-            render_pipeline: if !wireframe { render_pipeline.clone() } else { wireframe_render_pipeline.clone() }
+            render_pipeline: if !wireframe {
+                render_pipeline.clone()
+            } else {
+                wireframe_render_pipeline.clone()
+            },
         };
         res.update(view, device, encoder);
         res
@@ -587,11 +708,16 @@ impl DocumentRenderer {
 
     fn update(&mut self, view: &CanvasView, device: &Device, encoder: &mut CommandEncoder) {
         // TODO: Verify expected size?
-        update_buffer_via_transfer(device, encoder, &[Globals {
-            resolution: [view.resolution.width as f32, view.resolution.height as f32],
-            zoom: view.zoom,
-            scroll_offset: view.scroll.to_array(),
-        }], &self.scene_ubo);
+        update_buffer_via_transfer(
+            device,
+            encoder,
+            &[Globals {
+                resolution: [view.resolution.width as f32, view.resolution.height as f32],
+                zoom: view.zoom,
+                scroll_offset: view.scroll.to_array(),
+            }],
+            &self.scene_ubo,
+        );
     }
 
     fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
@@ -608,9 +734,12 @@ impl DocumentRenderer {
     }
 }
 
-
 pub fn main() {
-    PROFILER.lock().unwrap().start("./my-prof.profile").expect("Couldn't start");
+    PROFILER
+        .lock()
+        .unwrap()
+        .start("./my-prof.profile")
+        .expect("Couldn't start");
 
     println!("== wgpu example ==");
     println!("Controls:");
@@ -689,12 +818,14 @@ pub fn main() {
         input: InputManager::new(),
     };
 
-    let adapter = task::block_on(wgpu::Adapter::request(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
-        compatible_surface: None, // TODO
-    },
-        wgpu::BackendBit::PRIMARY
-    )).unwrap();
+    let adapter = task::block_on(wgpu::Adapter::request(
+        &wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None, // TODO
+        },
+        wgpu::BackendBit::PRIMARY,
+    ))
+    .unwrap();
 
     let (device, queue) = task::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         extensions: wgpu::Extensions {
@@ -702,7 +833,7 @@ pub fn main() {
         },
         limits: wgpu::Limits::default(),
     }));
-    
+
     let vs_module = load_shader(&device, include_bytes!("./../shaders/geometry.vert.spv"));
     let fs_module = load_shader(&device, include_bytes!("./../shaders/geometry.frag.spv"));
     let bg_vs_module = load_shader(&device, include_bytes!("./../shaders/background.vert.spv"));
@@ -878,24 +1009,48 @@ pub fn main() {
     let mut document_renderer1 = None;
     let mut document_renderer2 = None;
 
-    let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Init encoder") });
+    let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Init encoder"),
+    });
 
     let blitter = Blitter::new(&device, &mut init_encoder);
 
-    let (bg_vbo, _) = create_buffer_via_transfer(&device, &mut init_encoder, &bg_geometry.vertices, wgpu::BufferUsage::VERTEX, "BG VBO");
-    let (bg_ibo, _) = create_buffer_via_transfer(&device, &mut init_encoder, &bg_geometry.indices, wgpu::BufferUsage::INDEX, "BG IBO");
+    let (bg_vbo, _) = create_buffer_via_transfer(
+        &device,
+        &mut init_encoder,
+        &bg_geometry.vertices,
+        wgpu::BufferUsage::VERTEX,
+        "BG VBO",
+    );
+    let (bg_ibo, _) = create_buffer_via_transfer(
+        &device,
+        &mut init_encoder,
+        &bg_geometry.indices,
+        wgpu::BufferUsage::INDEX,
+        "BG IBO",
+    );
 
-    let bg_ubo_data = &[
-        Primitive {
-            color: [1.0, 1.0, 1.0, 1.0],
-            translate: [0.0, 0.0],
-            z_index: 100,
-            width: 0.0,
-        }
-    ];
-    let (bg_ubo, bg_ubo_size) = create_buffer_via_transfer(&device, &mut init_encoder, bg_ubo_data, wgpu::BufferUsage::UNIFORM, "BG UBO");
+    let bg_ubo_data = &[Primitive {
+        color: [1.0, 1.0, 1.0, 1.0],
+        translate: [0.0, 0.0],
+        z_index: 100,
+        width: 0.0,
+    }];
+    let (bg_ubo, bg_ubo_size) = create_buffer_via_transfer(
+        &device,
+        &mut init_encoder,
+        bg_ubo_data,
+        wgpu::BufferUsage::UNIFORM,
+        "BG UBO",
+    );
 
-    let (globals_ubo, globals_ubo_size) = create_buffer_via_transfer(&device, &mut init_encoder, &[Globals { ..Default::default() }], wgpu::BufferUsage::UNIFORM, "Globals UBO");
+    let (globals_ubo, globals_ubo_size) = create_buffer_via_transfer(
+        &device,
+        &mut init_encoder,
+        &[Globals { ..Default::default() }],
+        wgpu::BufferUsage::UNIFORM,
+        "Globals UBO",
+    );
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: &bind_group_layout,
@@ -918,7 +1073,9 @@ pub fn main() {
         ],
     });
 
-    let tex = std::sync::Arc::new(Texture::load_from_file(std::path::Path::new("brush.png"), &device, &mut init_encoder).unwrap());
+    let tex = std::sync::Arc::new(
+        Texture::load_from_file(std::path::Path::new("brush.png"), &device, &mut init_encoder).unwrap(),
+    );
     editor.document.textures.push(tex.clone());
     editor.ui_document.textures.push(tex.clone());
 
@@ -939,8 +1096,20 @@ pub fn main() {
         editor.gui.input(&mut editor.ui_document, &mut editor.input);
         editor.gui.render(&mut editor.ui_document, &scene.view);
         // editor.toolbar.update_ui(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
-        editor.path_editor.update(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input, &editor.gui_root.get(&editor.gui).tool);
-        editor.brush_editor.update(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input, &editor.gui_root.get(&editor.gui).tool);
+        editor.path_editor.update(
+            &mut editor.ui_document,
+            &mut editor.document,
+            &scene.view,
+            &mut editor.input,
+            &editor.gui_root.get(&editor.gui).tool,
+        );
+        editor.brush_editor.update(
+            &mut editor.ui_document,
+            &mut editor.document,
+            &scene.view,
+            &mut editor.input,
+            &editor.gui_root.get(&editor.gui).tool,
+        );
 
         if editor.input.on_combination(
             &KeyCombination::new()
@@ -987,18 +1156,35 @@ pub fn main() {
         }
 
         let frame = swap_chain.get_next_texture().unwrap();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Frame encoder") });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Frame encoder"),
+        });
 
-        update_buffer_via_transfer(&device, &mut encoder, &[Globals {
-            resolution: [scene.view.resolution.width as f32, scene.view.resolution.height as f32],
-            zoom: scene.view.zoom,
-            scroll_offset: scene.view.scroll.to_array(),
-        }], &globals_ubo);
+        update_buffer_via_transfer(
+            &device,
+            &mut encoder,
+            &[Globals {
+                resolution: [scene.view.resolution.width as f32, scene.view.resolution.height as f32],
+                zoom: scene.view.zoom,
+                scroll_offset: scene.view.scroll.to_array(),
+            }],
+            &globals_ubo,
+        );
 
         let hash = editor.document.hash() ^ scene.view.hash();
         if hash != last_hash1 || document_renderer1.is_none() || true {
             last_hash1 = hash;
-            document_renderer1 = Some(DocumentRenderer::new(&editor.document, &scene.view, &device, &mut encoder, &bind_group_layout, scene.show_wireframe, &render_pipeline, &wireframe_render_pipeline, &brush_manager));
+            document_renderer1 = Some(DocumentRenderer::new(
+                &editor.document,
+                &scene.view,
+                &device,
+                &mut encoder,
+                &bind_group_layout,
+                scene.show_wireframe,
+                &render_pipeline,
+                &wireframe_render_pipeline,
+                &brush_manager,
+            ));
         }
 
         let ui_view = CanvasView {
@@ -1009,11 +1195,27 @@ pub fn main() {
         let hash = editor.ui_document.hash() ^ ui_view.hash();
         if hash != last_hash2 || document_renderer2.is_none() || true {
             last_hash2 = hash;
-            document_renderer2 = Some(DocumentRenderer::new(&editor.ui_document, &ui_view, &device, &mut encoder, &bind_group_layout, scene.show_wireframe, &render_pipeline, &wireframe_render_pipeline, &brush_manager));
+            document_renderer2 = Some(DocumentRenderer::new(
+                &editor.ui_document,
+                &ui_view,
+                &device,
+                &mut encoder,
+                &bind_group_layout,
+                scene.show_wireframe,
+                &render_pipeline,
+                &wireframe_render_pipeline,
+                &brush_manager,
+            ));
         }
 
-        document_renderer1.as_mut().unwrap().update(&scene.view, &device, &mut encoder);
-        document_renderer2.as_mut().unwrap().update(&ui_view, &device, &mut encoder);
+        document_renderer1
+            .as_mut()
+            .unwrap()
+            .update(&scene.view, &device, &mut encoder);
+        document_renderer2
+            .as_mut()
+            .unwrap()
+            .update(&ui_view, &device, &mut encoder);
 
         let texture_extent2 = wgpu::Extent3d {
             width: scene.view.resolution.width,
@@ -1076,11 +1278,25 @@ pub fn main() {
                 }
             }
 
-            document_renderer1.as_ref().unwrap().render(&mut hl_encoder, &scene.view);
-            document_renderer2.as_ref().unwrap().render(&mut hl_encoder, &scene.view);
+            document_renderer1
+                .as_ref()
+                .unwrap()
+                .render(&mut hl_encoder, &scene.view);
+            document_renderer2
+                .as_ref()
+                .unwrap()
+                .render(&mut hl_encoder, &scene.view);
         }
 
-        blitter.blit(&device, &mut encoder, &temp_frame_view, &frame.view, rect(0.0, 0.0, 1.0, 1.0), rect(0.0, 1.0, 1.0, -1.0), 1);
+        blitter.blit(
+            &device,
+            &mut encoder,
+            &temp_frame_view,
+            &frame.view,
+            rect(0.0, 0.0, 1.0, 1.0),
+            rect(0.0, 1.0, 1.0, -1.0),
+            1,
+        );
 
         queue.submit(&[encoder.finish()]);
         // dbg!(t3.elapsed());
@@ -1140,7 +1356,11 @@ pub struct Texture {
 }
 
 impl Texture {
-    fn load_from_file(path: &std::path::Path, device: &Device, encoder: &mut CommandEncoder) -> Result<Texture, image::ImageError> {
+    fn load_from_file(
+        path: &std::path::Path,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+    ) -> Result<Texture, image::ImageError> {
         let loaded_image = image::open(path)?;
 
         let rgba = loaded_image.into_rgba();
@@ -1179,11 +1399,7 @@ impl Texture {
                 texture: &texture,
                 mip_level: 0,
                 array_layer: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: 0,
-                },
+                origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
             },
             texture_extent,
         );
@@ -1243,8 +1459,6 @@ impl Document {
     }
 }
 
-
-
 pub struct SceneParams {
     pub view: CanvasView,
     pub target_zoom: f32,
@@ -1258,7 +1472,13 @@ pub struct SceneParams {
     pub size_changed: bool,
 }
 
-fn update_inputs(event: Event<()>, control_flow: &mut ControlFlow, input: &mut InputManager, scene: &mut SceneParams, delta_time: f32) -> bool {
+fn update_inputs(
+    event: Event<()>,
+    control_flow: &mut ControlFlow,
+    input: &mut InputManager,
+    scene: &mut SceneParams,
+    delta_time: f32,
+) -> bool {
     let last_cursor = input.mouse_position;
 
     input.event(&event);
