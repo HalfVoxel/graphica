@@ -1,0 +1,76 @@
+#version 450
+#extension GL_KHR_shader_subgroup_vote: enable
+#extension GL_KHR_shader_subgroup_arithmetic: enable
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+
+
+
+layout (set=0, binding=0, rgba8) uniform image2D myStorageImage;
+
+// layout(set = 0, binding = 0) buffer PrimeIndices {
+//     uint[] indices;
+// }; // this is used as both input and output for convenience
+
+// The Collatz Conjecture states that for any integer n:
+// If n is even, n = n/2
+// If n is odd, n = 3n+1
+// And repeat this process for each new n, you will always eventually reach 1.
+// Though the conjecture has not been proven, no counterexample has ever been found.
+// This function returns how many times this recurrence needs to be applied to reach 1.
+// uint collatz_iterations(uint n) {
+//     uint i = 0;
+//     while(n != 1) {
+//         if (mod(n, 2) == 0) {
+//             n = n / 2;
+//         }
+//         else {
+//             n = (3 * n) + 1;
+//         }
+//         i++;
+//     }
+//     return i;
+// }
+
+void main() {
+    ivec2 px = ivec2(gl_WorkGroupID.xy*uvec2(32, 32) + gl_LocalInvocationID.xy);
+
+    // vec2 p = ((vec2(px) / 800) - 0.5) * 4.0;
+    // vec2 c = p;
+
+    // for (int i = 0; i < 100; i++) {
+    //     vec2 pn = vec2(p.x*p.x - p.y*p.y, 2.0*p.x*p.y) + c;
+    //     p = pn;
+    //     if (dot(p,p) > 2.0*2.0) {
+    //         break;
+    //     }
+    // }
+
+    // vec4 res;
+    // if (length(p) < 2.0) {
+    //     res = vec4(0.0, 0.0, 0.0, 1.0);
+    // } else {
+    //     res = vec4(1.0, 1.0, 1.0, 1.0);
+    // }
+
+    // res = subgroupAdd(res) / gl_SubgroupSize;
+
+    vec4 res = vec4(0.0, 0.0, 0.0, 0.0);
+
+    for (int dx = -8; dx <= 8; dx++) {
+        for (int dy = -8; dy <= 8; dy++) {
+            //vec4 data = imageLoad(myStorageImage, ivec2(gl_WorkGroupID.xy));
+            res += imageLoad(myStorageImage, px + ivec2(dx, dy));
+        }
+    }
+    res /= 17*17;
+    
+    // for (int i = 0; i < 100; i++) {
+    //     vec4 r = imageLoad(myStorageImage, px + ivec2(i, 0));
+    //     res = mix(res, r, 0.1);
+    // }
+    imageStore(myStorageImage, px, res);
+    // uint index = gl_GlobalInvocationID.x;
+    // indices[index] = collatz_iterations(indices[index]);
+    
+}

@@ -74,13 +74,13 @@ const DEFAULT_WINDOW_HEIGHT: u32 = 800;
 /// Creates a texture that uses MSAA and fits a given swap chain
 fn create_multisampled_framebuffer(
     device: &wgpu::Device,
-    sc_desc: &wgpu::SwapChainDescriptor,
+    size: &wgpu::Extent3d,
     sample_count: u32,
 ) -> wgpu::TextureView {
     let multisampled_frame_descriptor = &wgpu::TextureDescriptor {
         size: wgpu::Extent3d {
-            width: sc_desc.width,
-            height: sc_desc.height,
+            width: size.width,
+            height: size.height,
             depth: 1,
         },
         mip_level_count: 1,
@@ -504,17 +504,18 @@ impl BrushRenderer {
     }
 }
 
-struct Encoder<'a, 'b, 'c, 'd> {
-    device: &'a Device,
-    encoder: &'b mut CommandEncoder,
-    multisampled_render_target: Option<&'c wgpu::TextureView>,
-    target_texture: &'d wgpu::TextureView,
-    depth_texture_view: &'d wgpu::TextureView,
+pub struct Encoder<'a, 'b, 'c, 'd> {
+    pub device: &'a Device,
+    pub encoder: &'b mut CommandEncoder,
+    pub multisampled_render_target: Option<&'c wgpu::TextureView>,
+    pub target_texture: &'d wgpu::TextureView,
+    pub depth_texture_view: &'d wgpu::TextureView,
     pub blitter: &'d Blitter,
+    pub resolution: wgpu::Extent3d,
 }
 
 impl Encoder<'_, '_, '_, '_> {
-    fn begin_msaa_render_pass<'a>(&'a mut self, clear: Option<wgpu::Color>) -> wgpu::RenderPass<'a> {
+    pub fn begin_msaa_render_pass<'a>(&'a mut self, clear: Option<wgpu::Color>) -> wgpu::RenderPass<'a> {
         let color_attachment = if let Some(msaa_target) = &self.multisampled_render_target {
             wgpu::RenderPassColorAttachmentDescriptor {
                 attachment: msaa_target,
@@ -551,7 +552,7 @@ impl Encoder<'_, '_, '_, '_> {
         })
     }
 
-    fn begin_render_pass<'a>(&'a mut self, depth: bool) -> wgpu::RenderPass<'a> {
+    pub fn begin_render_pass<'a>(&'a mut self, depth: bool) -> wgpu::RenderPass<'a> {
         let color_attachment = wgpu::RenderPassColorAttachmentDescriptor {
             attachment: &self.target_texture,
             load_op: wgpu::LoadOp::Load,
@@ -779,11 +780,13 @@ pub fn main() {
     println!("Memory: {:?}", (t4.duration_since(t3).as_secs_f32() * 1000.0));
 
     let document = Document {
+        size: Some(size(800, 600)),
         paths: PathCollection { paths: vec![] },
         brushes: crate::brush_editor::BrushData::new(),
         textures: vec![],
     };
     let mut ui_document = Document {
+        size: None,
         paths: PathCollection { paths: vec![] },
         brushes: crate::brush_editor::BrushData::new(),
         textures: vec![],
@@ -995,11 +998,13 @@ pub fn main() {
     };
 
     let mut multisampled_render_target = None;
+    let mut multisampled_render_target_document = None;
 
     let window_surface = wgpu::Surface::create(&window);
     let mut swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
 
     let mut depth_texture_view = None;
+    let mut depth_texture_view_document = None;
 
     let mut frame_count: f32 = 0.0;
     let mut last_time = Instant::now();
@@ -1073,6 +1078,8 @@ pub fn main() {
         ],
     });
 
+    let blur = crate::blur::BlurCompute::new(&device);
+
     let tex = std::sync::Arc::new(
         Texture::load_from_file(std::path::Path::new("brush.png"), &device, &mut init_encoder).unwrap(),
     );
@@ -1080,6 +1087,8 @@ pub fn main() {
     editor.ui_document.textures.push(tex.clone());
 
     queue.submit(&[init_encoder.finish()]);
+
+    let mipmapper = crate::mipmap::Mipmapper::new(&device);
 
     event_loop.run(move |event, _, control_flow| {
         let scene = &mut editor.scene;
@@ -1124,6 +1133,18 @@ pub fn main() {
 
         // println!("Path editor = {:?}", t0.elapsed());
 
+        let document_extent = wgpu::Extent3d {
+            width: editor.document.size.unwrap().width,
+            height: editor.document.size.unwrap().height,
+            depth: 1,
+        };
+
+        let window_extent = wgpu::Extent3d {
+            width: swap_chain_desc.width,
+            height: swap_chain_desc.height,
+            depth: 1,
+        };
+
         if scene.size_changed {
             scene.size_changed = false;
             let physical = scene.view.resolution;
@@ -1133,11 +1154,7 @@ pub fn main() {
 
             let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Framebuffer depth"),
-                size: wgpu::Extent3d {
-                    width: swap_chain_desc.width,
-                    height: swap_chain_desc.height,
-                    depth: 1,
-                },
+                size: window_extent,
                 mip_level_count: 1,
                 sample_count: sample_count,
                 array_layer_count: 1,
@@ -1148,8 +1165,27 @@ pub fn main() {
 
             depth_texture_view = Some(depth_texture.create_default_view());
 
+            let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Framebuffer depth"),
+                size: document_extent,
+                mip_level_count: 1,
+                sample_count: sample_count,
+                array_layer_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            });
+
+            depth_texture_view_document = Some(depth_texture.create_default_view());
+
             multisampled_render_target = if sample_count > 1 {
-                Some(create_multisampled_framebuffer(&device, &swap_chain_desc, sample_count))
+                Some(create_multisampled_framebuffer(&device, &window_extent, sample_count))
+            } else {
+                None
+            };
+
+            multisampled_render_target_document = if sample_count > 1 {
+                Some(create_multisampled_framebuffer(&device, &document_extent, sample_count))
             } else {
                 None
             };
@@ -1159,6 +1195,14 @@ pub fn main() {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Frame encoder"),
         });
+
+        let doc_size = editor.document.size.unwrap();
+        let dummy_view = CanvasView {
+            zoom: 1.0,
+            scroll: vector(0.0, 0.0),
+            resolution: PhysicalSize::new(doc_size.width, doc_size.height),
+        };
+
 
         update_buffer_via_transfer(
             &device,
@@ -1176,7 +1220,7 @@ pub fn main() {
             last_hash1 = hash;
             document_renderer1 = Some(DocumentRenderer::new(
                 &editor.document,
-                &scene.view,
+                &dummy_view,
                 &device,
                 &mut encoder,
                 &bind_group_layout,
@@ -1211,30 +1255,35 @@ pub fn main() {
         document_renderer1
             .as_mut()
             .unwrap()
-            .update(&scene.view, &device, &mut encoder);
+            .update(&dummy_view, &device, &mut encoder);
         document_renderer2
             .as_mut()
             .unwrap()
             .update(&ui_view, &device, &mut encoder);
 
-        let texture_extent2 = wgpu::Extent3d {
-            width: scene.view.resolution.width,
-            height: scene.view.resolution.height,
-            depth: 1,
-        };
-
         // Render into this texture
-        let temp_frame = device.create_texture(&wgpu::TextureDescriptor {
+        let temp_document_frame = Texture::new(&device, wgpu::TextureDescriptor {
             label: Some("Temp frame texture"),
-            size: texture_extent2,
+            size: document_extent,
+            mip_level_count: crate::mipmap::max_mipmaps(document_extent),
+            sample_count: 1,
+            array_layer_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::STORAGE,
+        });
+
+        let temp_window_frame = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Temp window texture"),
+            size: window_extent,
             mip_level_count: 1,
             sample_count: 1,
             array_layer_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Bgra8Unorm,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::STORAGE,
         });
-        let temp_frame_view = temp_frame.create_default_view();
+        let temp_window_frame_view = temp_window_frame.create_default_view();
 
         {
             // A resolve target is only supported if the attachment actually uses anti-aliasing
@@ -1245,11 +1294,11 @@ pub fn main() {
                     load_op: wgpu::LoadOp::Clear,
                     store_op: wgpu::StoreOp::Store,
                     clear_color: wgpu::Color::BLACK,
-                    resolve_target: Some(&temp_frame_view),
+                    resolve_target: Some(&temp_document_frame.view),
                 }
             } else {
                 wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &temp_frame_view,
+                    attachment: &temp_document_frame.view,
                     load_op: wgpu::LoadOp::Clear,
                     store_op: wgpu::StoreOp::Store,
                     clear_color: wgpu::Color::WHITE,
@@ -1260,10 +1309,11 @@ pub fn main() {
             let mut hl_encoder = Encoder {
                 device: &device,
                 encoder: &mut encoder,
-                multisampled_render_target: multisampled_render_target.as_ref(),
-                target_texture: &temp_frame_view,
-                depth_texture_view: depth_texture_view.as_ref().unwrap(),
+                multisampled_render_target: multisampled_render_target_document.as_ref(),
+                target_texture: &temp_document_frame.view,
+                depth_texture_view: depth_texture_view_document.as_ref().unwrap(),
                 blitter: &blitter,
+                resolution: document_extent
             };
 
             {
@@ -1281,17 +1331,50 @@ pub fn main() {
             document_renderer1
                 .as_ref()
                 .unwrap()
-                .render(&mut hl_encoder, &scene.view);
+                .render(&mut hl_encoder, &dummy_view);
+            
+            mipmapper.generate_mipmaps(&device, &mut encoder, &temp_document_frame);
+
+            let mut hl_encoder = Encoder {
+                device: &device,
+                encoder: &mut encoder,
+                multisampled_render_target: multisampled_render_target.as_ref(),
+                target_texture: &temp_window_frame_view,
+                depth_texture_view: depth_texture_view.as_ref().unwrap(),
+                blitter: &blitter,
+                resolution: document_extent
+            };
+
+            {
+                let mut _clear_pass = hl_encoder.begin_msaa_render_pass(Some(wgpu::Color { r: 41.0/255.0, g: 41.0/255.0, b: 41.0/255.0, a: 1.0 }));
+            }
+
+            let canvas_in_screen_space = scene.view.canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
+            let canvas_in_screen_uv_space = canvas_in_screen_space.scale(1.0 / doc_size.width as f32, 1.0 / doc_size.height as f32);
+            let canvas_in_screen_uv_space = rect(canvas_in_screen_uv_space.min_x(), 1.0 - canvas_in_screen_uv_space.min_y(), canvas_in_screen_uv_space.width(), -canvas_in_screen_uv_space.height());
+
+            blitter.blit(
+                &device,
+                hl_encoder.encoder,
+                &temp_document_frame.view,
+                multisampled_render_target.as_ref().unwrap(),
+                rect(0.0, 0.0, 1.0, 1.0),
+                canvas_in_screen_uv_space, // rect(0.0, 1.0, 1.0, -1.0),
+                sample_count,
+            );
+
             document_renderer2
                 .as_ref()
                 .unwrap()
                 .render(&mut hl_encoder, &scene.view);
+            
+            // blur.render(&mut hl_encoder);
         }
 
         blitter.blit(
             &device,
             &mut encoder,
-            &temp_frame_view,
+            &temp_window_frame_view,
             &frame.view,
             rect(0.0, 0.0, 1.0, 1.0),
             rect(0.0, 1.0, 1.0, -1.0),
@@ -1351,11 +1434,35 @@ pub struct Editor {
 }
 
 pub struct Texture {
+    pub descriptor: wgpu::TextureDescriptor<'static>,
     pub buffer: wgpu::Texture,
     pub view: wgpu::TextureView,
 }
 
 impl Texture {
+    fn new(device: &Device, descriptor: wgpu::TextureDescriptor) -> Texture {
+        let tex = device.create_texture(&descriptor);
+
+        // Remove the label which we do not have a static lifetime for
+        let descriptor = wgpu::TextureDescriptor::<'static> {
+            label: None,
+            size: descriptor.size,
+            array_layer_count: descriptor.array_layer_count,
+            mip_level_count: descriptor.mip_level_count,
+            sample_count: descriptor.sample_count,
+            dimension: descriptor.dimension,
+            format: descriptor.format,
+            usage: descriptor.usage,
+        };
+
+        let view = tex.create_default_view();
+        Texture {
+            descriptor,
+            buffer: tex,
+            view,
+        }
+    }
+
     fn load_from_file(
         path: &std::path::Path,
         device: &Device,
@@ -1372,7 +1479,7 @@ impl Texture {
             height: height,
             depth: 1,
         };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let descriptor = wgpu::TextureDescriptor {
             label: Some(path.to_str().unwrap()),
             size: texture_extent,
             mip_level_count: 1,
@@ -1381,9 +1488,9 @@ impl Texture {
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Bgra8Unorm,
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-        });
+        };
+        let texture = Self::new(device, descriptor);
 
-        let texture_view = texture.create_default_view();
         let raw = rgba.into_raw();
 
         let transfer_buffer = device.create_buffer_with_data(&raw, wgpu::BufferUsage::COPY_SRC);
@@ -1396,7 +1503,7 @@ impl Texture {
                 rows_per_image: height,
             },
             wgpu::TextureCopyView {
-                texture: &texture,
+                texture: &texture.buffer,
                 mip_level: 0,
                 array_layer: 0,
                 origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
@@ -1404,14 +1511,12 @@ impl Texture {
             texture_extent,
         );
 
-        Ok(Texture {
-            buffer: texture,
-            view: texture_view,
-        })
+        Ok(texture)
     }
 }
 
 pub struct Document {
+    pub size: Option<euclid::Size2D<u32, CanvasSpace>>,
     pub textures: Vec<std::sync::Arc<Texture>>,
     pub brushes: crate::brush_editor::BrushData,
     pub paths: PathCollection,

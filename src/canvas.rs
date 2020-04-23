@@ -21,7 +21,7 @@ impl CanvasView {
         hasher.finish()
     }
 
-    pub fn visible_rect(&self) -> euclid::Rect<f32, CanvasSpace> {
+    pub fn visible_canvas_region(&self) -> euclid::Rect<f32, CanvasSpace> {
         let topleft = self.screen_to_canvas_point(point(0.0, 0.0));
         let bottomright =
             self.screen_to_canvas_point(point(self.resolution.width as f32, self.resolution.height as f32));
@@ -30,6 +30,17 @@ impl CanvasView {
             topleft.y,
             bottomright.x - topleft.x,
             bottomright.y - topleft.y,
+        )
+    }
+
+    pub fn canvas_to_screen_rect(&self, r: euclid::Rect<f32, CanvasSpace>) -> euclid::Rect<f32, ScreenSpace> {
+        let mn = self.canvas_to_screen_point(r.min());
+        let mx = self.canvas_to_screen_point(r.max());
+        rect(
+            mn.x,
+            mn.y,
+            mx.x - mn.x,
+            mx.y - mn.y,
         )
     }
 

@@ -1,0 +1,26 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout (set=0, binding=0, rgba8) uniform image2D source;
+layout (set=0, binding=1, rgba8) uniform image2D destination;
+
+void main() {
+    ivec2 px = ivec2(gl_WorkGroupID.xy*uvec2(8, 8) + gl_LocalInvocationID.xy);
+
+    vec4 c0 = imageLoad(source, 2*px + ivec2(0, 0));
+    vec4 c1 = imageLoad(source, 2*px + ivec2(1, 0));
+    vec4 c2 = imageLoad(source, 2*px + ivec2(0, 1));
+    vec4 c3 = imageLoad(source, 2*px + ivec2(1, 1));
+    // vec3 size = imageSize(source);
+    
+    // Premultiply and blend alpha
+    // FIXME: For NPOT images the border pixels will be more transparent than they should!
+    vec3 c = (c0.rgb * c0.a + c1.rgb * c1.a + c2.rgb * c2.a + c3.rgb * c3.a);
+    float a = (c0.a + c1.a + c2.a + c3.a);
+    c *= a > 0 ? 1.0 / a : 1.0;
+    a *= 0.25;
+
+    vec4 res = vec4(c, a);
+    imageStore(destination, px, res);
+}

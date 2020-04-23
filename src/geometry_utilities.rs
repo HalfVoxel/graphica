@@ -19,6 +19,7 @@ use types::*;
 pub mod types {
     pub struct ScreenSpace;
     pub struct CanvasSpace;
+    pub struct UVSpace;
     pub type ScreenPoint = euclid::Point2D<f32, ScreenSpace>;
     pub type ScreenVector = euclid::Vector2D<f32, ScreenSpace>;
     pub type CanvasPoint = euclid::Point2D<f32, CanvasSpace>;

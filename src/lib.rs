@@ -13,3 +13,5 @@ mod path_editor;
 mod shader;
 mod toolbar;
 mod wgpu_utils;
+mod blur;
+mod mipmap;
