@@ -4,7 +4,6 @@ use euclid;
 use kurbo::common::GAUSS_LEGENDRE_COEFFS_9;
 use kurbo::CubicBez;
 use kurbo::ParamCurve;
-use kurbo::ParamCurveArclen;
 use kurbo::ParamCurveDeriv;
 use kurbo::Point as KurboPoint;
 use lazy_static::lazy_static;
@@ -184,6 +183,8 @@ impl ParamCurveDistanceEval for CubicBez {
 
 #[test]
 fn test_find_t_at_distance() {
+    use kurbo::ParamCurveArclen;
+
     let b = CubicBez::new(
         KurboPoint::new(0.0, 0.0),
         KurboPoint::new(10.0, 10.0),
