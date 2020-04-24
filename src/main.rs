@@ -37,7 +37,10 @@ use crate::toolbar::GUIRoot;
 use crate::wgpu_utils::*;
 use arrayvec::ArrayVec;
 use async_std::task;
+
+#[cfg(feature = "profile")]
 use cpuprofiler::PROFILER;
+
 use kurbo::CubicBez;
 use kurbo::Point as KurboPoint;
 use palette::Pixel;
@@ -737,6 +740,7 @@ impl DocumentRenderer {
 }
 
 pub fn main() {
+    #[cfg(feature = "profile")]
     PROFILER
         .lock()
         .unwrap()
@@ -1160,7 +1164,9 @@ pub fn main() {
         ) {
             // Quit
             *control_flow = ControlFlow::Exit;
-            // PROFILER.lock().unwrap().stop().expect("Couldn't stop");
+
+            #[cfg(feature = "profile")]
+            PROFILER.lock().unwrap().stop().expect("Couldn't stop");
             return;
         }
 
