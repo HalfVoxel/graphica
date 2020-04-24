@@ -131,7 +131,7 @@ impl Blitter {
             .collect::<Vec<RenderPipeline>>();
 
         let indices = &[0, 1, 2, 3, 2, 0];
-        let (ibo, ibo_size) =
+        let (ibo, _ibo_size) =
             create_buffer_via_transfer(device, encoder, indices, wgpu::BufferUsage::INDEX, "Blitter IBO");
 
         Blitter {

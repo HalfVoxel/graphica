@@ -1,9 +1,6 @@
 use crate::canvas::CanvasView;
 use crate::geometry_utilities::types::*;
-use crate::geometry_utilities::{
-    poisson_disc_sampling, sqr_distance_bezier_point, sqr_distance_bezier_point_binary,
-    sqr_distance_bezier_point_lower_bound, VectorField, VectorFieldPrimitive,
-};
+
 use crate::input::*;
 use crate::main::Document;
 use crate::path::*;
@@ -12,11 +9,11 @@ use crate::path_collection::{
     SelectionReference, VertexReference,
 };
 use crate::toolbar::ToolType;
-use lyon::math::*;
+
 use palette::Srgba;
-use rand::{rngs::StdRng, SeedableRng};
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+
+
+
 
 enum BrushEditorState {
     Dragging(CapturedClick, CanvasPoint),
@@ -39,7 +36,7 @@ impl BrushEditor {
 
     pub fn update(
         &mut self,
-        ui_document: &mut Document,
+        _ui_document: &mut Document,
         document: &mut Document,
         view: &CanvasView,
         input: &mut InputManager,

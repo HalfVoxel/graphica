@@ -10,7 +10,7 @@ use wgpu_glyph::{Section, GlyphBrushBuilder};
 use euclid;
 use std::rc::Rc;
 use std::time::Instant;
-use wgpu::{BindGroup, Buffer, CommandEncoder, Device, RenderPass, RenderPipeline};
+use wgpu::{BindGroup, Buffer, CommandEncoder, Device, RenderPipeline};
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -18,7 +18,7 @@ use winit::window::Window;
 
 use crate::blitter::Blitter;
 use crate::brush_editor::{BrushData, BrushEditor};
-use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex, ShaderBundle};
+use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex};
 use crate::canvas::CanvasView;
 use crate::fps_limiter::FPSLimiter;
 use crate::geometry_utilities;
@@ -188,9 +188,9 @@ impl BrushRendererWithReadback {
         brush_data: &BrushData,
         view: &CanvasView,
         device: &Device,
-        encoder: &mut CommandEncoder,
-        scene_ubo: &Buffer,
-        scene_ubo_size: u64,
+        _encoder: &mut CommandEncoder,
+        _scene_ubo: &Buffer,
+        _scene_ubo_size: u64,
         brush_manager: &Rc<BrushManager>,
         texture: &Arc<Texture>,
     ) -> BrushRendererWithReadback {
@@ -485,7 +485,7 @@ impl BrushRenderer {
         }
     }
 
-    fn update(&mut self, view: &CanvasView, device: &Device, encoder: &mut CommandEncoder) {
+    fn update(&mut self, _view: &CanvasView, _device: &Device, _encoder: &mut CommandEncoder) {
         // let scene_ubo_transfer = device
         // .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
         // .fill_from_slice(&[Globals {
@@ -498,7 +498,7 @@ impl BrushRenderer {
         // encoder.copy_buffer_to_buffer(&scene_ubo_transfer, 0, &self.scene_ubo, 0, scene_ubo_size);
     }
 
-    fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
+    fn render(&self, encoder: &mut Encoder, _view: &CanvasView) {
         let mut pass = encoder.begin_msaa_render_pass(None);
         pass.set_pipeline(&self.brush_manager.splat.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
@@ -1109,7 +1109,7 @@ pub fn main() {
         ],
     });
 
-    let blur = crate::blur::BlurCompute::new(&device);
+    let _blur = crate::blur::BlurCompute::new(&device);
 
     let tex = std::sync::Arc::new(
         Texture::load_from_file(std::path::Path::new("brush.png"), &device, &mut init_encoder).unwrap(),
@@ -1311,7 +1311,7 @@ pub fn main() {
         {
             // A resolve target is only supported if the attachment actually uses anti-aliasing
             // So if sample_count == 1 then we must render directly to the swapchain's buffer
-            let color_attachment = if let Some(msaa_target) = &multisampled_render_target {
+            let _color_attachment = if let Some(msaa_target) = &multisampled_render_target {
                 wgpu::RenderPassColorAttachmentDescriptor {
                     attachment: msaa_target,
                     load_op: wgpu::LoadOp::Clear,

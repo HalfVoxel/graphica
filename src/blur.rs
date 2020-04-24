@@ -1,23 +1,17 @@
-use crate::canvas::CanvasView;
-use crate::geometry_utilities::types::*;
-use crate::geometry_utilities::{
-    poisson_disc_sampling, sqr_distance_bezier_point, sqr_distance_bezier_point_binary,
-    sqr_distance_bezier_point_lower_bound, VectorField, VectorFieldPrimitive,
-};
-use crate::input::*;
-use crate::main::Document;
-use crate::path::*;
-use crate::path_collection::{
-    ControlPointReference, MutableReferenceResolver, PathCollection, PathReference, ReferenceResolver,
-    SelectionReference, VertexReference,
-};
-use crate::toolbar::ToolType;
-use lyon::math::*;
-use palette::Srgba;
-use rand::{rngs::StdRng, SeedableRng};
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use crate::main::{Encoder, Texture};
+
+
+
+
+
+
+
+
+
+
+
+
+
+use crate::main::{Encoder};
 use wgpu::{Device, ComputePipeline, BindGroupLayout, TextureViewDimension, TextureComponentType, TextureFormat};
 use crate::shader::load_shader;
 

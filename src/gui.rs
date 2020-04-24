@@ -51,7 +51,7 @@ impl<T: WidgetTrait> WidgetTypeTrait for WidgetWrapper<T> {
             input,
         );
     }
-    fn render(&mut self, root: &mut RootWrapper, document: &mut Document, view: &CanvasView) {
+    fn render(&mut self, _root: &mut RootWrapper, document: &mut Document, view: &CanvasView) {
         self.widget.render(document, view);
     }
 
@@ -368,7 +368,7 @@ impl<'a> Root {
         self.apply_modifications(to_add, to_remove);
     }
 
-    pub fn input(&mut self, ui_document: &mut Document, input: &mut InputManager) {
+    pub fn input(&mut self, _ui_document: &mut Document, input: &mut InputManager) {
         let mut mods = RootWrapper::new(self);
         for widget in &self.widgets {
             if let Some(widget) = widget {
@@ -402,6 +402,6 @@ pub trait WidgetTrait: Any {
     type EventType;
     fn mount(&mut self, _context: &mut WidgetContext<Self>) {}
     fn update(&mut self, _context: &mut WidgetContext<Self>) {}
-    fn render(&mut self, ui_document: &mut Document, view: &CanvasView) {}
-    fn input(&mut self, context: &mut WidgetContext<Self>, input: &mut InputManager) {}
+    fn render(&mut self, _ui_document: &mut Document, _view: &CanvasView) {}
+    fn input(&mut self, _context: &mut WidgetContext<Self>, _input: &mut InputManager) {}
 }

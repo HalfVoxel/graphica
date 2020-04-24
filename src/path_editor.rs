@@ -1,7 +1,7 @@
 use crate::canvas::CanvasView;
 use crate::geometry_utilities::types::*;
 use crate::geometry_utilities::{
-    poisson_disc_sampling, sqr_distance_bezier_point, sqr_distance_bezier_point_binary,
+    poisson_disc_sampling, sqr_distance_bezier_point_binary,
     sqr_distance_bezier_point_lower_bound, VectorField, VectorFieldPrimitive,
 };
 use crate::input::*;
@@ -14,7 +14,7 @@ use crate::path_collection::{
 use crate::toolbar::ToolType;
 use lyon::math::*;
 use rand::{rngs::StdRng, SeedableRng};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet};
 
 #[derive(Eq, Clone)]
 pub struct Selection {
@@ -149,7 +149,7 @@ impl Selection {
                     let vertex = paths.resolve(vertex_ref2);
                     if vertex_ref2
                         .next(paths)
-                        .filter(|next| point_set.contains(&vertex_ref2))
+                        .filter(|_next| point_set.contains(&vertex_ref2))
                         .is_some()
                     {
                         let a = vertex.position();
@@ -476,7 +476,7 @@ impl PathEditor {
 
             let mut rng: StdRng = SeedableRng::seed_from_u64(0);
             let samples = poisson_disc_sampling(rect(-100.0, -100.0, 300.0, 300.0), 80.0, &mut rng);
-            for (i, &p) in samples.iter().enumerate() {
+            for (_i, &p) in samples.iter().enumerate() {
                 // if let VectorFieldPrimitive::Linear { ref mut strength, .. } = self.vector_field.primitives.last_mut().unwrap() {
                 // *strength = i as f32;
                 // }

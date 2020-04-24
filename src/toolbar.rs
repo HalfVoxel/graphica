@@ -77,7 +77,7 @@ impl GUIRoot {
         GUIRoot { tool: ToolType::Select }
     }
 
-    fn on_change_tool(&mut self, context: &mut WidgetContext<Self>, ev: &ToolSelected) {
+    fn on_change_tool(&mut self, _context: &mut WidgetContext<Self>, ev: &ToolSelected) {
         let tool = ev.0;
         self.tool = tool;
     }
@@ -113,9 +113,9 @@ impl Button {
 impl WidgetTrait for Button {
     type EventType = ButtonEvent;
 
-    fn mount(&mut self, context: &mut WidgetContext<Self>) {}
+    fn mount(&mut self, _context: &mut WidgetContext<Self>) {}
 
-    fn render(&mut self, ui_document: &mut Document, view: &CanvasView) {
+    fn render(&mut self, ui_document: &mut Document, _view: &CanvasView) {
         if self.path.is_none() {
             self.path = Some(ui_document.paths.push(PathData::new()));
         }
@@ -132,7 +132,7 @@ impl WidgetTrait for Button {
         );
     }
 
-    fn update(&mut self, context: &mut WidgetContext<Self>) {}
+    fn update(&mut self, _context: &mut WidgetContext<Self>) {}
 
     fn input(&mut self, context: &mut WidgetContext<Self>, input: &mut InputManager) {
         let inside = self.rect.contains(input.mouse_position.to_untyped());
@@ -183,7 +183,7 @@ impl WidgetTrait for Widget {
         // self.listeners.send(root, &ButtonEvent::Click);
     }
 
-    fn update(&mut self, context: &mut WidgetContext<Self>) {
+    fn update(&mut self, _context: &mut WidgetContext<Self>) {
         // context.add(Button::new());
     }
 }

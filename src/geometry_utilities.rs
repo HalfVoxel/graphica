@@ -1,7 +1,7 @@
 use crate::path::ImmutablePathPoint;
 use euclid;
-use kurbo::common::GAUSS_LEGENDRE_COEFFS_3;
-use kurbo::common::GAUSS_LEGENDRE_COEFFS_5;
+
+
 use kurbo::common::GAUSS_LEGENDRE_COEFFS_9;
 use kurbo::CubicBez;
 use kurbo::ParamCurve;
@@ -261,7 +261,7 @@ pub fn bezier_move_forward_distance<U>(
     p2: euclid::Point2D<f32, U>,
     p3: euclid::Point2D<f32, U>,
     t: f32,
-    mut distance: f32,
+    distance: f32,
     step_multiplier: f32,
 ) -> MoveResult {
     debug_assert!(t >= 0.0);
@@ -332,7 +332,7 @@ pub fn evalute_cubic_bezier_derivative<U>(
     let p3 = p3.to_untyped().to_vector();
     let t1 = 1.0 - t;
     let t2 = t1 * t1;
-    let t3 = t1 * t1 * t1;
+    let _t3 = t1 * t1 * t1;
     ((p1 - p0) * (3.0 * t2) + (p2 - p1) * (6.0 * t1 * t) + (p3 - p2) * (3.0 * t * t)).cast_unit()
 }
 
@@ -886,7 +886,7 @@ impl VectorField {
         (result, false)
     }
 
-    pub fn trace_with_clearance(&self, mut point: CanvasPoint, clearance: f32) -> Vec<CanvasPoint> {
+    pub fn trace_with_clearance(&self, mut point: CanvasPoint, _clearance: f32) -> Vec<CanvasPoint> {
         // Use 4th order runge-kutta
         let dt = 5.0;
         let mut result = vec![point];
@@ -923,7 +923,7 @@ impl<'a, U> PathClearanceGrid<'a, U> {
         }
     }
 
-    fn add(point: ImmutablePathPoint<'a>) {
+    fn add(_point: ImmutablePathPoint<'a>) {
         // point.prev()
     }
 }

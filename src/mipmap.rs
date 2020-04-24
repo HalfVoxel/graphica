@@ -1,4 +1,4 @@
-use wgpu::{Device, CommandEncoder, TextureView, TextureViewDescriptor, ComputePipeline, BindGroupLayout, TextureViewDimension, TextureComponentType, TextureFormat, Extent3d};
+use wgpu::{Device, CommandEncoder, TextureViewDescriptor, ComputePipeline, BindGroupLayout, TextureViewDimension, TextureComponentType, TextureFormat, Extent3d};
 use crate::shader::load_shader;
 use crate::main::Texture;
 

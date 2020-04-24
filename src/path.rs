@@ -1,7 +1,7 @@
 use crate::geometry_utilities::types::*;
 use lyon::math::*;
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::{Hasher};
 
 #[derive(Clone)]
 pub struct SubPathData {
@@ -383,7 +383,7 @@ impl PathData {
         self.version += 1;
     }
 
-    pub fn remove<'a>(&'a mut self, index: usize) {}
+    pub fn remove<'a>(&'a mut self, _index: usize) {}
 
     pub fn iter_sub_paths<'a>(&'a self) -> impl Iterator<Item = SubPath<'a>> {
         (0..self.sub_paths.len()).map(move |i| SubPath { data: self, index: i })
