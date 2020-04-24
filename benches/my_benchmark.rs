@@ -9,7 +9,7 @@ use rand::prelude::*;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
 
-use graphica::geometry_utilities::ParamCurvePointAtDistance;
+use graphica::geometry_utilities::ParamCurveDistanceEval;
 use kurbo::CubicBez;
 use kurbo::ParamCurve;
 use kurbo::ParamCurveArclen;
@@ -110,7 +110,7 @@ fn sqr_distance_bezier_point_bench_binary(points: &Vec<Point>) {
 
 fn bezier_point_at_distance(bez: &CubicBez) {
     for i in 0..10 {
-        let k = bez.point_at_distance(i as f64 * 1.0, 0.01);
+        let k = bez.eval_at_distance(i as f64 * 1.0, 0.01).unwrap();
         black_box(k);
     }
 }
