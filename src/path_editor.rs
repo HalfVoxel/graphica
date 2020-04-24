@@ -1,8 +1,8 @@
 use crate::canvas::CanvasView;
 use crate::geometry_utilities::types::*;
 use crate::geometry_utilities::{
-    poisson_disc_sampling, sqr_distance_bezier_point_binary,
-    sqr_distance_bezier_point_lower_bound, VectorField, VectorFieldPrimitive,
+    poisson_disc_sampling, sqr_distance_bezier_point_binary, sqr_distance_bezier_point_lower_bound, VectorField,
+    VectorFieldPrimitive,
 };
 use crate::input::*;
 use crate::main::Document;
@@ -14,7 +14,7 @@ use crate::path_collection::{
 use crate::toolbar::ToolType;
 use lyon::math::*;
 use rand::{rngs::StdRng, SeedableRng};
-use std::collections::{HashSet};
+use std::collections::HashSet;
 
 #[derive(Eq, Clone)]
 pub struct Selection {

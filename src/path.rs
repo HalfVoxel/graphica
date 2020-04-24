@@ -1,7 +1,7 @@
 use crate::geometry_utilities::types::*;
 use lyon::math::*;
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hasher};
+use std::hash::Hasher;
 
 #[derive(Clone)]
 pub struct SubPathData {

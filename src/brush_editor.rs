@@ -12,9 +12,6 @@ use crate::toolbar::ToolType;
 
 use palette::Srgba;
 
-
-
-
 enum BrushEditorState {
     Dragging(CapturedClick, CanvasPoint),
 }

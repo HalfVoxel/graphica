@@ -1,4 +1,5 @@
 mod blitter;
+mod blur;
 mod brush_editor;
 mod brush_manager;
 pub mod canvas;
@@ -7,11 +8,10 @@ pub mod geometry_utilities;
 pub mod gui;
 pub mod input;
 pub mod main;
+mod mipmap;
 pub mod path;
 pub mod path_collection;
 mod path_editor;
 mod shader;
 mod toolbar;
 mod wgpu_utils;
-mod blur;
-mod mipmap;

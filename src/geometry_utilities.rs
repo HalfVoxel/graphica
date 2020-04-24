@@ -1,7 +1,6 @@
 use crate::path::ImmutablePathPoint;
 use euclid;
 
-
 use kurbo::common::GAUSS_LEGENDRE_COEFFS_9;
 use kurbo::CubicBez;
 use kurbo::ParamCurve;

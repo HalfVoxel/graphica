@@ -5,7 +5,7 @@ use lyon::tessellation;
 use lyon::tessellation::geometry_builder::*;
 use lyon::tessellation::FillOptions;
 use lyon::tessellation::{StrokeOptions, StrokeTessellator};
-use wgpu_glyph::{Section, GlyphBrushBuilder};
+use wgpu_glyph::{GlyphBrushBuilder, Section};
 
 use euclid;
 use std::rc::Rc;
@@ -1126,7 +1126,6 @@ pub fn main() {
         .expect("Load font")
         .build(&device, wgpu::TextureFormat::Bgra8Unorm);
 
-
     event_loop.run(move |event, _, control_flow| {
         let scene = &mut editor.scene;
         let new_time = Instant::now();
@@ -1226,7 +1225,6 @@ pub fn main() {
             resolution: PhysicalSize::new(doc_size.width, doc_size.height),
         };
 
-
         update_buffer_via_transfer(
             &device,
             &mut encoder,
@@ -1285,16 +1283,21 @@ pub fn main() {
             .update(&ui_view, &device, &mut encoder);
 
         // Render into this texture
-        let temp_document_frame = Texture::new(&device, wgpu::TextureDescriptor {
-            label: Some("Temp frame texture"),
-            size: document_extent,
-            mip_level_count: crate::mipmap::max_mipmaps(document_extent),
-            sample_count: 1,
-            array_layer_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8Unorm,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::STORAGE,
-        });
+        let temp_document_frame = Texture::new(
+            &device,
+            wgpu::TextureDescriptor {
+                label: Some("Temp frame texture"),
+                size: document_extent,
+                mip_level_count: crate::mipmap::max_mipmaps(document_extent),
+                sample_count: 1,
+                array_layer_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Bgra8Unorm,
+                usage: wgpu::TextureUsage::SAMPLED
+                    | wgpu::TextureUsage::OUTPUT_ATTACHMENT
+                    | wgpu::TextureUsage::STORAGE,
+            },
+        );
 
         let temp_window_frame = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Temp window texture"),
@@ -1336,7 +1339,7 @@ pub fn main() {
                 target_texture: &temp_document_frame.view,
                 depth_texture_view: depth_texture_view_document.as_ref().unwrap(),
                 blitter: &blitter,
-                resolution: document_extent
+                resolution: document_extent,
             };
 
             {
@@ -1355,7 +1358,7 @@ pub fn main() {
                 .as_ref()
                 .unwrap()
                 .render(&mut hl_encoder, &dummy_view);
-            
+
             mipmapper.generate_mipmaps(&device, &mut encoder, &temp_document_frame);
 
             let mut hl_encoder = Encoder {
@@ -1365,16 +1368,30 @@ pub fn main() {
                 target_texture: &temp_window_frame_view,
                 depth_texture_view: depth_texture_view.as_ref().unwrap(),
                 blitter: &blitter,
-                resolution: document_extent
+                resolution: document_extent,
             };
 
             {
-                let mut _clear_pass = hl_encoder.begin_msaa_render_pass(Some(wgpu::Color { r: 41.0/255.0, g: 41.0/255.0, b: 41.0/255.0, a: 1.0 }));
+                let mut _clear_pass = hl_encoder.begin_msaa_render_pass(Some(wgpu::Color {
+                    r: 41.0 / 255.0,
+                    g: 41.0 / 255.0,
+                    b: 41.0 / 255.0,
+                    a: 1.0,
+                }));
             }
 
-            let canvas_in_screen_space = scene.view.canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
-            let canvas_in_screen_uv_space = canvas_in_screen_space.scale(1.0 / doc_size.width as f32, 1.0 / doc_size.height as f32);
-            let canvas_in_screen_uv_space = rect(canvas_in_screen_uv_space.min_x(), 1.0 - canvas_in_screen_uv_space.min_y(), canvas_in_screen_uv_space.width(), -canvas_in_screen_uv_space.height());
+            let canvas_in_screen_space =
+                scene
+                    .view
+                    .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
+            let canvas_in_screen_uv_space =
+                canvas_in_screen_space.scale(1.0 / doc_size.width as f32, 1.0 / doc_size.height as f32);
+            let canvas_in_screen_uv_space = rect(
+                canvas_in_screen_uv_space.min_x(),
+                1.0 - canvas_in_screen_uv_space.min_y(),
+                canvas_in_screen_uv_space.width(),
+                -canvas_in_screen_uv_space.height(),
+            );
 
             blitter.blit(
                 &device,
@@ -1390,7 +1407,7 @@ pub fn main() {
                 .as_ref()
                 .unwrap()
                 .render(&mut hl_encoder, &scene.view);
-            
+
             // blur.render(&mut hl_encoder);
 
             let section = Section {
@@ -1401,13 +1418,15 @@ pub fn main() {
 
             glyph_brush.queue(section);
 
-            glyph_brush.draw_queued(
-                &device,
-                &mut encoder,
-                &temp_window_frame_view,
-                window_extent.width,
-                window_extent.height,
-            ).unwrap();
+            glyph_brush
+                .draw_queued(
+                    &device,
+                    &mut encoder,
+                    &temp_window_frame_view,
+                    window_extent.width,
+                    window_extent.height,
+                )
+                .unwrap();
         }
 
         blitter.blit(

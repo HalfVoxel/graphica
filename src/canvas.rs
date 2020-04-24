@@ -36,12 +36,7 @@ impl CanvasView {
     pub fn canvas_to_screen_rect(&self, r: euclid::Rect<f32, CanvasSpace>) -> euclid::Rect<f32, ScreenSpace> {
         let mn = self.canvas_to_screen_point(r.min());
         let mx = self.canvas_to_screen_point(r.max());
-        rect(
-            mn.x,
-            mn.y,
-            mx.x - mn.x,
-            mx.y - mn.y,
-        )
+        rect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y)
     }
 
     pub fn screen_to_normalized(&self, p: ScreenPoint) -> Point {
