@@ -5,6 +5,7 @@ use lyon::tessellation;
 use lyon::tessellation::geometry_builder::*;
 use lyon::tessellation::FillOptions;
 use lyon::tessellation::{StrokeOptions, StrokeTessellator};
+use wgpu_glyph::{Section, GlyphBrushBuilder};
 
 use euclid;
 use std::rc::Rc;
@@ -68,8 +69,8 @@ struct Primitive {
     width: f32,
 }
 
-const DEFAULT_WINDOW_WIDTH: u32 = 800;
-const DEFAULT_WINDOW_HEIGHT: u32 = 800;
+const DEFAULT_WINDOW_WIDTH: u32 = 2048;
+const DEFAULT_WINDOW_HEIGHT: u32 = 2048;
 
 /// Creates a texture that uses MSAA and fits a given swap chain
 fn create_multisampled_framebuffer(
@@ -780,7 +781,7 @@ pub fn main() {
     println!("Memory: {:?}", (t4.duration_since(t3).as_secs_f32() * 1000.0));
 
     let document = Document {
-        size: Some(size(800, 600)),
+        size: Some(size(2048, 2048)),
         paths: PathCollection { paths: vec![] },
         brushes: crate::brush_editor::BrushData::new(),
         textures: vec![],
@@ -987,6 +988,7 @@ pub fn main() {
 
     let event_loop = EventLoop::new();
     let window = Window::new(&event_loop).unwrap();
+    window.set_inner_size(PhysicalSize::new(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT));
     let size = window.inner_size();
 
     let mut swap_chain_desc = wgpu::SwapChainDescriptor {
@@ -1005,6 +1007,31 @@ pub fn main() {
 
     let mut depth_texture_view = None;
     let mut depth_texture_view_document = None;
+
+    {
+        let document_extent = wgpu::Extent3d {
+            width: editor.document.size.unwrap().width,
+            height: editor.document.size.unwrap().height,
+            depth: 1,
+        };
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Framebuffer depth"),
+            size: document_extent,
+            mip_level_count: 1,
+            sample_count: sample_count,
+            array_layer_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+        });
+
+        depth_texture_view_document = Some(depth_texture.create_default_view());
+        multisampled_render_target_document = if sample_count > 1 {
+            Some(create_multisampled_framebuffer(&device, &document_extent, sample_count))
+        } else {
+            None
+        };
+    }
 
     let mut frame_count: f32 = 0.0;
     let mut last_time = Instant::now();
@@ -1090,6 +1117,12 @@ pub fn main() {
 
     let mipmapper = crate::mipmap::Mipmapper::new(&device);
 
+    let font: &[u8] = include_bytes!("../fonts/Bitter-Regular.ttf");
+    let mut glyph_brush = GlyphBrushBuilder::using_font_bytes(font)
+        .expect("Load font")
+        .build(&device, wgpu::TextureFormat::Bgra8Unorm);
+
+
     event_loop.run(move |event, _, control_flow| {
         let scene = &mut editor.scene;
         let new_time = Instant::now();
@@ -1139,6 +1172,12 @@ pub fn main() {
             depth: 1,
         };
 
+        if scene.size_changed {
+            let physical = scene.view.resolution;
+            swap_chain_desc.width = physical.width;
+            swap_chain_desc.height = physical.height;
+        }
+
         let window_extent = wgpu::Extent3d {
             width: swap_chain_desc.width,
             height: swap_chain_desc.height,
@@ -1146,12 +1185,9 @@ pub fn main() {
         };
 
         if scene.size_changed {
+            dbg!("Rebuilding swap chain");
             scene.size_changed = false;
-            let physical = scene.view.resolution;
-            swap_chain_desc.width = physical.width;
-            swap_chain_desc.height = physical.height;
             swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
-
             let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Framebuffer depth"),
                 size: window_extent,
@@ -1165,27 +1201,8 @@ pub fn main() {
 
             depth_texture_view = Some(depth_texture.create_default_view());
 
-            let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Framebuffer depth"),
-                size: document_extent,
-                mip_level_count: 1,
-                sample_count: sample_count,
-                array_layer_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Depth32Float,
-                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-            });
-
-            depth_texture_view_document = Some(depth_texture.create_default_view());
-
             multisampled_render_target = if sample_count > 1 {
                 Some(create_multisampled_framebuffer(&device, &window_extent, sample_count))
-            } else {
-                None
-            };
-
-            multisampled_render_target_document = if sample_count > 1 {
-                Some(create_multisampled_framebuffer(&device, &document_extent, sample_count))
             } else {
                 None
             };
@@ -1369,6 +1386,22 @@ pub fn main() {
                 .render(&mut hl_encoder, &scene.view);
             
             // blur.render(&mut hl_encoder);
+
+            let section = Section {
+                text: "Hello wgpu_glyphåäöЎaњ",
+                scale: wgpu_glyph::Scale::uniform(36.0),
+                ..Section::default() // color, position, etc
+            };
+
+            glyph_brush.queue(section);
+
+            glyph_brush.draw_queued(
+                &device,
+                &mut encoder,
+                &temp_window_frame_view,
+                window_extent.width,
+                window_extent.height,
+            ).unwrap();
         }
 
         blitter.blit(
@@ -1377,7 +1410,7 @@ pub fn main() {
             &temp_window_frame_view,
             &frame.view,
             rect(0.0, 0.0, 1.0, 1.0),
-            rect(0.0, 1.0, 1.0, -1.0),
+            rect(0.0, 0.0, 1.0, 1.0),
             1,
         );
 
