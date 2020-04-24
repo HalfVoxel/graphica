@@ -7,11 +7,10 @@ use graphica::geometry_utilities::sqr_distance_bezier_point_simd;
 use lyon::math::*;
 use rand::prelude::*;
 use rand::{Rng, SeedableRng};
-use std::time::Instant;
 
 use graphica::geometry_utilities::ParamCurveDistanceEval;
 use kurbo::CubicBez;
-use kurbo::ParamCurve;
+
 use kurbo::ParamCurveArclen;
 use kurbo::Point as KurboPoint;
 
@@ -116,7 +115,7 @@ fn bezier_point_at_distance(bez: &CubicBez) {
 }
 
 fn bezier_arclen(bez: &CubicBez) {
-    for i in 0..10 {
+    for _i in 0..10 {
         let k = bez.arclen(0.1);
         black_box(k);
     }
@@ -142,7 +141,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     // c.bench_function("bench_iter_beziers", |b| b.iter(|| bench_iter_beziers(&data)));
 
     // c.bench_function("bench_parabola_approx", |b| b.iter(|| bench3()));
-    let seed: &[u8] = &[1, 2, 3, 4];
+    let _seed: &[u8] = &[1, 2, 3, 4];
     let mut rng: StdRng = SeedableRng::seed_from_u64(0);
     let mut points = vec![];
     for _ in 0..100 {
