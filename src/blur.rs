@@ -1,4 +1,4 @@
-use crate::main::Encoder;
+use crate::encoder::Encoder;
 use crate::shader::load_shader;
 use wgpu::{BindGroupLayout, ComputePipeline, Device, TextureComponentType, TextureFormat, TextureViewDimension};
 

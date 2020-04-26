@@ -3,6 +3,7 @@ mod blur;
 mod brush_editor;
 mod brush_manager;
 pub mod canvas;
+mod encoder;
 pub mod fps_limiter;
 pub mod geometry_utilities;
 pub mod gui;
