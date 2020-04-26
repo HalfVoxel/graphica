@@ -1,0 +1,64 @@
+#version 450
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+
+layout (set=0, binding=0, rgba8) uniform restrict image2D image;
+layout (set=0, binding=1, rgba8) uniform restrict image2D temp_image;
+layout (set=0, binding=2) uniform sampler s_brush;
+layout (set=0, binding=3) uniform texture2D t_brush;
+
+#define PRIM_BUFFER_LEN 64
+
+struct Primitive {
+    ivec2 origin_src;
+    ivec2 origin_dst;
+};
+
+layout(std140, binding = 4)
+buffer u_primitives { Primitive primitives[]; };
+
+layout(std140, binding = 5)
+uniform Settings {
+    int width_per_group;
+    int height_per_group;
+    int num_primitives;
+};
+
+void main() {
+    for (int i = 0; i < num_primitives; i++) {
+        ivec2 origin_src = primitives[i].origin_src;
+        origin_src += ivec2(gl_LocalInvocationID.xy);
+
+        ivec2 origin_dst = primitives[i].origin_dst;
+        origin_dst += ivec2(gl_LocalInvocationID.xy);
+
+        for (int dy = 0; dy < height_per_group; dy++) {
+            for (int dx = 0; dx < width_per_group; dx++) {
+                ivec2 offset = ivec2(dx, dy) * ivec2(32, 32);
+                vec4 a = imageLoad(image, origin_src + offset);
+                vec4 b = imageLoad(image, origin_dst + offset);
+                vec2 uv = (vec2(gl_LocalInvocationID.xy) + offset) / vec2(32 * width_per_group, 32 * height_per_group);
+                vec4 c = texture(sampler2D(t_brush, s_brush), uv);
+                float ra = mix(b.a, a.a, c.a);
+                a.a *= c.a;
+                // A over B
+                // TODO: Might need more numerically stable algorithm
+                vec4 r = (a * a.a + b * b.a * (1 - a.a)) / (a.a + b.a * (1 - a.a));
+                imageStore(temp_image, ivec2(gl_LocalInvocationID.xy) + offset, r);
+            }
+        }
+
+        barrier();
+
+        for (int dy = 0; dy < height_per_group; dy++) {
+            for (int dx = 0; dx < width_per_group; dx++) {
+                ivec2 offset = ivec2(dx, dy) * ivec2(32, 32);
+                vec4 a = imageLoad(temp_image, ivec2(gl_LocalInvocationID.xy) + offset);
+                imageStore(image, origin_dst + offset, a);
+            }
+        }
+
+        barrier();
+        groupMemoryBarrier();
+    }
+}

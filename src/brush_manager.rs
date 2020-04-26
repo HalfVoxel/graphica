@@ -1,7 +1,7 @@
 use crate::geometry_utilities::types::*;
 use crate::shader::load_shader;
 use lyon::math::*;
-use wgpu::{Device, RenderPipeline};
+use wgpu::{ComputePipeline, Device, RenderPipeline, TextureComponentType, TextureFormat, TextureViewDimension};
 
 type GPURGBA = [u8; 4];
 
@@ -28,9 +28,15 @@ pub struct ShaderBundle {
     pub bind_group_layout: wgpu::BindGroupLayout,
 }
 
+pub struct ShaderBundleCompute {
+    pub pipeline: ComputePipeline,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+}
+
 pub struct BrushManager {
     pub splat: ShaderBundle,
     pub splat_with_readback: ShaderBundle,
+    pub splat_with_readback_batched: ShaderBundleCompute,
 }
 
 impl BrushManager {
@@ -249,6 +255,74 @@ impl BrushManager {
             alpha_to_coverage_enabled: false,
         };
 
+        let bind_group_layout_clone_brush_batched = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            bindings: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        dimension: TextureViewDimension::D2,
+                        component_type: TextureComponentType::Float,
+                        format: TextureFormat::Bgra8Unorm,
+                        readonly: false,
+                    },
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        dimension: TextureViewDimension::D2,
+                        component_type: TextureComponentType::Float,
+                        format: TextureFormat::Bgra8Unorm,
+                        readonly: false,
+                    },
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::Sampler { comparison: false },
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::SampledTexture {
+                        dimension: TextureViewDimension::D2,
+                        component_type: TextureComponentType::Float,
+                        multisampled: false,
+                    },
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::StorageBuffer {
+                        dynamic: false,
+                        readonly: true,
+                    },
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+                },
+            ],
+            label: None,
+        });
+
+        let pipeline_layout_clone_brush_batched = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &[&bind_group_layout_clone_brush_batched],
+        });
+
+        let clone_brush_batched_cs_module =
+            load_shader(&device, include_bytes!("./../shaders/clone_brush_batch.comp.spv"));
+
+        let render_pipeline_descriptor_clone_brush_batched = wgpu::ComputePipelineDescriptor {
+            layout: &pipeline_layout_clone_brush_batched,
+            compute_stage: wgpu::ProgrammableStageDescriptor {
+                module: &clone_brush_batched_cs_module,
+                entry_point: "main",
+            },
+        };
+
         BrushManager {
             splat: ShaderBundle {
                 bind_group_layout: bind_group_layout_brush,
@@ -257,6 +331,10 @@ impl BrushManager {
             splat_with_readback: ShaderBundle {
                 bind_group_layout: bind_group_layout_clone_brush,
                 pipeline: device.create_render_pipeline(&render_pipeline_descriptor_clone_brush),
+            },
+            splat_with_readback_batched: ShaderBundleCompute {
+                bind_group_layout: bind_group_layout_clone_brush_batched,
+                pipeline: device.create_compute_pipeline(&render_pipeline_descriptor_clone_brush_batched),
             },
         }
     }

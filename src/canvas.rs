@@ -1,4 +1,6 @@
 use crate::geometry_utilities::types::*;
+use cgmath::prelude::*;
+use cgmath::Matrix4;
 use lyon::math::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -9,6 +11,34 @@ pub struct CanvasView {
     pub zoom: f32,
     pub scroll: CanvasVector,
     pub resolution: PhysicalSize<u32>,
+}
+
+#[test]
+fn test_canvas_to_view_matrix() {
+    let v = CanvasView {
+        zoom: 1.0,
+        scroll: vector(0.0, 0.0),
+        resolution: PhysicalSize::new(100, 200),
+    };
+    let m = v.canvas_to_view_matrix();
+    // Canvas (0,0) should map to NDC coordinates (-1,1)
+    // See https://gpuweb.github.io/gpuweb/#coordinate-systems
+    assert_eq!(
+        m * cgmath::Vector4::new(0.0, 0.0, 0.0, 1.0),
+        cgmath::Vector4::new(-1.0, 1.0, 0.0, 1.0)
+    );
+    assert_eq!(
+        m * cgmath::Vector4::new(100.0, 0.0, 0.0, 1.0),
+        cgmath::Vector4::new(1.0, 1.0, 0.0, 1.0)
+    );
+    assert_eq!(
+        m * cgmath::Vector4::new(100.0, 200.0, 0.0, 1.0),
+        cgmath::Vector4::new(1.0, -1.0, 0.0, 1.0)
+    );
+    assert_eq!(
+        m * cgmath::Vector4::new(0.0, 200.0, 0.0, 1.0),
+        cgmath::Vector4::new(-1.0, -1.0, 0.0, 1.0)
+    );
 }
 
 impl CanvasView {
@@ -33,6 +63,19 @@ impl CanvasView {
         )
     }
 
+    /// Maps canvas positions to view space.
+    /// View space is a box which goes from -1 to 1 on all axes.
+    /// Also known as NDC (normalized device coordinates).
+    /// See https://gpuweb.github.io/gpuweb/#coordinate-systems
+    pub fn canvas_to_view_matrix(&self) -> Matrix4<f32> {
+        let scale = self.canvas_to_screen_scale().get();
+        let sx = 2.0 * scale / self.resolution.width as f32;
+        let sy = 2.0 * scale / self.resolution.height as f32;
+        Matrix4::from_translation([-1.0, 1.0, 0.0].into())
+            * Matrix4::from_nonuniform_scale(sx, -sy, 1.0)
+            * Matrix4::from_translation([-self.scroll.x, -self.scroll.y, 0.0].into())
+    }
+
     pub fn canvas_to_screen_rect(&self, r: euclid::Rect<f32, CanvasSpace>) -> euclid::Rect<f32, ScreenSpace> {
         let mn = self.canvas_to_screen_point(r.min());
         let mx = self.canvas_to_screen_point(r.max());
@@ -55,9 +98,8 @@ impl CanvasView {
     }
 
     pub fn screen_to_canvas_point(&self, point: ScreenPoint) -> CanvasPoint {
-        (point - vector(self.resolution.width as f32, self.resolution.height as f32) * 0.5)
-            * self.screen_to_canvas_scale()
-            + self.scroll
+        // (point - vector(self.resolution.width as f32, self.resolution.height as f32) * 0.5)
+        point * self.screen_to_canvas_scale() + self.scroll
     }
 
     pub fn screen_to_canvas_vector(&self, vector: ScreenVector) -> CanvasVector {
@@ -66,6 +108,6 @@ impl CanvasView {
 
     pub fn canvas_to_screen_point(&self, point: CanvasPoint) -> ScreenPoint {
         (point - self.scroll) * self.canvas_to_screen_scale()
-            + vector(self.resolution.width as f32, self.resolution.height as f32) * 0.5
+        // + vector(self.resolution.width as f32, self.resolution.height as f32) * 0.5
     }
 }

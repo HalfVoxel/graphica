@@ -41,6 +41,8 @@ use async_std::task;
 #[cfg(feature = "profile")]
 use cpuprofiler::PROFILER;
 
+use cgmath::prelude::*;
+use cgmath::{Matrix4, Vector3};
 use kurbo::CubicBez;
 use kurbo::Point as KurboPoint;
 use palette::Pixel;
@@ -66,9 +68,8 @@ struct GpuVertex {
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct Primitive {
+    mvp_matrix: Matrix4<f32>,
     color: [f32; 4],
-    translate: [f32; 2],
-    z_index: i32,
     width: f32,
 }
 
@@ -109,17 +110,16 @@ struct DocumentRenderer {
     bind_group: BindGroup,
     index_buffer_length: usize,
     render_pipeline: Rc<RenderPipeline>,
-    brush_renderer: BrushRendererWithReadback,
+    brush_renderer: BrushRendererWithReadbackBatched,
 }
 
-struct BrushRenderer {
+pub struct BrushRenderer {
     vbo: Buffer,
     ibo: Buffer,
     // ubo: Buffer,
     index_buffer_length: usize,
     bind_group: BindGroup,
     brush_manager: Rc<BrushManager>,
-    brush_render_type: BrushRenderType,
 }
 
 fn sample_points_along_curve(path: &PathData, spacing: f32) -> Vec<(usize, CanvasPoint)> {
@@ -167,12 +167,7 @@ struct BrushUniforms {
     _dummy: i32,
 }
 
-enum BrushRenderType {
-    Forward,
-    ReadbackForEachSplat,
-}
-
-struct BrushRendererWithReadback {
+pub struct BrushRendererWithReadback {
     ibo: Buffer,
     vbo: Buffer,
     brush_manager: Rc<BrushManager>,
@@ -184,7 +179,7 @@ struct BrushRendererWithReadback {
 }
 
 impl BrushRendererWithReadback {
-    fn new(
+    pub fn new(
         brush_data: &BrushData,
         view: &CanvasView,
         device: &Device,
@@ -291,7 +286,11 @@ impl BrushRendererWithReadback {
         }
     }
 
-    fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
+    pub fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
+        if self.points.len() <= 1 {
+            return;
+        }
+
         let temp_to_frame_blitter =
             encoder
                 .blitter
@@ -352,7 +351,7 @@ impl BrushRendererWithReadback {
                 let r = rect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y);
                 // let uv = vertices[(i*4)..(i+1)*4].iter().map(|x| x.uv_background_target).collect::<ArrayVec<[Point;4]>>();
                 // let r = Rect::from_points(uv);
-                temp_to_frame_blitter.blit(&encoder.device, encoder.encoder, rect(0.0, 1.0, 1.0, -1.0), r, 1);
+                temp_to_frame_blitter.blit(&encoder.device, encoder.encoder, rect(0.0, 0.0, 1.0, 1.0), r, 1);
             }
         }
 
@@ -367,8 +366,176 @@ impl BrushRendererWithReadback {
         );
     }
 }
+
+pub struct BrushRendererWithReadbackBatched {
+    ubo: Buffer,
+    ubo_size: u64,
+    brush_manager: Rc<BrushManager>,
+    size_in_pixels: u32,
+    temp_texture_view: wgpu::TextureView,
+    points: Vec<(usize, CanvasPoint)>,
+    brush_texture: Arc<Texture>,
+    sampler: wgpu::Sampler,
+}
+
+#[repr(C, align(16))]
+#[derive(Copy, Clone)]
+struct ReadbackPrimitive {
+    origin_src: (i32, i32),
+    origin_dst: (i32, i32),
+}
+
+#[repr(C, align(16))]
+struct ReadbackUniforms {
+    width_per_group: i32,
+    height_per_group: i32,
+    num_primitives: i32,
+}
+
+impl BrushRendererWithReadbackBatched {
+    pub fn new(
+        brush_data: &BrushData,
+        _view: &CanvasView,
+        device: &Device,
+        _encoder: &mut CommandEncoder,
+        _scene_ubo: &Buffer,
+        _scene_ubo_size: u64,
+        brush_manager: &Rc<BrushManager>,
+        texture: &Arc<Texture>,
+    ) -> BrushRendererWithReadbackBatched {
+        let points = sample_points_along_curve(&brush_data.path, 1.41);
+
+        let size_in_pixels = 32;
+        let offset = -vector(size_in_pixels as f32 * 0.5, size_in_pixels as f32 * 0.5);
+        let primitives: Vec<ReadbackPrimitive> = points
+            .windows(2)
+            .map(|window| {
+                let clone_pos = window[0].1 + offset;
+                let pos = window[1].1 + offset;
+
+                ReadbackPrimitive {
+                    origin_src: (clone_pos.x.round() as i32, clone_pos.y.round() as i32),
+                    origin_dst: (pos.x.round() as i32, pos.y.round() as i32),
+                }
+            })
+            .collect();
+
+        let (ubo, ubo_size) = create_buffer_with_data(&device, &primitives, wgpu::BufferUsage::STORAGE_READ);
+
+        const LOCAL_SIZE: u32 = 32;
+        let width_per_group = (size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
+
+        let texture_extent = wgpu::Extent3d {
+            width: width_per_group * 32,
+            height: width_per_group * 32,
+            depth: 1,
+        };
+
+        let temp_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Temp texture"),
+            size: texture_extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            array_layer_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage: wgpu::TextureUsage::STORAGE,
+        });
+
+        let temp_texture_view = temp_texture.create_default_view();
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            lod_min_clamp: -100.0,
+            lod_max_clamp: 100.0,
+            compare: wgpu::CompareFunction::Always,
+        });
+
+        // let width_in_pixels = (2.0 * (CanvasLength::new(size) * view.canvas_to_screen_scale()).get()).round() as u32;
+
+        Self {
+            brush_manager: brush_manager.clone(),
+            ubo,
+            ubo_size,
+            size_in_pixels,
+            temp_texture_view,
+            sampler,
+            points,
+            brush_texture: texture.clone(),
+        }
+    }
+
+    pub fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
+        if self.ubo_size == 0 {
+            return;
+        }
+
+        const LOCAL_SIZE: u32 = 32;
+
+        let width_per_group = (self.size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
+        let height_per_group = (self.size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
+
+        let (settings_ubo, settings_ubo_size) = create_buffer_with_data(
+            &encoder.device,
+            &[ReadbackUniforms {
+                width_per_group: width_per_group as i32,
+                height_per_group: height_per_group as i32,
+                num_primitives: self.points.len() as i32 - 1,
+            }],
+            wgpu::BufferUsage::UNIFORM,
+        );
+
+        let bind_group = encoder.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.brush_manager.splat_with_readback_batched.bind_group_layout,
+            label: Some("Clone brush Bind Group"),
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&encoder.target_texture),
+                },
+                wgpu::Binding {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.temp_texture_view),
+                },
+                wgpu::Binding {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::Binding {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.brush_texture.view),
+                },
+                wgpu::Binding {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &self.ubo,
+                        range: 0..self.ubo_size,
+                    },
+                },
+                wgpu::Binding {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &settings_ubo,
+                        range: 0..settings_ubo_size,
+                    },
+                },
+            ],
+        });
+
+        let mut cpass = encoder.encoder.begin_compute_pass();
+        cpass.set_pipeline(&self.brush_manager.splat_with_readback_batched.pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.dispatch(1, 1, 1);
+    }
+}
+
 impl BrushRenderer {
-    fn new(
+    pub fn new(
         brush_data: &BrushData,
         _view: &CanvasView,
         device: &Device,
@@ -481,11 +648,10 @@ impl BrushRenderer {
             index_buffer_length: indices.len(),
             bind_group,
             brush_manager: brush_manager.clone(),
-            brush_render_type: BrushRenderType::ReadbackForEachSplat,
         }
     }
 
-    fn update(&mut self, _view: &CanvasView, _device: &Device, _encoder: &mut CommandEncoder) {
+    pub fn update(&mut self, _view: &CanvasView, _device: &Device, _encoder: &mut CommandEncoder) {
         // let scene_ubo_transfer = device
         // .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
         // .fill_from_slice(&[Globals {
@@ -498,7 +664,11 @@ impl BrushRenderer {
         // encoder.copy_buffer_to_buffer(&scene_ubo_transfer, 0, &self.scene_ubo, 0, scene_ubo_size);
     }
 
-    fn render(&self, encoder: &mut Encoder, _view: &CanvasView) {
+    pub fn render(&self, encoder: &mut Encoder, _view: &CanvasView) {
+        if self.index_buffer_length == 0 {
+            return;
+        }
+
         let mut pass = encoder.begin_msaa_render_pass(None);
         pass.set_pipeline(&self.brush_manager.splat.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
@@ -648,13 +818,14 @@ impl DocumentRenderer {
             "Document UBO",
         );
 
+        let view_matrix = view.canvas_to_view_matrix();
+
         let (primitive_ubo, primitive_ubo_size) = create_buffer_via_transfer(
             device,
             encoder,
             &[Primitive {
                 color: [1.0, 1.0, 1.0, 1.0],
-                translate: [0.0, 0.0],
-                z_index: 100,
+                mvp_matrix: view_matrix * Matrix4::from_translation([0.0, 0.0, 0.1].into()),
                 width: 0.0,
             }],
             wgpu::BufferUsage::UNIFORM,
@@ -682,7 +853,7 @@ impl DocumentRenderer {
             ],
         });
 
-        let brush_renderer = BrushRendererWithReadback::new(
+        let brush_renderer = BrushRendererWithReadbackBatched::new(
             &document.brushes,
             view,
             device,
@@ -1068,8 +1239,7 @@ pub fn main() {
 
     let bg_ubo_data = &[Primitive {
         color: [1.0, 1.0, 1.0, 1.0],
-        translate: [0.0, 0.0],
-        z_index: 100,
+        mvp_matrix: Matrix4::from_translation([0.0, 0.0, 100.0].into()),
         width: 0.0,
     }];
     let (bg_ubo, bg_ubo_size) = create_buffer_via_transfer(
@@ -1126,6 +1296,27 @@ pub fn main() {
         .expect("Load font")
         .build(&device, wgpu::TextureFormat::Bgra8Unorm);
 
+    let document_extent = wgpu::Extent3d {
+        width: editor.document.size.unwrap().width,
+        height: editor.document.size.unwrap().height,
+        depth: 1,
+    };
+
+    // Render into this texture
+    let temp_document_frame = Texture::new(
+        &device,
+        wgpu::TextureDescriptor {
+            label: Some("Temp frame texture"),
+            size: document_extent,
+            mip_level_count: crate::mipmap::max_mipmaps(document_extent),
+            sample_count: 1,
+            array_layer_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::STORAGE,
+        },
+    );
+
     event_loop.run(move |event, _, control_flow| {
         let scene = &mut editor.scene;
         let new_time = Instant::now();
@@ -1171,12 +1362,6 @@ pub fn main() {
 
         // println!("Path editor = {:?}", t0.elapsed());
 
-        let document_extent = wgpu::Extent3d {
-            width: editor.document.size.unwrap().width,
-            height: editor.document.size.unwrap().height,
-            depth: 1,
-        };
-
         if scene.size_changed {
             let physical = scene.view.resolution;
             swap_chain_desc.width = physical.width;
@@ -1190,7 +1375,7 @@ pub fn main() {
         };
 
         if scene.size_changed {
-            dbg!("Rebuilding swap chain");
+            println!("Rebuilding swap chain");
             scene.size_changed = false;
             swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
             let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -1254,7 +1439,7 @@ pub fn main() {
 
         let ui_view = CanvasView {
             zoom: 1.0,
-            scroll: vector(scene.view.resolution.width as f32, scene.view.resolution.height as f32) * 0.5,
+            scroll: vector(0.0, 0.0),
             resolution: scene.view.resolution,
         };
         let hash = editor.ui_document.hash() ^ ui_view.hash();
@@ -1282,34 +1467,17 @@ pub fn main() {
             .unwrap()
             .update(&ui_view, &device, &mut encoder);
 
-        // Render into this texture
-        let temp_document_frame = Texture::new(
-            &device,
-            wgpu::TextureDescriptor {
-                label: Some("Temp frame texture"),
-                size: document_extent,
-                mip_level_count: crate::mipmap::max_mipmaps(document_extent),
-                sample_count: 1,
-                array_layer_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Bgra8Unorm,
-                usage: wgpu::TextureUsage::SAMPLED
-                    | wgpu::TextureUsage::OUTPUT_ATTACHMENT
-                    | wgpu::TextureUsage::STORAGE,
-            },
-        );
-
-        let temp_window_frame = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Temp window texture"),
-            size: window_extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            array_layer_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8Unorm,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::STORAGE,
-        });
-        let temp_window_frame_view = temp_window_frame.create_default_view();
+        // let temp_window_frame = device.create_texture(&wgpu::TextureDescriptor {
+        //     label: Some("Temp window texture"),
+        //     size: window_extent,
+        //     mip_level_count: 1,
+        //     sample_count: 1,
+        //     array_layer_count: 1,
+        //     dimension: wgpu::TextureDimension::D2,
+        //     format: wgpu::TextureFormat::Bgra8Unorm,
+        //     usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::STORAGE,
+        // });
+        // let temp_window_frame_view = temp_window_frame.create_default_view();
 
         {
             // A resolve target is only supported if the attachment actually uses anti-aliasing
@@ -1365,7 +1533,7 @@ pub fn main() {
                 device: &device,
                 encoder: &mut encoder,
                 multisampled_render_target: multisampled_render_target.as_ref(),
-                target_texture: &temp_window_frame_view,
+                target_texture: &frame.view,
                 depth_texture_view: depth_texture_view.as_ref().unwrap(),
                 blitter: &blitter,
                 resolution: document_extent,
@@ -1385,13 +1553,7 @@ pub fn main() {
                     .view
                     .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
             let canvas_in_screen_uv_space =
-                canvas_in_screen_space.scale(1.0 / doc_size.width as f32, 1.0 / doc_size.height as f32);
-            let canvas_in_screen_uv_space = rect(
-                canvas_in_screen_uv_space.min_x(),
-                1.0 - canvas_in_screen_uv_space.min_y(),
-                canvas_in_screen_uv_space.width(),
-                -canvas_in_screen_uv_space.height(),
-            );
+                canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
 
             blitter.blit(
                 &device,
@@ -1399,7 +1561,7 @@ pub fn main() {
                 &temp_document_frame.view,
                 multisampled_render_target.as_ref().unwrap(),
                 rect(0.0, 0.0, 1.0, 1.0),
-                canvas_in_screen_uv_space, // rect(0.0, 1.0, 1.0, -1.0),
+                canvas_in_screen_uv_space.to_untyped(),
                 sample_count,
             );
 
@@ -1411,7 +1573,7 @@ pub fn main() {
             // blur.render(&mut hl_encoder);
 
             let section = Section {
-                text: "Hello wgpu_glyphåäöЎaњ",
+                text: "Hello wgpu_gfilyphåäöЎaњ",
                 scale: wgpu_glyph::Scale::uniform(36.0),
                 ..Section::default() // color, position, etc
             };
@@ -1422,22 +1584,22 @@ pub fn main() {
                 .draw_queued(
                     &device,
                     &mut encoder,
-                    &temp_window_frame_view,
+                    &frame.view,
                     window_extent.width,
                     window_extent.height,
                 )
                 .unwrap();
         }
 
-        blitter.blit(
-            &device,
-            &mut encoder,
-            &temp_window_frame_view,
-            &frame.view,
-            rect(0.0, 0.0, 1.0, 1.0),
-            rect(0.0, 0.0, 1.0, 1.0),
-            1,
-        );
+        // blitter.blit(
+        //     &device,
+        //     &mut encoder,
+        //     &temp_window_frame_view,
+        //     &frame.view,
+        //     rect(0.0, 0.0, 1.0, 1.0),
+        //     rect(0.0, 0.0, 1.0, 1.0),
+        //     1,
+        // );
 
         queue.submit(&[encoder.finish()]);
         // dbg!(t3.elapsed());
