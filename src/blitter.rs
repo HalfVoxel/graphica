@@ -2,8 +2,9 @@ use crate::shader::load_shader;
 use crate::wgpu_utils::*;
 use lyon::math::*;
 use wgpu::{
-    AddressMode, BindGroup, BindGroupLayout, BlendFactor, Buffer, CommandEncoder, Device, FilterMode,
-    PipelineLayoutDescriptor, RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerDescriptor, TextureView,
+    AddressMode, BindGroup, BindGroupLayout, BlendFactor, Buffer, CommandEncoder, ComputePipeline,
+    ComputePipelineDescriptor, Device, FilterMode, PipelineLayoutDescriptor, RenderPipeline, RenderPipelineDescriptor,
+    Sampler, SamplerDescriptor, TextureView,
 };
 
 #[repr(C)]
@@ -22,8 +23,11 @@ pub struct BlitterWithTextures<'a, 'b> {
 pub struct Blitter {
     render_pipelines: Vec<RenderPipeline>,
     bind_group_layout: BindGroupLayout,
+    bind_group_layout_compute: BindGroupLayout,
     sampler: Sampler,
     ibo: Buffer,
+    render_pipeline_blend_over: ComputePipeline,
+    render_pipeline_rgb_to_srgb: ComputePipeline,
 }
 
 impl Blitter {
@@ -88,7 +92,7 @@ impl Blitter {
                     }),
                     primitive_topology: wgpu::PrimitiveTopology::TriangleList,
                     color_states: &[wgpu::ColorStateDescriptor {
-                        format: wgpu::TextureFormat::Bgra8Unorm,
+                        format: crate::config::TEXTURE_FORMAT,
                         color_blend: wgpu::BlendDescriptor {
                             src_factor: BlendFactor::One,
                             dst_factor: BlendFactor::Zero,
@@ -130,6 +134,55 @@ impl Blitter {
             })
             .collect::<Vec<RenderPipeline>>();
 
+        let blend_over_module = load_shader(&device, include_bytes!("./../shaders/blend_over.comp.spv"));
+
+        let bind_group_layout_compute = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Bind group layout blit"),
+            bindings: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
+                        readonly: true,
+                        format: crate::config::TEXTURE_FORMAT,
+                    },
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        dimension: wgpu::TextureViewDimension::D2,
+                        component_type: wgpu::TextureComponentType::Float,
+                        readonly: false,
+                        format: crate::config::TEXTURE_FORMAT,
+                    },
+                },
+            ],
+        });
+        let pipeline_layout_compute = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            bind_group_layouts: &[&bind_group_layout_compute],
+        });
+
+        let render_pipeline_blend_over = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            layout: &pipeline_layout_compute,
+            compute_stage: wgpu::ProgrammableStageDescriptor {
+                module: &blend_over_module,
+                entry_point: "main",
+            },
+        });
+
+        let blend_rgb_to_srgb = load_shader(&device, include_bytes!("./../shaders/rgb_to_srgb.comp.spv"));
+
+        let render_pipeline_rgb_to_srgb = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            layout: &pipeline_layout_compute,
+            compute_stage: wgpu::ProgrammableStageDescriptor {
+                module: &blend_rgb_to_srgb,
+                entry_point: "main",
+            },
+        });
+
         let indices = &[0, 1, 2, 3, 2, 0];
         let (ibo, _ibo_size) =
             create_buffer_via_transfer(device, encoder, indices, wgpu::BufferUsage::INDEX, "Blitter IBO");
@@ -137,6 +190,9 @@ impl Blitter {
         Blitter {
             render_pipelines,
             bind_group_layout,
+            bind_group_layout_compute,
+            render_pipeline_blend_over,
+            render_pipeline_rgb_to_srgb,
             sampler,
             ibo,
         }
@@ -186,6 +242,74 @@ impl Blitter {
             source_uv_rect,
             target_uv_rect,
             sample_count,
+        );
+    }
+
+    pub fn blend(
+        &self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        source_texture: &wgpu::TextureView,
+        target_texture: &wgpu::TextureView,
+        size: (u32, u32),
+    ) {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.bind_group_layout_compute,
+            label: Some("Blit bind group"),
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(source_texture),
+                },
+                wgpu::Binding {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(target_texture),
+                },
+            ],
+        });
+
+        let mut pass = encoder.begin_compute_pass();
+        const LOCAL_SIZE: u32 = 8;
+        pass.set_pipeline(&self.render_pipeline_blend_over);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch(
+            (size.0 + LOCAL_SIZE - 1) / LOCAL_SIZE,
+            (size.1 + LOCAL_SIZE - 1) / LOCAL_SIZE,
+            1,
+        );
+    }
+
+    pub fn rgb_to_srgb(
+        &self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        source_texture: &wgpu::TextureView,
+        target_texture: &wgpu::TextureView,
+        size: (u32, u32),
+    ) {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.bind_group_layout_compute,
+            label: Some("Blit bind group"),
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(source_texture),
+                },
+                wgpu::Binding {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(target_texture),
+                },
+            ],
+        });
+
+        let mut pass = encoder.begin_compute_pass();
+        const LOCAL_SIZE: u32 = 8;
+        pass.set_pipeline(&self.render_pipeline_rgb_to_srgb);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch(
+            (size.0 + LOCAL_SIZE - 1) / LOCAL_SIZE,
+            (size.1 + LOCAL_SIZE - 1) / LOCAL_SIZE,
+            1,
         );
     }
 }

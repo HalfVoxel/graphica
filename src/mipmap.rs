@@ -30,7 +30,7 @@ impl Mipmapper {
                     ty: wgpu::BindingType::StorageTexture {
                         dimension: TextureViewDimension::D2,
                         component_type: TextureComponentType::Float,
-                        format: TextureFormat::Bgra8Unorm,
+                        format: crate::config::TEXTURE_FORMAT,
                         readonly: true,
                     },
                 },
@@ -40,7 +40,7 @@ impl Mipmapper {
                     ty: wgpu::BindingType::StorageTexture {
                         dimension: TextureViewDimension::D2,
                         component_type: TextureComponentType::Float,
-                        format: TextureFormat::Bgra8Unorm,
+                        format: crate::config::TEXTURE_FORMAT,
                         readonly: false,
                     },
                 },
@@ -73,15 +73,7 @@ impl Mipmapper {
         // assert!((texture.descriptor.size.width & (texture.descriptor.size.width - 1)) == 0, "Texture width must be a power of two. Found {}", texture.descriptor.size.width);
         // assert!((texture.descriptor.size.height & (texture.descriptor.size.height - 1)) == 0, "Texture height must be a power of two. Found {}", texture.descriptor.size.height);
 
-        let mut prev_level = texture.buffer.create_view(&TextureViewDescriptor {
-            format: texture.descriptor.format,
-            dimension: wgpu::TextureViewDimension::D2,
-            aspect: wgpu::TextureAspect::All,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            array_layer_count: 1,
-        });
+        let mut prev_level = texture.get_mip_level_view(0);
         let mut width = texture.descriptor.size.width;
         let mut height = texture.descriptor.size.height;
 
@@ -90,15 +82,7 @@ impl Mipmapper {
         cpass.set_pipeline(&self.pipeline);
 
         for mip_level in 1..texture.descriptor.mip_level_count {
-            let current_level = texture.buffer.create_view(&TextureViewDescriptor {
-                format: texture.descriptor.format,
-                dimension: wgpu::TextureViewDimension::D2,
-                aspect: wgpu::TextureAspect::All,
-                base_mip_level: mip_level,
-                level_count: 1,
-                base_array_layer: 0,
-                array_layer_count: 1,
-            });
+            let current_level = texture.get_mip_level_view(mip_level);
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout: &self.bind_group_layout,

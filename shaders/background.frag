@@ -1,4 +1,5 @@
 #version 450
+#include "color_spaces.glsl"
 
 layout(location = 0) in vec2 v_position;
 layout(location = 1) flat in vec2 v_resolution;
@@ -6,7 +7,6 @@ layout(location = 2) flat in vec2 v_scroll_offset;
 layout(location = 3) flat in float v_zoom;
 
 layout(location = 0) out vec4 out_color;
-
 
 void main() {
     vec2 px_position = v_position * v_resolution * 0.5;
@@ -36,4 +36,6 @@ void main() {
         mod(pos.y, 100.0 / grid_scale * v_zoom) <= 2.0) {
         out_color *= 1.2;
     }
+
+    // out_color = vec4(srgb_to_rgb(out_color.rgb), out_color.a);
 }

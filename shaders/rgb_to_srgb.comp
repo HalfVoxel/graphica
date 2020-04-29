@@ -1,0 +1,52 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout (set=0, binding=0, rgba8) uniform restrict image2D src;
+layout (set=0, binding=1, rgba8) uniform restrict image2D dst;
+
+const float SRGB_GAMMA = 1.0 / 2.2;
+const float SRGB_INVERSE_GAMMA = 2.2;
+const float SRGB_ALPHA = 0.055;
+
+// Converts a single linear channel to srgb
+float linear_to_srgb(float channel) {
+    if(channel <= 0.0031308)
+        return 12.92 * channel;
+    else
+        return (1.0 + SRGB_ALPHA) * pow(channel, 1.0/2.4) - SRGB_ALPHA;
+}
+
+// Converts a single srgb channel to rgb
+float srgb_to_linear(float channel) {
+    if (channel <= 0.04045)
+        return channel / 12.92;
+    else
+        return pow((channel + SRGB_ALPHA) / (1.0 + SRGB_ALPHA), 2.4);
+}
+
+// Converts a linear rgb color to a srgb color (exact, not approximated)
+vec4 rgb_to_srgb(vec4 rgb) {
+    return vec4(
+        linear_to_srgb(rgb.r),
+        linear_to_srgb(rgb.g),
+        linear_to_srgb(rgb.b),
+        rgb.a
+    );
+}
+
+// Converts a srgb color to a linear rgb color (exact, not approximated)
+vec4 srgb_to_rgb(vec4 srgb) {
+    return vec4(
+        srgb_to_linear(srgb.r),
+        srgb_to_linear(srgb.g),
+        srgb_to_linear(srgb.b),
+        srgb.a
+    );
+}
+
+void main() {
+    ivec2 px = ivec2(gl_WorkGroupID.xy*uvec2(8, 8) + gl_LocalInvocationID.xy);
+    vec4 result = imageLoad(src, px);
+    imageStore(dst, px, rgb_to_srgb(result));
+}

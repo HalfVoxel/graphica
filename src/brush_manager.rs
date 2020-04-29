@@ -99,28 +99,20 @@ impl BrushManager {
             }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[wgpu::ColorStateDescriptor {
-                format: wgpu::TextureFormat::Bgra8Unorm,
+                format: crate::config::TEXTURE_FORMAT,
                 color_blend: wgpu::BlendDescriptor {
                     src_factor: wgpu::BlendFactor::SrcAlpha,
                     dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
                     operation: wgpu::BlendOperation::Add,
                 },
                 alpha_blend: wgpu::BlendDescriptor {
-                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                    src_factor: wgpu::BlendFactor::One,
                     dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
                     operation: wgpu::BlendOperation::Add,
                 },
                 write_mask: wgpu::ColorWrite::ALL,
             }],
-            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Greater,
-                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
-                stencil_read_mask: 0,
-                stencil_write_mask: 0,
-            }),
+            depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint32,
                 vertex_buffers: &[wgpu::VertexBufferDescriptor {
@@ -145,7 +137,7 @@ impl BrushManager {
                     ],
                 }],
             },
-            sample_count: sample_count,
+            sample_count: 1,
             sample_mask: !0,
             alpha_to_coverage_enabled: false,
         };
@@ -202,7 +194,7 @@ impl BrushManager {
             }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[wgpu::ColorStateDescriptor {
-                format: wgpu::TextureFormat::Bgra8Unorm,
+                format: crate::config::TEXTURE_FORMAT,
                 color_blend: wgpu::BlendDescriptor {
                     src_factor: wgpu::BlendFactor::One,
                     dst_factor: wgpu::BlendFactor::Zero,
@@ -263,7 +255,7 @@ impl BrushManager {
                     ty: wgpu::BindingType::StorageTexture {
                         dimension: TextureViewDimension::D2,
                         component_type: TextureComponentType::Float,
-                        format: TextureFormat::Bgra8Unorm,
+                        format: crate::config::TEXTURE_FORMAT,
                         readonly: false,
                     },
                 },
@@ -273,7 +265,7 @@ impl BrushManager {
                     ty: wgpu::BindingType::StorageTexture {
                         dimension: TextureViewDimension::D2,
                         component_type: TextureComponentType::Float,
-                        format: TextureFormat::Bgra8Unorm,
+                        format: crate::config::TEXTURE_FORMAT,
                         readonly: false,
                     },
                 },

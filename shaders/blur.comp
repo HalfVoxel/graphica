@@ -6,7 +6,7 @@ layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
 
 
-layout (set=0, binding=0, rgba8) uniform image2D myStorageImage;
+layout (set=0, binding=0, rgba8) uniform restrict image2D myStorageImage;
 
 // layout(set = 0, binding = 0) buffer PrimeIndices {
 //     uint[] indices;

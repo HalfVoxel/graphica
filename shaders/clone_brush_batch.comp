@@ -39,7 +39,6 @@ void main() {
                 vec4 b = imageLoad(image, origin_dst + offset);
                 vec2 uv = (vec2(gl_LocalInvocationID.xy) + offset) / vec2(32 * width_per_group, 32 * height_per_group);
                 vec4 c = texture(sampler2D(t_brush, s_brush), uv);
-                float ra = mix(b.a, a.a, c.a);
                 a.a *= c.a;
                 // A over B
                 // TODO: Might need more numerically stable algorithm

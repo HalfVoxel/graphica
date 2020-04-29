@@ -31,7 +31,7 @@ impl BlurCompute {
                 ty: wgpu::BindingType::StorageTexture {
                     dimension: TextureViewDimension::D2,
                     component_type: TextureComponentType::Float,
-                    format: TextureFormat::Bgra8Unorm,
+                    format: crate::config::TEXTURE_FORMAT,
                     readonly: false,
                 },
             }],

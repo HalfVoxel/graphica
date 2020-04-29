@@ -10,7 +10,10 @@ use wgpu_glyph::{GlyphBrushBuilder, Section};
 use euclid;
 use std::rc::Rc;
 use std::time::Instant;
-use wgpu::{BindGroup, Buffer, CommandEncoder, Device, RenderPipeline};
+use wgpu::{
+    BindGroup, Buffer, CommandEncoder, CommandEncoderDescriptor, Device, Extent3d, RenderPipeline, TextureDescriptor,
+    TextureFormat,
+};
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -82,6 +85,7 @@ fn create_multisampled_framebuffer(
     device: &wgpu::Device,
     size: &wgpu::Extent3d,
     sample_count: u32,
+    format: wgpu::TextureFormat,
 ) -> wgpu::TextureView {
     let multisampled_frame_descriptor = &wgpu::TextureDescriptor {
         size: wgpu::Extent3d {
@@ -93,7 +97,7 @@ fn create_multisampled_framebuffer(
         array_layer_count: 1,
         sample_count: sample_count,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Bgra8Unorm, //sc_desc.format,
+        format: format, //sc_desc.format,
         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
         label: Some("Framebuffer"),
     };
@@ -111,7 +115,7 @@ struct DocumentRenderer {
     bind_group: BindGroup,
     index_buffer_length: usize,
     render_pipeline: Rc<RenderPipeline>,
-    brush_renderer: BrushRendererWithReadbackBatched,
+    brush_renderer: BrushRenderer,
 }
 
 pub struct BrushRenderer {
@@ -121,46 +125,49 @@ pub struct BrushRenderer {
     index_buffer_length: usize,
     bind_group: BindGroup,
     brush_manager: Rc<BrushManager>,
+    stroke_ranges: Vec<std::ops::Range<u32>>,
 }
 
 fn sample_points_along_curve(path: &PathData, spacing: f32) -> Vec<(usize, CanvasPoint)> {
     let mut result = vec![];
-    let mut builder = Path::builder();
-    path.build(&mut builder);
 
     for sub_path in path.iter_sub_paths() {
-        let mut offset = 0f32;
+        sample_points_along_sub_path(&sub_path, spacing, &mut result);
+    }
 
-        for start in sub_path.iter_beziers() {
-            let end = start.next().unwrap();
-            let p0 = start.position();
-            let p1 = start.control_after();
-            let p2 = end.control_before();
-            let p3 = end.position();
-            let bezier = CubicBez::new(
-                KurboPoint::new(p0.x as f64, p0.y as f64),
-                KurboPoint::new(p1.x as f64, p1.y as f64),
-                KurboPoint::new(p2.x as f64, p2.y as f64),
-                KurboPoint::new(p3.x as f64, p3.y as f64),
-            );
+    result
+}
 
-            loop {
-                match bezier.eval_at_distance((spacing + offset) as f64, 0.01) {
-                    Ok(p) => {
-                        result.push((start.index, point(p.x as f32, p.y as f32)));
-                        offset += spacing;
-                    }
-                    Err(geometry_utilities::CurveTooShort { remaining }) => {
-                        offset = remaining as f32 - spacing;
-                        debug_assert!(remaining >= 0.0);
-                        break;
-                    }
+fn sample_points_along_sub_path(sub_path: &SubPath, spacing: f32, result: &mut Vec<(usize, CanvasPoint)>) {
+    let mut offset = 0f32;
+
+    for start in sub_path.iter_beziers() {
+        let end = start.next().unwrap();
+        let p0 = start.position();
+        let p1 = start.control_after();
+        let p2 = end.control_before();
+        let p3 = end.position();
+        let bezier = CubicBez::new(
+            KurboPoint::new(p0.x as f64, p0.y as f64),
+            KurboPoint::new(p1.x as f64, p1.y as f64),
+            KurboPoint::new(p2.x as f64, p2.y as f64),
+            KurboPoint::new(p3.x as f64, p3.y as f64),
+        );
+
+        loop {
+            match bezier.eval_at_distance((spacing + offset) as f64, 0.01) {
+                Ok(p) => {
+                    result.push((start.index, point(p.x as f32, p.y as f32)));
+                    offset += spacing;
+                }
+                Err(geometry_utilities::CurveTooShort { remaining }) => {
+                    offset = remaining as f32 - spacing;
+                    debug_assert!(remaining >= 0.0);
+                    break;
                 }
             }
         }
     }
-
-    result
 }
 
 #[derive(Copy, Clone)]
@@ -269,7 +276,7 @@ impl BrushRendererWithReadback {
             sample_count: 1,
             array_layer_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8Unorm,
+            format: crate::config::TEXTURE_FORMAT,
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT,
         });
 
@@ -439,7 +446,7 @@ impl BrushRendererWithReadbackBatched {
             sample_count: 1,
             array_layer_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8Unorm,
+            format: crate::config::TEXTURE_FORMAT,
             usage: wgpu::TextureUsage::STORAGE,
         });
 
@@ -547,11 +554,14 @@ impl BrushRenderer {
         texture: &Arc<Texture>,
     ) -> BrushRenderer {
         let size = brush_data.brush.size;
-        let points = sample_points_along_curve(&brush_data.path, brush_data.brush.spacing * size);
+        let mut vertices: Vec<BrushGpuVertex> = vec![];
+        let mut stroke_ranges = vec![];
 
-        let vertices: Vec<BrushGpuVertex> = points
-            .iter()
-            .flat_map(|&(vertex_index, pos)| {
+        for sub_path in brush_data.path.iter_sub_paths() {
+            let mut points = vec![];
+            let start_vertex = vertices.len();
+            sample_points_along_sub_path(&sub_path, brush_data.brush.spacing * size, &mut points);
+            vertices.extend(points.iter().flat_map(|&(vertex_index, pos)| {
                 let color = brush_data.colors[vertex_index / 3].into_format().into_raw();
                 ArrayVec::from([
                     BrushGpuVertex {
@@ -575,12 +585,15 @@ impl BrushRenderer {
                         color,
                     },
                 ])
-            })
-            .collect();
+            }));
+
+            let start_triangle = ((start_vertex / 4) * 6) as u32;
+            let end_triangle = ((vertices.len() / 4) * 6) as u32;
+            stroke_ranges.push(start_triangle..end_triangle);
+        }
 
         let (vbo, _) = create_buffer_with_data(device, &vertices, wgpu::BufferUsage::VERTEX);
-
-        let indices: Vec<u32> = (0..points.len() as u32)
+        let indices: Vec<u32> = (0..(vertices.len() / 4) as u32)
             .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
             .collect();
         let (ibo, _) = create_buffer_with_data(device, &indices, wgpu::BufferUsage::INDEX);
@@ -649,6 +662,7 @@ impl BrushRenderer {
             index_buffer_length: indices.len(),
             bind_group,
             brush_manager: brush_manager.clone(),
+            stroke_ranges,
         }
     }
 
@@ -670,12 +684,35 @@ impl BrushRenderer {
             return;
         }
 
-        let mut pass = encoder.begin_msaa_render_pass(None);
-        pass.set_pipeline(&self.brush_manager.splat.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_index_buffer(&self.ibo, 0, 0);
-        pass.set_vertex_buffer(0, &self.vbo, 0, 0);
-        pass.draw_indexed(0..(self.index_buffer_length as u32), 0, 0..1);
+        // let blitter = encoder.blitter.with_textures(encoder.device, &encoder.scratch_texture.view, encoder.target_texture);
+        for stroke_range in &self.stroke_ranges {
+            {
+                let mut pass = encoder.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                        attachment: &encoder.scratch_texture.view,
+                        load_op: wgpu::LoadOp::Clear,
+                        store_op: wgpu::StoreOp::Store,
+                        clear_color: wgpu::Color::TRANSPARENT,
+                        resolve_target: None,
+                    }],
+                    depth_stencil_attachment: None,
+                });
+
+                pass.set_pipeline(&self.brush_manager.splat.pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.set_index_buffer(&self.ibo, 0, 0);
+                pass.set_vertex_buffer(0, &self.vbo, 0, 0);
+                pass.draw_indexed(stroke_range.clone(), 0, 0..1);
+            }
+
+            encoder.blitter.blend(
+                encoder.device,
+                encoder.encoder,
+                &encoder.scratch_texture.view,
+                encoder.target_texture,
+                (encoder.resolution.width, encoder.resolution.height),
+            );
+        }
     }
 }
 
@@ -778,7 +815,7 @@ impl DocumentRenderer {
             ],
         });
 
-        let brush_renderer = BrushRendererWithReadbackBatched::new(
+        let brush_renderer = BrushRenderer::new(
             &document.brushes,
             view,
             device,
@@ -992,7 +1029,7 @@ pub fn main() {
         }),
         primitive_topology: wgpu::PrimitiveTopology::TriangleList,
         color_states: &[wgpu::ColorStateDescriptor {
-            format: wgpu::TextureFormat::Bgra8Unorm,
+            format: crate::config::TEXTURE_FORMAT,
             color_blend: wgpu::BlendDescriptor {
                 src_factor: wgpu::BlendFactor::SrcAlpha,
                 dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
@@ -1061,7 +1098,7 @@ pub fn main() {
         }),
         primitive_topology: wgpu::PrimitiveTopology::TriangleList,
         color_states: &[wgpu::ColorStateDescriptor {
-            format: wgpu::TextureFormat::Bgra8Unorm,
+            format: crate::config::TEXTURE_FORMAT,
             color_blend: wgpu::BlendDescriptor::REPLACE,
             alpha_blend: wgpu::BlendDescriptor::REPLACE,
             write_mask: wgpu::ColorWrite::ALL,
@@ -1100,13 +1137,13 @@ pub fn main() {
     };
 
     let mut multisampled_render_target = None;
-    let mut multisampled_render_target_document = None;
+    let multisampled_render_target_document;
 
     let window_surface = wgpu::Surface::create(&window);
     let mut swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
 
     let mut depth_texture_view = None;
-    let mut depth_texture_view_document = None;
+    let depth_texture_view_document;
 
     {
         let document_extent = wgpu::Extent3d {
@@ -1127,7 +1164,12 @@ pub fn main() {
 
         depth_texture_view_document = Some(depth_texture.create_default_view());
         multisampled_render_target_document = if sample_count > 1 {
-            Some(create_multisampled_framebuffer(&device, &document_extent, sample_count))
+            Some(create_multisampled_framebuffer(
+                &device,
+                &document_extent,
+                sample_count,
+                crate::config::TEXTURE_FORMAT,
+            ))
         } else {
             None
         };
@@ -1219,7 +1261,7 @@ pub fn main() {
     let font: &[u8] = include_bytes!("../fonts/Bitter-Regular.ttf");
     let mut glyph_brush = GlyphBrushBuilder::using_font_bytes(font)
         .expect("Load font")
-        .build(&device, wgpu::TextureFormat::Bgra8Unorm);
+        .build(&device, crate::config::TEXTURE_FORMAT);
 
     let document_extent = wgpu::Extent3d {
         width: editor.document.size.unwrap().width,
@@ -1237,10 +1279,25 @@ pub fn main() {
             sample_count: 1,
             array_layer_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8Unorm,
+            format: crate::config::TEXTURE_FORMAT,
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::STORAGE,
         },
     );
+    let temp_document_frame_view = temp_document_frame.get_mip_level_view(0);
+
+    let scratch_texture = Arc::new(Texture::new(
+        &device,
+        wgpu::TextureDescriptor {
+            label: Some("Scratch texture"),
+            size: document_extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            array_layer_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: crate::config::TEXTURE_FORMAT,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::STORAGE,
+        },
+    ));
 
     event_loop.run(move |event, _, control_flow| {
         let scene = &mut editor.scene;
@@ -1303,12 +1360,12 @@ pub fn main() {
             println!("Rebuilding swap chain");
             scene.size_changed = false;
             swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
-            let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            let depth_texture = device.create_texture(&TextureDescriptor {
                 label: Some("Framebuffer depth"),
                 size: window_extent,
-                mip_level_count: 1,
-                sample_count: sample_count,
                 array_layer_count: 1,
+                mip_level_count: 1,
+                sample_count,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Depth32Float,
                 usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
@@ -1317,14 +1374,23 @@ pub fn main() {
             depth_texture_view = Some(depth_texture.create_default_view());
 
             multisampled_render_target = if sample_count > 1 {
-                Some(create_multisampled_framebuffer(&device, &window_extent, sample_count))
+                Some(create_multisampled_framebuffer(
+                    &device,
+                    &window_extent,
+                    sample_count,
+                    swap_chain_desc.format,
+                ))
             } else {
                 None
             };
         }
 
-        let frame = swap_chain.get_next_texture().unwrap();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let swapchain_output = swap_chain.get_next_texture().unwrap();
+        let frame = RenderTexture::from(SwapchainImageWrapper::from_swapchain_image(
+            swapchain_output,
+            &swap_chain_desc,
+        ));
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
             label: Some("Frame encoder"),
         });
 
@@ -1399,40 +1465,21 @@ pub fn main() {
         //     sample_count: 1,
         //     array_layer_count: 1,
         //     dimension: wgpu::TextureDimension::D2,
-        //     format: wgpu::TextureFormat::Bgra8Unorm,
+        //     format: crate::config::TEXTURE_FORMAT,
         //     usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::STORAGE,
         // });
         // let temp_window_frame_view = temp_window_frame.create_default_view();
 
         {
-            // A resolve target is only supported if the attachment actually uses anti-aliasing
-            // So if sample_count == 1 then we must render directly to the swapchain's buffer
-            let _color_attachment = if let Some(msaa_target) = &multisampled_render_target {
-                wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: msaa_target,
-                    load_op: wgpu::LoadOp::Clear,
-                    store_op: wgpu::StoreOp::Store,
-                    clear_color: wgpu::Color::BLACK,
-                    resolve_target: Some(&temp_document_frame.view),
-                }
-            } else {
-                wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &temp_document_frame.view,
-                    load_op: wgpu::LoadOp::Clear,
-                    store_op: wgpu::StoreOp::Store,
-                    clear_color: wgpu::Color::WHITE,
-                    resolve_target: None,
-                }
-            };
-
             let mut hl_encoder = Encoder {
                 device: &device,
                 encoder: &mut encoder,
                 multisampled_render_target: multisampled_render_target_document.as_ref(),
-                target_texture: &temp_document_frame.view,
+                target_texture: &temp_document_frame_view,
                 depth_texture_view: depth_texture_view_document.as_ref().unwrap(),
                 blitter: &blitter,
                 resolution: document_extent,
+                scratch_texture: scratch_texture.clone(),
             };
 
             {
@@ -1452,16 +1499,18 @@ pub fn main() {
                 .unwrap()
                 .render(&mut hl_encoder, &dummy_view);
 
+            // blitter.rgb_to_srgb(&device, &mut encoder, &temp_document_frame.view, &temp_document_frame.view, (document_extent.width, document_extent.height));
             mipmapper.generate_mipmaps(&device, &mut encoder, &temp_document_frame);
 
             let mut hl_encoder = Encoder {
                 device: &device,
                 encoder: &mut encoder,
                 multisampled_render_target: multisampled_render_target.as_ref(),
-                target_texture: &frame.view,
+                target_texture: frame.default_view(),
                 depth_texture_view: depth_texture_view.as_ref().unwrap(),
                 blitter: &blitter,
                 resolution: document_extent,
+                scratch_texture: scratch_texture.clone(),
             };
 
             {
@@ -1509,7 +1558,7 @@ pub fn main() {
                 .draw_queued(
                     &device,
                     &mut encoder,
-                    &frame.view,
+                    frame.default_view(),
                     window_extent.width,
                     window_extent.height,
                 )
@@ -1520,7 +1569,7 @@ pub fn main() {
         //     &device,
         //     &mut encoder,
         //     &temp_window_frame_view,
-        //     &frame.view,
+        //     frame.default_view(),
         //     rect(0.0, 0.0, 1.0, 1.0),
         //     rect(0.0, 0.0, 1.0, 1.0),
         //     1,
@@ -1584,7 +1633,78 @@ pub struct Texture {
     pub view: wgpu::TextureView,
 }
 
+pub struct SwapchainImageWrapper {
+    descriptor: wgpu::SwapChainDescriptor,
+    image: wgpu::SwapChainOutput,
+}
+
+#[derive(Clone)]
+pub enum RenderTexture {
+    Texture(Rc<Texture>),
+    SwapchainImage(Rc<SwapchainImageWrapper>),
+}
+
+impl SwapchainImageWrapper {
+    fn from_swapchain_image(swapchain_image: wgpu::SwapChainOutput, descriptor: &wgpu::SwapChainDescriptor) -> Self {
+        Self {
+            descriptor: descriptor.clone(),
+            image: swapchain_image,
+        }
+    }
+}
+
+impl From<Rc<Texture>> for RenderTexture {
+    fn from(tex: Rc<Texture>) -> RenderTexture {
+        RenderTexture::Texture(tex)
+    }
+}
+
+impl From<SwapchainImageWrapper> for RenderTexture {
+    fn from(tex: SwapchainImageWrapper) -> RenderTexture {
+        RenderTexture::SwapchainImage(Rc::new(tex))
+    }
+}
+
+impl RenderTexture {
+    pub fn default_view(&self) -> &wgpu::TextureView {
+        match self {
+            RenderTexture::Texture(tex) => &tex.view,
+            RenderTexture::SwapchainImage(tex) => &tex.image.view,
+        }
+    }
+
+    pub fn format(&self) -> TextureFormat {
+        match self {
+            RenderTexture::Texture(tex) => tex.descriptor.format,
+            RenderTexture::SwapchainImage(tex) => tex.descriptor.format,
+        }
+    }
+
+    pub fn size(&self) -> Extent3d {
+        match self {
+            RenderTexture::Texture(tex) => tex.descriptor.size,
+            RenderTexture::SwapchainImage(tex) => Extent3d {
+                width: tex.descriptor.width,
+                height: tex.descriptor.width,
+                depth: 1,
+            },
+        }
+    }
+}
+
 impl Texture {
+    pub fn get_mip_level_view(&self, miplevel: u32) -> wgpu::TextureView {
+        self.buffer.create_view(&wgpu::TextureViewDescriptor {
+            format: self.descriptor.format,
+            dimension: wgpu::TextureViewDimension::D2,
+            aspect: wgpu::TextureAspect::All,
+            base_mip_level: miplevel,
+            level_count: 1,
+            base_array_layer: 0,
+            array_layer_count: 1,
+        })
+    }
+
     fn new(device: &Device, descriptor: wgpu::TextureDescriptor) -> Texture {
         let tex = device.create_texture(&descriptor);
 
@@ -1631,7 +1751,7 @@ impl Texture {
             sample_count: 1,
             array_layer_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8Unorm,
+            format: crate::config::TEXTURE_FORMAT,
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         };
         let texture = Self::new(device, descriptor);

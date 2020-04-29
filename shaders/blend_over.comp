@@ -1,0 +1,52 @@
+#version 450
+#include "color_spaces.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout (set=0, binding=0, rgba8) uniform readonly restrict image2D src;
+layout (set=0, binding=1, rgba8) uniform restrict image2D dst;
+
+void main() {
+    int mode = 1;
+    ivec2 px = ivec2(gl_WorkGroupID.xy*uvec2(8, 8) + gl_LocalInvocationID.xy);
+    // vec4 a = srgb_to_rgb(imageLoad(src, px));
+    // vec4 b = srgb_to_rgb(imageLoad(dst, px));
+    vec4 a = imageLoad(src, px);
+    vec4 b = imageLoad(dst, px);
+
+    // NOTE: Assumes A, B and output use premultiplied alpha
+    // As in, they are encoded in the texture as ((r*a)^2.2, (g*a)^2.2, (b*a)^2.2, a)
+    // A over B
+    // TODO: Might need more numerically stable algorithm
+
+    vec4 result;
+    if (mode == 0) {
+        // OVER
+        float alpha = a.a + b.a * (1 - a.a);
+        result = vec4((a.rgb + b.rgb * (1 - a.a)), alpha);
+    } else if (mode == 1) {
+        // MULTIPLY
+        // a.a = 0 => b * b.a
+        // a.a = 1 => a*b / a.a
+        // a.a = 0.5 => mix(b*b.a, a*b * a.a*b.a, 0.5) = mix(1.0, a * a.a, 0.5) * b * b.a
+        float alpha = b.a;
+        result = vec4(mix(vec3(1.0, 1.0, 1.0), a.rgb, a.a) * b.rgb, 1.0);
+        // result = vec4(mix(vec3(1.0, 1.0, 1.0), a.rgb, a.a) * b.rgb, alpha);
+    } else {
+        result = vec4(1.0, 0.0, 0.0, 1.0);
+    }
+    // result = rgb_to_srgb(result);
+    imageStore(dst, px, result);
+}
+
+
+// (C, a)
+// (C*a, a) => ((C*a)^2.2, a)
+//
+// Blend (C1, a1), (C2, a2)
+// SrcAlpha, OneMinusSrcAlpha
+// (C1*a1 + (1-a1)*C2, a1 + (1-a1)*a2)
+
+// Blend (C1*a1, a1), (C2*a2, a2)
+// One, OneMinusSrcAlpha
+// (C1*a1 + (1-a1)*C2*a2, a1 + (1-a1)*a2)
