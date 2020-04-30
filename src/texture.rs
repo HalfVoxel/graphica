@@ -1,7 +1,7 @@
 use euclid::rect;
 use lazy_init::Lazy;
 use std::rc::Rc;
-use wgpu::{CommandEncoder, Device, Extent3d, TextureFormat};
+use wgpu::{CommandEncoder, Device, Extent3d, TextureFormat, TextureView};
 
 pub struct Texture {
     pub descriptor: wgpu::TextureDescriptor<'static>,
@@ -19,6 +19,17 @@ pub struct SwapchainImageWrapper {
 pub enum RenderTexture {
     Texture(Rc<Texture>),
     SwapchainImage(Rc<SwapchainImageWrapper>),
+}
+
+pub struct RenderTextureView<'a> {
+    pub texture: &'a RenderTexture,
+    pub view: &'a TextureView,
+}
+
+impl<'a> RenderTextureView<'a> {
+    pub fn new(texture: &'a RenderTexture, view: &'a TextureView) -> RenderTextureView<'a> {
+        RenderTextureView { texture, view }
+    }
 }
 
 impl SwapchainImageWrapper {
@@ -46,10 +57,17 @@ impl From<SwapchainImageWrapper> for RenderTexture {
 }
 
 impl RenderTexture {
-    pub fn default_view(&self) -> &wgpu::TextureView {
+    pub fn get_mip_level_view(&self, miplevel: u32) -> Result<RenderTextureView, &str> {
         match self {
-            RenderTexture::Texture(tex) => &tex.view,
-            RenderTexture::SwapchainImage(tex) => &tex.image.view,
+            RenderTexture::Texture(tex) => Ok(RenderTextureView::new(self, &tex.get_mip_level_view(miplevel))),
+            RenderTexture::SwapchainImage(tex) => Err("Cannot get mip levels from a swapchain image"),
+        }
+    }
+
+    pub fn default_view(&self) -> RenderTextureView {
+        match self {
+            RenderTexture::Texture(tex) => RenderTextureView::new(self, &tex.view),
+            RenderTexture::SwapchainImage(tex) => RenderTextureView::new(self, &tex.image.view),
         }
     }
 

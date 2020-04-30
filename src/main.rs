@@ -87,25 +87,24 @@ fn create_multisampled_framebuffer(
     size: &wgpu::Extent3d,
     sample_count: u32,
     format: wgpu::TextureFormat,
-) -> wgpu::TextureView {
-    let multisampled_frame_descriptor = &wgpu::TextureDescriptor {
-        size: wgpu::Extent3d {
-            width: size.width,
-            height: size.height,
-            depth: 1,
+) -> Texture {
+    Texture::new(
+        device,
+        wgpu::TextureDescriptor {
+            size: wgpu::Extent3d {
+                width: size.width,
+                height: size.height,
+                depth: 1,
+            },
+            mip_level_count: 1,
+            array_layer_count: 1,
+            sample_count: sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format: format, //sc_desc.format,
+            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            label: Some("Framebuffer"),
         },
-        mip_level_count: 1,
-        array_layer_count: 1,
-        sample_count: sample_count,
-        dimension: wgpu::TextureDimension::D2,
-        format: format, //sc_desc.format,
-        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-        label: Some("Framebuffer"),
-    };
-
-    device
-        .create_texture(multisampled_frame_descriptor)
-        .create_default_view()
+    )
 }
 
 struct DocumentRenderer {
@@ -303,7 +302,7 @@ impl BrushRendererWithReadback {
         let temp_to_frame_blitter =
             encoder
                 .blitter
-                .with_textures(encoder.device, &self.temp_texture_view, encoder.target_texture);
+                .with_textures(encoder.device, &self.temp_texture_view, encoder.target_texture.view);
 
         let bind_group = encoder.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &self.brush_manager.splat_with_readback.bind_group_layout,
@@ -315,7 +314,7 @@ impl BrushRendererWithReadback {
                 },
                 wgpu::Binding {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(encoder.target_texture),
+                    resource: wgpu::BindingResource::TextureView(encoder.target_texture.view),
                 },
                 wgpu::Binding {
                     binding: 2,
@@ -367,8 +366,8 @@ impl BrushRendererWithReadback {
         encoder.blitter.blit(
             encoder.device,
             encoder.encoder,
-            encoder.target_texture,
-            encoder.multisampled_render_target.unwrap(),
+            encoder.target_texture.view,
+            encoder.multisampled_render_target.as_ref().unwrap().view,
             rect(0.0, 0.0, 1.0, 1.0),
             rect(0.0, 0.0, 1.0, 1.0),
             8,
@@ -505,7 +504,7 @@ impl BrushRendererWithReadbackBatched {
             bindings: &[
                 wgpu::Binding {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&encoder.target_texture),
+                    resource: wgpu::BindingResource::TextureView(&encoder.target_texture.view),
                 },
                 wgpu::Binding {
                     binding: 1,
@@ -770,7 +769,7 @@ impl BrushRenderer {
                 encoder.device,
                 encoder.encoder,
                 &encoder.scratch_texture.view,
-                encoder.target_texture,
+                encoder.target_texture.view,
                 (encoder.resolution.width, encoder.resolution.height),
             );
         }
@@ -1203,8 +1202,8 @@ pub fn main() {
     let window_surface = wgpu::Surface::create(&window);
     let mut swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
 
-    let mut depth_texture_view = None;
-    let depth_texture_view_document;
+    let mut depth_texture = None;
+    let depth_texture_document;
 
     {
         let document_extent = wgpu::Extent3d {
@@ -1212,25 +1211,27 @@ pub fn main() {
             height: editor.document.size.unwrap().height,
             depth: 1,
         };
-        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Framebuffer depth"),
-            size: document_extent,
-            mip_level_count: 1,
-            sample_count: sample_count,
-            array_layer_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-        });
+        depth_texture_document = Some(Rc::new(Texture::new(
+            &device,
+            wgpu::TextureDescriptor {
+                label: Some("Framebuffer depth"),
+                size: document_extent,
+                mip_level_count: 1,
+                sample_count: sample_count,
+                array_layer_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            },
+        )));
 
-        depth_texture_view_document = Some(depth_texture.create_default_view());
         multisampled_render_target_document = if sample_count > 1 {
-            Some(create_multisampled_framebuffer(
+            Some(Rc::new(create_multisampled_framebuffer(
                 &device,
                 &document_extent,
                 sample_count,
                 crate::config::TEXTURE_FORMAT,
-            ))
+            )))
         } else {
             None
         };
@@ -1331,7 +1332,7 @@ pub fn main() {
     };
 
     // Render into this texture
-    let temp_document_frame = Texture::new(
+    let temp_document_frame = Rc::new(Texture::new(
         &device,
         wgpu::TextureDescriptor {
             label: Some("Temp frame texture"),
@@ -1343,7 +1344,7 @@ pub fn main() {
             format: crate::config::TEXTURE_FORMAT,
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::STORAGE,
         },
-    );
+    ));
 
     let scratch_texture = Arc::new(Texture::new(
         &device,
@@ -1420,26 +1421,27 @@ pub fn main() {
             println!("Rebuilding swap chain");
             scene.size_changed = false;
             swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
-            let depth_texture = device.create_texture(&TextureDescriptor {
-                label: Some("Framebuffer depth"),
-                size: window_extent,
-                array_layer_count: 1,
-                mip_level_count: 1,
-                sample_count,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Depth32Float,
-                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-            });
-
-            depth_texture_view = Some(depth_texture.create_default_view());
+            depth_texture = Some(Rc::new(Texture::new(
+                &device,
+                TextureDescriptor {
+                    label: Some("Framebuffer depth"),
+                    size: window_extent,
+                    array_layer_count: 1,
+                    mip_level_count: 1,
+                    sample_count,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Depth32Float,
+                    usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+                },
+            )));
 
             multisampled_render_target = if sample_count > 1 {
-                Some(create_multisampled_framebuffer(
+                Some(Rc::new(create_multisampled_framebuffer(
                     &device,
                     &window_extent,
                     sample_count,
                     swap_chain_desc.format,
-                ))
+                )))
             } else {
                 None
             };
@@ -1473,7 +1475,7 @@ pub fn main() {
         );
 
         let hash = editor.document.hash() ^ scene.view.hash();
-        if hash != last_hash1 || document_renderer1.is_none() || true {
+        if hash != last_hash1 || document_renderer1.is_none() {
             last_hash1 = hash;
             document_renderer1 = Some(DocumentRenderer::new(
                 &editor.document,
@@ -1531,12 +1533,15 @@ pub fn main() {
         // let temp_window_frame_view = temp_window_frame.create_default_view();
 
         {
+            let msaa_render_target = RenderTexture::from(multisampled_render_target_document.as_ref().unwrap().clone());
+            let render_target = RenderTexture::from(temp_document_frame.clone());
+            let depth_target = RenderTexture::from(depth_texture_document.as_ref().unwrap().clone());
             let mut hl_encoder = Encoder {
                 device: &device,
                 encoder: &mut encoder,
-                multisampled_render_target: multisampled_render_target_document.as_ref(),
-                target_texture: &temp_document_frame.get_mip_level_view(0),
-                depth_texture_view: depth_texture_view_document.as_ref().unwrap(),
+                multisampled_render_target: Some(msaa_render_target.default_view()),
+                target_texture: render_target.get_mip_level_view(0).unwrap(),
+                depth_texture_view: depth_target.default_view(),
                 blitter: &blitter,
                 resolution: document_extent,
                 scratch_texture: scratch_texture.clone(),
@@ -1562,12 +1567,14 @@ pub fn main() {
             // blitter.rgb_to_srgb(&device, &mut encoder, &temp_document_frame.view, &temp_document_frame.view, (document_extent.width, document_extent.height));
             mipmapper.generate_mipmaps(&device, &mut encoder, &temp_document_frame);
 
+            let msaa_render_target = RenderTexture::from(multisampled_render_target.as_ref().unwrap().clone());
+            let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
             let mut hl_encoder = Encoder {
                 device: &device,
                 encoder: &mut encoder,
-                multisampled_render_target: multisampled_render_target.as_ref(),
+                multisampled_render_target: Some(msaa_render_target.default_view()),
                 target_texture: frame.default_view(),
-                depth_texture_view: depth_texture_view.as_ref().unwrap(),
+                depth_texture_view: depth_target.default_view(),
                 blitter: &blitter,
                 resolution: document_extent,
                 scratch_texture: scratch_texture.clone(),
@@ -1594,7 +1601,7 @@ pub fn main() {
                 &device,
                 hl_encoder.encoder,
                 &temp_document_frame.view,
-                multisampled_render_target.as_ref().unwrap(),
+                &multisampled_render_target.as_ref().unwrap().view,
                 rect(0.0, 0.0, 1.0, 1.0),
                 canvas_in_screen_uv_space.to_untyped(),
                 sample_count,
@@ -1619,7 +1626,7 @@ pub fn main() {
                 .draw_queued(
                     &device,
                     &mut encoder,
-                    frame.default_view(),
+                    frame.default_view().view,
                     window_extent.width,
                     window_extent.height,
                 )

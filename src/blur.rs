@@ -61,7 +61,7 @@ impl BlurCompute {
             layout: &self.bind_group_layout,
             bindings: &[wgpu::Binding {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&encoder.target_texture),
+                resource: wgpu::BindingResource::TextureView(encoder.target_texture.view),
             }],
             label: None,
         });
