@@ -49,6 +49,7 @@ use cgmath::prelude::*;
 use cgmath::{Matrix4, Vector3};
 use kurbo::CubicBez;
 use kurbo::Point as KurboPoint;
+use lazy_init::Lazy;
 use palette::Pixel;
 use palette::Srgba;
 use std::sync::Arc;
@@ -1343,7 +1344,6 @@ pub fn main() {
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::STORAGE,
         },
     );
-    let temp_document_frame_view = temp_document_frame.get_mip_level_view(0);
 
     let scratch_texture = Arc::new(Texture::new(
         &device,
@@ -1535,7 +1535,7 @@ pub fn main() {
                 device: &device,
                 encoder: &mut encoder,
                 multisampled_render_target: multisampled_render_target_document.as_ref(),
-                target_texture: &temp_document_frame_view,
+                target_texture: &temp_document_frame.get_mip_level_view(0),
                 depth_texture_view: depth_texture_view_document.as_ref().unwrap(),
                 blitter: &blitter,
                 resolution: document_extent,
@@ -1692,6 +1692,7 @@ pub struct Texture {
     pub descriptor: wgpu::TextureDescriptor<'static>,
     pub buffer: wgpu::Texture,
     pub view: wgpu::TextureView,
+    mipmap_views: Vec<Lazy<wgpu::TextureView>>,
 }
 
 pub struct SwapchainImageWrapper {
@@ -1772,15 +1773,23 @@ pub fn partition_into_squares(size: Extent3d, max_tile_size: u32) -> Vec<euclid:
 }
 
 impl Texture {
-    pub fn get_mip_level_view(&self, miplevel: u32) -> wgpu::TextureView {
-        self.buffer.create_view(&wgpu::TextureViewDescriptor {
-            format: self.descriptor.format,
-            dimension: wgpu::TextureViewDimension::D2,
-            aspect: wgpu::TextureAspect::All,
-            base_mip_level: miplevel,
-            level_count: 1,
-            base_array_layer: 0,
-            array_layer_count: 1,
+    pub fn get_mip_level_view(&self, miplevel: u32) -> &wgpu::TextureView {
+        assert!(
+            (miplevel as usize) < self.mipmap_views.len(),
+            "Trying to access a mip level that does not exist. {} >= {}",
+            miplevel,
+            self.mipmap_views.len()
+        );
+        self.mipmap_views[miplevel as usize].get_or_create(|| {
+            self.buffer.create_view(&wgpu::TextureViewDescriptor {
+                format: self.descriptor.format,
+                dimension: wgpu::TextureViewDimension::D2,
+                aspect: wgpu::TextureAspect::All,
+                base_mip_level: miplevel,
+                level_count: 1,
+                base_array_layer: 0,
+                array_layer_count: 1,
+            })
         })
     }
 
@@ -1800,10 +1809,16 @@ impl Texture {
         };
 
         let view = tex.create_default_view();
+        let mut views = vec![];
+        for _ in 0..descriptor.mip_level_count {
+            views.push(Lazy::new());
+        }
+
         Texture {
             descriptor,
             buffer: tex,
             view,
+            mipmap_views: views,
         }
     }
 
