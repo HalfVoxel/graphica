@@ -1,5 +1,5 @@
 use crate::blitter::Blitter;
-use crate::main::Texture;
+use crate::texture::Texture;
 use std::sync::Arc;
 use wgpu::{CommandEncoder, Device};
 

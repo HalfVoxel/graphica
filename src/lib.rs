@@ -15,5 +15,6 @@ pub mod path;
 pub mod path_collection;
 mod path_editor;
 mod shader;
+pub mod texture;
 mod toolbar;
 mod wgpu_utils;
