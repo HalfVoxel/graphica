@@ -172,7 +172,7 @@ fn sample_points_along_sub_path(sub_path: &SubPath, spacing: f32, result: &mut V
 
 #[derive(Copy, Clone)]
 struct BrushUniforms {
-    _dummy: i32,
+    mvp_matrix: Matrix4<f32>,
 }
 
 pub struct BrushRendererWithReadback {
@@ -542,10 +542,58 @@ impl BrushRendererWithReadbackBatched {
     }
 }
 
+fn catmull_rom_smooth(points: &Vec<CanvasPoint>) -> PathData {
+    let mut result = PathData::new();
+    if points.len() < 2 {
+        // emit nothing
+    } else if points.len() == 2 {
+        result.move_to(points[0]);
+        result.line_to(points[1]);
+    } else {
+        let catmull_rom_to =
+            |path: &mut PathData, p0: CanvasPoint, p1: CanvasPoint, p2: CanvasPoint, p3: CanvasPoint| {
+                let p0 = p0.to_vector();
+                let p1 = p1.to_vector();
+                let p2 = p2.to_vector();
+                let p3 = p3.to_vector();
+                let _c0 = p1;
+                let c1 = (-p0 + p1 * 6.0 + p2 * 1.0) * (1.0 / 6.0);
+                let c2 = (p1 + p2 * 6.0 - p3) * (1.0 / 6.0);
+                let c3 = p2;
+                let vertex = path.line_to(c3.to_point());
+                path.point_mut(vertex)
+                    .prev_mut()
+                    .unwrap()
+                    .set_control_after(c1.to_point());
+                path.point_mut(vertex).set_control_before(c2.to_point());
+            };
+        // count >= 3
+        let count = points.len();
+        result.move_to(points[0]);
+
+        // Draw first curve, this is special because the first two control points are the same
+        catmull_rom_to(&mut result, points[0], points[0], points[1], points[2]);
+        for i in 0..count - 3 {
+            catmull_rom_to(&mut result, points[i], points[i + 1], points[i + 2], points[i + 3]);
+        }
+        // Draw last curve
+        catmull_rom_to(
+            &mut result,
+            points[count - 3],
+            points[count - 2],
+            points[count - 1],
+            points[count - 1],
+        );
+        result.end();
+    }
+
+    result
+}
+
 impl BrushRenderer {
     pub fn new(
         brush_data: &BrushData,
-        _view: &CanvasView,
+        view: &CanvasView,
         device: &Device,
         encoder: &mut CommandEncoder,
         scene_ubo: &Buffer,
@@ -558,9 +606,17 @@ impl BrushRenderer {
         let mut stroke_ranges = vec![];
 
         for sub_path in brush_data.path.iter_sub_paths() {
-            let mut points = vec![];
+            // let mut points = vec![];
             let start_vertex = vertices.len();
-            sample_points_along_sub_path(&sub_path, brush_data.brush.spacing * size, &mut points);
+            let subpath_points = sub_path
+                .iter_points()
+                .map(|p| p.position())
+                .collect::<Vec<CanvasPoint>>();
+            let smoothed_subpath = catmull_rom_smooth(&subpath_points);
+
+            // sample_points_along_sub_path(&sub_path, brush_data.brush.spacing * size, &mut points);
+            let points = sample_points_along_curve(&smoothed_subpath, brush_data.brush.spacing * size);
+
             vertices.extend(points.iter().flat_map(|&(vertex_index, pos)| {
                 let color = brush_data.colors[vertex_index / 3].into_format().into_raw();
                 ArrayVec::from([
@@ -598,12 +654,16 @@ impl BrushRenderer {
             .collect();
         let (ibo, _) = create_buffer_with_data(device, &indices, wgpu::BufferUsage::INDEX);
 
+        let view_matrix = view.canvas_to_view_matrix();
+
         let (primitive_ubo, primitive_ubo_size) = create_buffer_via_transfer(
             device,
             encoder,
-            &[BrushUniforms { _dummy: 0 }],
+            &[BrushUniforms {
+                mvp_matrix: view_matrix * Matrix4::from_translation([0.0, 0.0, 0.1].into()),
+            }],
             wgpu::BufferUsage::UNIFORM,
-            "Uniform buffer",
+            "Brush Primitive UBO",
         );
 
         // let primitive_ubo_transfer = device.create_buffer_with_data(as_u8_slice(&[BrushUniforms { dummy: 0 }]), wgpu::BufferUsage::COPY_SRC);
@@ -1514,7 +1574,8 @@ pub fn main() {
             };
 
             {
-                let mut _clear_pass = hl_encoder.begin_msaa_render_pass(Some(wgpu::Color {
+                // Clear pass
+                hl_encoder.begin_msaa_render_pass(Some(wgpu::Color {
                     r: 41.0 / 255.0,
                     g: 41.0 / 255.0,
                     b: 41.0 / 255.0,
@@ -1690,6 +1751,24 @@ impl RenderTexture {
             },
         }
     }
+}
+
+pub fn partition_into_squares(size: Extent3d, max_tile_size: u32) -> Vec<euclid::default::Rect<u32>> {
+    let sx = (size.width + max_tile_size - 1) / max_tile_size;
+    let sy = (size.height + max_tile_size - 1) / max_tile_size;
+    let mut result = vec![];
+    for y in 0..sy {
+        for x in 0..sx {
+            result.push(rect(
+                x * max_tile_size,
+                y * max_tile_size,
+                size.width.min((x + 1) * max_tile_size) - x * max_tile_size,
+                size.height.min((y + 1) * max_tile_size) - y * max_tile_size,
+            ));
+        }
+    }
+
+    result
 }
 
 impl Texture {
