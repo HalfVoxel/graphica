@@ -5,7 +5,7 @@ use lyon::tessellation;
 use lyon::tessellation::geometry_builder::*;
 use lyon::tessellation::FillOptions;
 use lyon::tessellation::{StrokeOptions, StrokeTessellator};
-use wgpu_glyph::{GlyphBrushBuilder, Section};
+use wgpu_glyph::{ab_glyph::FontArc, GlyphBrushBuilder, Section, Text};
 
 use euclid;
 use std::rc::Rc;
@@ -1321,9 +1321,8 @@ pub fn main() {
     let mipmapper = crate::mipmap::Mipmapper::new(&device);
 
     let font: &[u8] = include_bytes!("../fonts/Bitter-Regular.ttf");
-    let mut glyph_brush = GlyphBrushBuilder::using_font_bytes(font)
-        .expect("Load font")
-        .build(&device, crate::config::TEXTURE_FORMAT);
+    let font = FontArc::try_from_slice(font).unwrap();
+    let mut glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, crate::config::TEXTURE_FORMAT);
 
     let document_extent = wgpu::Extent3d {
         width: editor.document.size.unwrap().width,
@@ -1615,8 +1614,8 @@ pub fn main() {
             // blur.render(&mut hl_encoder);
 
             let section = Section {
-                text: "Hello wgpu_gfilyphåäöЎaњ",
-                scale: wgpu_glyph::Scale::uniform(36.0),
+                screen_position: (10.0, 10.0),
+                text: vec![Text::new("Hello wgpu_gfilyphåäöЎaњ").with_scale(36.0)],
                 ..Section::default() // color, position, etc
             };
 
