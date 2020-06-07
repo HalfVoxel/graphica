@@ -1842,16 +1842,16 @@ fn update_inputs(
         scene.target_zoom *= f32::powf(5.0, delta_time);
     }
     if input.is_pressed(VirtualKeyCode::Left) {
-        scene.target_scroll += scene.view.screen_to_canvas_vector(vector(-300.0, 0.0) * delta_time);
+        scene.view.scroll += scene.view.screen_to_canvas_vector(vector(-300.0, 0.0) * delta_time);
     }
     if input.is_pressed(VirtualKeyCode::Right) {
-        scene.target_scroll += scene.view.screen_to_canvas_vector(vector(300.0, 0.0) * delta_time);
+        scene.view.scroll += scene.view.screen_to_canvas_vector(vector(300.0, 0.0) * delta_time);
     }
     if input.is_pressed(VirtualKeyCode::Up) {
-        scene.target_scroll += scene.view.screen_to_canvas_vector(vector(0.0, -300.0) * delta_time);
+        scene.view.scroll += scene.view.screen_to_canvas_vector(vector(0.0, -300.0) * delta_time);
     }
     if input.is_pressed(VirtualKeyCode::Down) {
-        scene.target_scroll += scene.view.screen_to_canvas_vector(vector(0.0, 300.0) * delta_time);
+        scene.view.scroll += scene.view.screen_to_canvas_vector(vector(0.0, 300.0) * delta_time);
     }
     if input.is_pressed(VirtualKeyCode::A) {
         scene.target_stroke_width *= f32::powf(5.0, delta_time);
@@ -1861,9 +1861,8 @@ fn update_inputs(
     }
 
     //println!(" -- zoom: {}, scroll: {:?}", scene.target_zoom, scene.target_scroll);
-
-    scene.view.zoom += (scene.target_zoom - scene.view.zoom) / 3.0;
-    scene.view.scroll = scene.view.scroll + (scene.target_scroll - scene.view.scroll) / 3.0;
+    let new_zoom = scene.view.zoom + (scene.target_zoom - scene.view.zoom) / 3.0;
+    scene.view.zoom_around_point(input.mouse_position, new_zoom);
     scene.stroke_width = scene.stroke_width + (scene.target_stroke_width - scene.stroke_width) / 5.0;
 
     *control_flow = ControlFlow::Poll;

@@ -76,6 +76,11 @@ impl CanvasView {
             * Matrix4::from_translation([-self.scroll.x, -self.scroll.y, 0.0].into())
     }
 
+    pub fn zoom_around_point(&mut self, point: ScreenPoint, new_zoom: f32) {
+        self.scroll -= point.to_vector().cast_unit() * (1.0 / new_zoom - 1.0 / self.zoom);
+        self.zoom = new_zoom;
+    }
+
     pub fn canvas_to_screen_rect(&self, r: euclid::Rect<f32, CanvasSpace>) -> euclid::Rect<f32, ScreenSpace> {
         let mn = self.canvas_to_screen_point(r.min());
         let mx = self.canvas_to_screen_point(r.max());
