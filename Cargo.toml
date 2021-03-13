@@ -10,30 +10,30 @@ path = "src/bin/main.rs"
 
 [dependencies]
 # lyon = { path = "../lyon", features = ["extra"] }
-lyon = "0.15"
+lyon = "0.17"
 # wgpu = { path = "../wgpu-rs" }
-wgpu = "0.5"
+wgpu = "0.7"
 # wgpu-native = "0.4"
 # wgpu-core = { path = "../wgpu/wgpu-core"}
 # wgpu-native = { path = "../wgpu/wgpu-native"}
 # wgpu = { path = "../wgpu-rs"}
-winit = "0.20.0"
-euclid = "0.20"
+winit = "0.24.0"
+euclid = "0.22"
 log = "0.4"
-env_logger = "0.7"
+env_logger = "0.8"
 by_address = "1.0"
-rand = "0.7"
+rand = "0.8"
 lazy_static = "1.4"
-packed_simd = "0.3"
+# packed_simd = "0.3"
 palette = "0.5"
 image = "0.23"
-kurbo = "0.6"
+kurbo = "0.8"
 async-std = "1.6"
 arrayvec = "0.5"
-wgpu_glyph = "0.9"
+wgpu_glyph = "0.11"
 cpuprofiler = { version = "0.0.4", optional = true }
-cgmath = "0.17"
-lazy-init = "0.3"
+cgmath = "0.18"
+lazy-init = "0.5"
 
 [patch.crates-io]
 # gfx-hal = { path = "../gfx/src/hal"}

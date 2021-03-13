@@ -1,4 +1,4 @@
-use wgpu::{Buffer, CommandEncoder, Device};
+use wgpu::{util::DeviceExt, Buffer, CommandEncoder, Device};
 
 fn as_u8_slice<T>(v: &[T]) -> &[u8] {
     let (head, body, tail) = unsafe { v.align_to::<u8>() };
@@ -19,11 +19,16 @@ pub fn create_buffer_via_transfer<'a, T>(
     if orig_length == 0 {
         data = &[0, 0, 0, 0];
     }
-    let transfer_buffer = device.create_buffer_with_data(data, wgpu::BufferUsage::COPY_SRC);
+    let transfer_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: &data,
+        usage: wgpu::BufferUsage::COPY_SRC,
+    });
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         size: data.len() as u64,
         usage: usage | wgpu::BufferUsage::COPY_DST,
         label: label.into(),
+        mapped_at_creation: false,
     });
     encoder.copy_buffer_to_buffer(&transfer_buffer, 0, &buffer, 0, data.len() as u64);
 
@@ -36,13 +41,21 @@ pub fn create_buffer_with_data<'a, T>(device: &Device, v: &[T], usage: wgpu::Buf
     if orig_length == 0 {
         data = &[0, 0, 0, 0];
     }
-    let buffer = device.create_buffer_with_data(data, usage);
+    let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: &data,
+        usage,
+    });
 
     (buffer, orig_length)
 }
 
 pub fn update_buffer_via_transfer<T>(device: &Device, encoder: &mut CommandEncoder, v: &[T], target_buffer: &Buffer) {
     let data = as_u8_slice(v);
-    let transfer_buffer = device.create_buffer_with_data(data, wgpu::BufferUsage::COPY_SRC);
+    let transfer_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: &data,
+        usage: wgpu::BufferUsage::COPY_SRC,
+    });
     encoder.copy_buffer_to_buffer(&transfer_buffer, 0, &target_buffer, 0, data.len() as u64);
 }

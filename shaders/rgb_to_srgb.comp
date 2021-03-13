@@ -3,7 +3,7 @@
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout (set=0, binding=0, rgba8) uniform restrict image2D src;
-layout (set=0, binding=1, rgba8) uniform restrict image2D dst;
+// layout (set=0, binding=1, rgba8) uniform restrict image2D dst;
 
 const float SRGB_GAMMA = 1.0 / 2.2;
 const float SRGB_INVERSE_GAMMA = 2.2;
@@ -48,5 +48,6 @@ vec4 srgb_to_rgb(vec4 srgb) {
 void main() {
     ivec2 px = ivec2(gl_WorkGroupID.xy*uvec2(8, 8) + gl_LocalInvocationID.xy);
     vec4 result = imageLoad(src, px);
-    imageStore(dst, px, rgb_to_srgb(result));
+    imageStore(src, px, rgb_to_srgb(result));
+    // imageStore(dst, px, rgb_to_srgb(result));
 }

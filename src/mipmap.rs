@@ -1,8 +1,8 @@
 use crate::shader::load_shader;
 use crate::texture::Texture;
 use wgpu::{
-    BindGroupLayout, CommandEncoder, ComputePipeline, Device, Extent3d, TextureComponentType, TextureFormat,
-    TextureViewDescriptor, TextureViewDimension,
+    BindGroupLayout, CommandEncoder, ComputePipeline, Device, Extent3d, TextureFormat, TextureViewDescriptor,
+    TextureViewDimension,
 };
 
 pub struct Mipmapper {
@@ -20,44 +20,45 @@ pub fn max_mipmaps(texture_size: Extent3d) -> u32 {
 
 impl Mipmapper {
     pub fn new(device: &Device) -> Mipmapper {
-        let shader = load_shader(device, include_bytes!("../shaders/downsample_2x2_box.comp.spv"));
+        let shader = load_shader(device, "shaders/downsample_2x2_box.comp.spv");
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            bindings: &[
+            entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
-                        dimension: TextureViewDimension::D2,
-                        component_type: TextureComponentType::Float,
+                        view_dimension: TextureViewDimension::D2,
                         format: crate::config::TEXTURE_FORMAT,
-                        readonly: true,
+                        access: wgpu::StorageTextureAccess::ReadOnly,
                     },
+                    count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStage::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
-                        dimension: TextureViewDimension::D2,
-                        component_type: TextureComponentType::Float,
+                        view_dimension: TextureViewDimension::D2,
                         format: crate::config::TEXTURE_FORMAT,
-                        readonly: false,
+                        access: wgpu::StorageTextureAccess::WriteOnly,
                     },
+                    count: None,
                 },
             ],
             label: None,
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
             bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
         });
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            layout: &pipeline_layout,
-            compute_stage: wgpu::ProgrammableStageDescriptor {
-                module: &shader,
-                entry_point: "main",
-            },
+            label: None,
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
         });
 
         Mipmapper {
@@ -68,7 +69,7 @@ impl Mipmapper {
 
     pub fn generate_mipmaps(&self, device: &Device, encoder: &mut CommandEncoder, texture: &Texture) {
         // assert_eq!(texture.descriptor.dimension, wgpu::TextureViewDimension::D2);
-        assert_eq!(texture.descriptor.array_layer_count, 1);
+        // assert_eq!(texture.descriptor.array_layer_count, 1);
         assert!(texture.descriptor.mip_level_count > 1);
         // assert!((texture.descriptor.size.width & (texture.descriptor.size.width - 1)) == 0, "Texture width must be a power of two. Found {}", texture.descriptor.size.width);
         // assert!((texture.descriptor.size.height & (texture.descriptor.size.height - 1)) == 0, "Texture height must be a power of two. Found {}", texture.descriptor.size.height);
@@ -78,7 +79,9 @@ impl Mipmapper {
         let mut height = texture.descriptor.size.height;
 
         let mut bind_groups = vec![];
-        let mut cpass = encoder.begin_compute_pass();
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("generate mipmaps"),
+        });
         cpass.set_pipeline(&self.pipeline);
 
         for mip_level in 1..texture.descriptor.mip_level_count {
@@ -86,12 +89,12 @@ impl Mipmapper {
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout: &self.bind_group_layout,
-                bindings: &[
-                    wgpu::Binding {
+                entries: &[
+                    wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::TextureView(&prev_level),
                     },
-                    wgpu::Binding {
+                    wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureView(&current_level),
                     },

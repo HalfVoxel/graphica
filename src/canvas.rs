@@ -1,7 +1,9 @@
 use crate::geometry_utilities::types::*;
-use cgmath::prelude::*;
 use cgmath::Matrix4;
-use lyon::math::*;
+use euclid::point2 as point;
+use euclid::rect;
+use euclid::vec2 as vector;
+use lyon::math::Point;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use winit::dpi::PhysicalSize;

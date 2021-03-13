@@ -1,6 +1,7 @@
 use crate::geometry_utilities::types::ScreenPoint;
 use euclid::default::Vector2D;
-use lyon::math::*;
+use euclid::point2 as point;
+use euclid::vec2 as vector;
 use std::collections::HashMap;
 use std::time::Instant;
 use winit::event::{ElementState, Event, KeyboardInput, WindowEvent};

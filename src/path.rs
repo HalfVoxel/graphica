@@ -1,5 +1,7 @@
 use crate::geometry_utilities::types::*;
-use lyon::math::*;
+use euclid::point2 as point;
+use euclid::vec2 as vector;
+use lyon::math::{Angle, Point, Rect, Vector};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 
@@ -620,13 +622,13 @@ impl PathData {
         self.close();
     }
 
-    pub fn build(&self, builder: &mut lyon::path::Builder) {
+    pub fn build(&self, builder: &mut lyon::path::path::Builder) {
         if self.len() == 0 {
             return;
         }
 
         for sub_path in self.iter_sub_paths() {
-            builder.move_to(sub_path.first().position().to_untyped());
+            builder.begin(sub_path.first().position().to_untyped());
             for a in sub_path.iter_beziers() {
                 let b = a.next().unwrap();
                 builder.cubic_bezier_to(
@@ -635,9 +637,7 @@ impl PathData {
                     b.position().to_untyped(),
                 );
             }
-            if sub_path.closed() {
-                builder.close();
-            }
+            builder.end(sub_path.closed());
         }
         /*let count = if self.closed { self.len() as i32 } else { self.len() as i32 - 1 };
         for i in 0..count {

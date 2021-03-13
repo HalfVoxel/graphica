@@ -1,7 +1,7 @@
 use euclid::rect;
 use lazy_init::Lazy;
-use std::rc::Rc;
-use wgpu::{CommandEncoder, Device, Extent3d, TextureFormat, TextureView};
+use std::{num::NonZeroU32, rc::Rc};
+use wgpu::{util::DeviceExt, CommandEncoder, Device, Extent3d, TextureFormat, TextureView};
 
 pub struct Texture {
     pub descriptor: wgpu::TextureDescriptor<'static>,
@@ -12,7 +12,7 @@ pub struct Texture {
 
 pub struct SwapchainImageWrapper {
     descriptor: wgpu::SwapChainDescriptor,
-    image: wgpu::SwapChainOutput,
+    image: wgpu::SwapChainFrame,
 }
 
 #[derive(Clone)]
@@ -33,10 +33,7 @@ impl<'a> RenderTextureView<'a> {
 }
 
 impl SwapchainImageWrapper {
-    pub fn from_swapchain_image(
-        swapchain_image: wgpu::SwapChainOutput,
-        descriptor: &wgpu::SwapChainDescriptor,
-    ) -> Self {
+    pub fn from_swapchain_image(swapchain_image: wgpu::SwapChainFrame, descriptor: &wgpu::SwapChainDescriptor) -> Self {
         Self {
             descriptor: descriptor.clone(),
             image: swapchain_image,
@@ -60,14 +57,14 @@ impl RenderTexture {
     pub fn get_mip_level_view(&self, miplevel: u32) -> Result<RenderTextureView, &str> {
         match self {
             RenderTexture::Texture(tex) => Ok(RenderTextureView::new(self, &tex.get_mip_level_view(miplevel))),
-            RenderTexture::SwapchainImage(tex) => Err("Cannot get mip levels from a swapchain image"),
+            RenderTexture::SwapchainImage(_tex) => Err("Cannot get mip levels from a swapchain image"),
         }
     }
 
     pub fn default_view(&self) -> RenderTextureView {
         match self {
             RenderTexture::Texture(tex) => RenderTextureView::new(self, &tex.view),
-            RenderTexture::SwapchainImage(tex) => RenderTextureView::new(self, &tex.image.view),
+            RenderTexture::SwapchainImage(tex) => RenderTextureView::new(self, &tex.image.output.view),
         }
     }
 
@@ -118,13 +115,14 @@ impl Texture {
         );
         self.mipmap_views[miplevel as usize].get_or_create(|| {
             self.buffer.create_view(&wgpu::TextureViewDescriptor {
-                format: self.descriptor.format,
-                dimension: wgpu::TextureViewDimension::D2,
+                label: None,
+                format: Some(self.descriptor.format),
+                dimension: Some(wgpu::TextureViewDimension::D2),
                 aspect: wgpu::TextureAspect::All,
                 base_mip_level: miplevel,
-                level_count: 1,
+                level_count: Some(NonZeroU32::new(1).unwrap()),
                 base_array_layer: 0,
-                array_layer_count: 1,
+                array_layer_count: None,
             })
         })
     }
@@ -136,7 +134,7 @@ impl Texture {
         let descriptor = wgpu::TextureDescriptor::<'static> {
             label: None,
             size: descriptor.size,
-            array_layer_count: descriptor.array_layer_count,
+            // array_layer_count: descriptor.array_layer_count,
             mip_level_count: descriptor.mip_level_count,
             sample_count: descriptor.sample_count,
             dimension: descriptor.dimension,
@@ -144,7 +142,7 @@ impl Texture {
             usage: descriptor.usage,
         };
 
-        let view = tex.create_default_view();
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
         let mut views = vec![];
         for _ in 0..descriptor.mip_level_count {
             views.push(Lazy::new());
@@ -165,7 +163,7 @@ impl Texture {
     ) -> Result<Texture, image::ImageError> {
         let loaded_image = image::open(path)?;
 
-        let rgba = loaded_image.into_rgba();
+        let rgba = loaded_image.into_rgba8();
         let width = rgba.width();
         let height = rgba.height();
 
@@ -179,7 +177,7 @@ impl Texture {
             size: texture_extent,
             mip_level_count: 1,
             sample_count: 1,
-            array_layer_count: 1,
+            // array_layer_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: crate::config::TEXTURE_FORMAT,
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
@@ -188,19 +186,25 @@ impl Texture {
 
         let raw = rgba.into_raw();
 
-        let transfer_buffer = device.create_buffer_with_data(&raw, wgpu::BufferUsage::COPY_SRC);
+        let transfer_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: &raw,
+            usage: wgpu::BufferUsage::COPY_SRC,
+        });
 
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
                 buffer: &transfer_buffer,
-                offset: 0,
-                bytes_per_row: 4 * width * std::mem::size_of::<u8>() as u32,
-                rows_per_image: height,
+                layout: wgpu::TextureDataLayout {
+                    offset: 0,
+                    bytes_per_row: 4 * width * std::mem::size_of::<u8>() as u32,
+                    rows_per_image: height,
+                },
             },
             wgpu::TextureCopyView {
                 texture: &texture.buffer,
                 mip_level: 0,
-                array_layer: 0,
+                // array_layer: 0,
                 origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
             },
             texture_extent,

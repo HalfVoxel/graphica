@@ -1,6 +1,6 @@
 use crate::encoder::Encoder;
 use crate::shader::load_shader;
-use wgpu::{BindGroupLayout, ComputePipeline, Device, TextureComponentType, TextureFormat, TextureViewDimension};
+use wgpu::{BindGroupLayout, ComputePipeline, Device, TextureViewDimension};
 
 pub struct BlurCompute {
     pipeline: ComputePipeline,
@@ -9,7 +9,7 @@ pub struct BlurCompute {
 
 impl BlurCompute {
     pub fn new(device: &Device) -> BlurCompute {
-        let cs_module = load_shader(device, include_bytes!("../shaders/blur.comp.spv"));
+        let cs_module = load_shader(device, "shaders/blur.comp.spv");
 
         // let staging_buffer = device.create_buffer_with_data(
         //     bytemuck::cast_slice(&numbers),
@@ -25,29 +25,30 @@ impl BlurCompute {
         // });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            bindings: &[wgpu::BindGroupLayoutEntry {
+            entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStage::COMPUTE,
                 ty: wgpu::BindingType::StorageTexture {
-                    dimension: TextureViewDimension::D2,
-                    component_type: TextureComponentType::Float,
+                    view_dimension: TextureViewDimension::D2,
                     format: crate::config::TEXTURE_FORMAT,
-                    readonly: false,
+                    access: wgpu::StorageTextureAccess::ReadWrite,
                 },
+                count: None,
             }],
             label: None,
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
             bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
         });
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            layout: &pipeline_layout,
-            compute_stage: wgpu::ProgrammableStageDescriptor {
-                module: &cs_module,
-                entry_point: "main",
-            },
+            label: None,
+            layout: Some(&pipeline_layout),
+            module: &cs_module,
+            entry_point: "main",
         });
 
         BlurCompute {
@@ -59,7 +60,7 @@ impl BlurCompute {
     pub fn render(&self, encoder: &mut Encoder) {
         let bind_group = encoder.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &self.bind_group_layout,
-            bindings: &[wgpu::Binding {
+            entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::TextureView(encoder.target_texture.view),
             }],
@@ -69,7 +70,9 @@ impl BlurCompute {
         // encoder.encoder.copy_buffer_to_buffer(&staging_buffer, 0, &storage_buffer, 0, size);
         let local_size: u32 = 32;
         {
-            let mut cpass = encoder.encoder.begin_compute_pass();
+            let mut cpass = encoder
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("blur") });
             cpass.set_pipeline(&self.pipeline);
             cpass.set_bind_group(0, &bind_group, &[]);
             cpass.dispatch(

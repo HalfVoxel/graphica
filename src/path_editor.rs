@@ -12,7 +12,9 @@ use crate::path_collection::{
     SelectionReference, VertexReference,
 };
 use crate::toolbar::ToolType;
-use lyon::math::*;
+use euclid::point2 as point;
+use euclid::rect;
+use euclid::vec2 as vector;
 use rand::{rngs::StdRng, SeedableRng};
 use std::collections::HashSet;
 
@@ -724,15 +726,15 @@ impl PathEditor {
                     let vertex = document.paths.resolve(vertex);
                     let prev = vertex.prev().unwrap();
                     let next = vertex.next().unwrap();
-                    println!("builder.move_to(point{});", prev.position());
+                    println!("builder.move_to(point{:?});", prev.position());
                     println!(
-                        "builder.cubic_bezier_to(point{}, point{}, point{});",
+                        "builder.cubic_bezier_to(point{:?}, point{:?}, point{:?});",
                         prev.control_after(),
                         vertex.control_before(),
                         vertex.position()
                     );
                     println!(
-                        "builder.cubic_bezier_to(point{}, point{}, point{});",
+                        "builder.cubic_bezier_to(point{:?}, point{:?}, point{:?});",
                         vertex.control_after(),
                         next.control_before(),
                         next.position()
