@@ -35,6 +35,12 @@ cpuprofiler = { version = "0.0.4", optional = true }
 cgmath = "0.18"
 lazy-init = "0.5"
 
+[build-dependencies]
+anyhow = "1.0"
+fs_extra = "1.1"
+glob = "0.3"
+shaderc = "0.7"
+
 [patch.crates-io]
 # gfx-hal = { path = "../gfx/src/hal"}
 # gfx-backend-vulkan = { path = "../gfx/src/backend/vulkan"}
