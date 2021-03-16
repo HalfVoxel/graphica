@@ -24,7 +24,6 @@ use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCo
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use crate::blitter::Blitter;
 use crate::brush_editor::{BrushData, BrushEditor};
 use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex};
 use crate::canvas::CanvasView;
@@ -40,6 +39,7 @@ use crate::path_collection::{PathCollection, VertexReference};
 use crate::path_editor::*;
 use crate::shader::load_shader;
 use crate::toolbar::GUIRoot;
+use crate::{blitter::Blitter, vertex::GPUVertex};
 use crate::{
     texture::{RenderTexture, SwapchainImageWrapper, Texture},
     wgpu_utils::*,
@@ -69,10 +69,36 @@ struct Globals {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct GpuVertex {
+struct PosNormVertex {
     position: [f32; 2],
     normal: [f32; 2],
     prim_id: i32,
+}
+
+impl GPUVertex for PosNormVertex {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as u64,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 0,
+                },
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    format: wgpu::VertexFormat::Int,
+                    shader_location: 2,
+                },
+            ],
+        }
+    }
 }
 
 #[repr(C)]
@@ -817,7 +843,7 @@ impl DocumentRenderer {
         document.build(&mut builder);
         let p = builder.build();
         let mut canvas_tolerance: CanvasLength = ScreenLength::new(0.1) * view.screen_to_canvas_scale();
-        let mut geometry: VertexBuffers<GpuVertex, u32> = VertexBuffers::new();
+        let mut geometry: VertexBuffers<PosNormVertex, u32> = VertexBuffers::new();
 
         // It's important to clamp the tolerance to a not too small value
         // If the tesselator is fed a too small value it may get stuck in an infinite loop due to floating point precision errors
@@ -1119,27 +1145,7 @@ pub fn main() {
         vertex: wgpu::VertexState {
             module: &vs_module,
             entry_point: "main",
-            buffers: &[wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<GpuVertex>() as u64,
-                step_mode: wgpu::InputStepMode::Vertex,
-                attributes: &[
-                    wgpu::VertexAttribute {
-                        offset: 0,
-                        format: wgpu::VertexFormat::Float2,
-                        shader_location: 0,
-                    },
-                    wgpu::VertexAttribute {
-                        offset: 8,
-                        format: wgpu::VertexFormat::Float2,
-                        shader_location: 1,
-                    },
-                    wgpu::VertexAttribute {
-                        offset: 16,
-                        format: wgpu::VertexFormat::Int,
-                        shader_location: 2,
-                    },
-                ],
-            }],
+            buffers: &[PosNormVertex::desc()],
         },
         fragment: Some(wgpu::FragmentState {
             module: &fs_module,
@@ -1187,15 +1193,7 @@ pub fn main() {
         vertex: wgpu::VertexState {
             module: &bg_vs_module,
             entry_point: "main",
-            buffers: &[wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<Point>() as u64,
-                step_mode: wgpu::InputStepMode::Vertex,
-                attributes: &[wgpu::VertexAttribute {
-                    offset: 0,
-                    format: wgpu::VertexFormat::Float2,
-                    shader_location: 0,
-                }],
-            }],
+            buffers: &[Point::desc()],
         },
         fragment: Some(wgpu::FragmentState {
             module: &bg_fs_module,
@@ -1735,11 +1733,11 @@ pub fn main() {
 /// tessellators and add a shape id.
 pub struct WithId(pub i32);
 
-impl FillVertexConstructor<GpuVertex> for WithId {
-    fn new_vertex(&mut self, vertex: lyon::tessellation::FillVertex) -> GpuVertex {
+impl FillVertexConstructor<PosNormVertex> for WithId {
+    fn new_vertex(&mut self, vertex: lyon::tessellation::FillVertex) -> PosNormVertex {
         debug_assert!(!vertex.position().x.is_nan());
         debug_assert!(!vertex.position().y.is_nan());
-        GpuVertex {
+        PosNormVertex {
             position: vertex.position().to_array(),
             normal: [0.0, 0.0],
             prim_id: self.0,
@@ -1747,14 +1745,14 @@ impl FillVertexConstructor<GpuVertex> for WithId {
     }
 }
 
-impl StrokeVertexConstructor<GpuVertex> for WithId {
-    fn new_vertex(&mut self, vertex: lyon::tessellation::StrokeVertex) -> GpuVertex {
+impl StrokeVertexConstructor<PosNormVertex> for WithId {
+    fn new_vertex(&mut self, vertex: lyon::tessellation::StrokeVertex) -> PosNormVertex {
         debug_assert!(!vertex.position().x.is_nan());
         debug_assert!(!vertex.position().y.is_nan());
         debug_assert!(!vertex.normal().x.is_nan());
         debug_assert!(!vertex.normal().y.is_nan());
         debug_assert!(!vertex.advancement().is_nan());
-        GpuVertex {
+        PosNormVertex {
             position: vertex.position().to_array(),
             normal: vertex.normal().to_array(),
             prim_id: self.0,

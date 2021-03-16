@@ -1,5 +1,5 @@
-use crate::shader::load_shader;
 use crate::wgpu_utils::*;
+use crate::{shader::load_shader, vertex::GPUVertex};
 use lyon::math::*;
 use wgpu::{
     AddressMode, BindGroup, BindGroupLayout, BlendFactor, Buffer, CommandEncoder, ComputePipeline,
@@ -14,6 +14,26 @@ struct BlitGpuVertex {
     uv_target: Point,
 }
 
+impl GPUVertex for BlitGpuVertex {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as u64,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 0,
+                },
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 1,
+                },
+            ],
+        }
+    }
+}
 pub struct BlitterWithTextures<'a, 'b> {
     blitter: &'a Blitter,
     bind_group: BindGroup,
@@ -90,22 +110,7 @@ impl Blitter {
                     vertex: wgpu::VertexState {
                         module: &blit_vs,
                         entry_point: "main",
-                        buffers: &[wgpu::VertexBufferLayout {
-                            array_stride: std::mem::size_of::<BlitGpuVertex>() as u64,
-                            step_mode: wgpu::InputStepMode::Vertex,
-                            attributes: &[
-                                wgpu::VertexAttribute {
-                                    offset: 0,
-                                    format: wgpu::VertexFormat::Float2,
-                                    shader_location: 0,
-                                },
-                                wgpu::VertexAttribute {
-                                    offset: 8,
-                                    format: wgpu::VertexFormat::Float2,
-                                    shader_location: 1,
-                                },
-                            ],
-                        }],
+                        buffers: &[BlitGpuVertex::desc()],
                     },
                     fragment: Some(wgpu::FragmentState {
                         module: &blit_fs,

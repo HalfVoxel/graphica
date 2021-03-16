@@ -17,4 +17,5 @@ mod path_editor;
 mod shader;
 pub mod texture;
 mod toolbar;
+mod vertex;
 mod wgpu_utils;

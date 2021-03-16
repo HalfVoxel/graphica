@@ -1,5 +1,5 @@
-use crate::geometry_utilities::types::*;
 use crate::shader::load_shader;
+use crate::{geometry_utilities::types::*, vertex::GPUVertex};
 use lyon::math::*;
 use wgpu::{ComputePipeline, Device, RenderPipeline, TextureViewDimension};
 
@@ -13,6 +13,32 @@ pub struct BrushGpuVertex {
     pub color: GPURGBA,
 }
 
+impl GPUVertex for BrushGpuVertex {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as u64,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 0,
+                },
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    format: wgpu::VertexFormat::Uchar4Norm,
+                    shader_location: 2,
+                },
+            ],
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct CloneBrushGpuVertex {
@@ -21,6 +47,42 @@ pub struct CloneBrushGpuVertex {
     pub uv_background_target: Point,
     pub uv_brush: Point,
     pub color: GPURGBA,
+}
+
+impl GPUVertex for CloneBrushGpuVertex {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as u64,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 0,
+                },
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    offset: 16,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 2,
+                },
+                wgpu::VertexAttribute {
+                    offset: 24,
+                    format: wgpu::VertexFormat::Float2,
+                    shader_location: 3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    format: wgpu::VertexFormat::Uchar4Norm,
+                    shader_location: 4,
+                },
+            ],
+        }
+    }
 }
 
 pub struct ShaderBundle {
@@ -103,27 +165,7 @@ impl BrushManager {
             vertex: wgpu::VertexState {
                 module: &brush_vs_module,
                 entry_point: "main",
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<BrushGpuVertex>() as u64,
-                    step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            offset: 0,
-                            format: wgpu::VertexFormat::Float2,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 8,
-                            format: wgpu::VertexFormat::Float2,
-                            shader_location: 1,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 16,
-                            format: wgpu::VertexFormat::Uchar4Norm,
-                            shader_location: 2,
-                        },
-                    ],
-                }],
+                buffers: &[BrushGpuVertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &brush_fs_module,
@@ -201,37 +243,7 @@ impl BrushManager {
             vertex: wgpu::VertexState {
                 module: &clone_brush_vs_module,
                 entry_point: "main",
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<CloneBrushGpuVertex>() as u64,
-                    step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            offset: 0,
-                            format: wgpu::VertexFormat::Float2,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 8,
-                            format: wgpu::VertexFormat::Float2,
-                            shader_location: 1,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 16,
-                            format: wgpu::VertexFormat::Float2,
-                            shader_location: 2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 24,
-                            format: wgpu::VertexFormat::Float2,
-                            shader_location: 3,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 32,
-                            format: wgpu::VertexFormat::Uchar4Norm,
-                            shader_location: 4,
-                        },
-                    ],
-                }],
+                buffers: &[CloneBrushGpuVertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &clone_brush_fs_module,
