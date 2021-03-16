@@ -75,3 +75,6 @@ debug = true
 
 [features]
 profile = ["cpuprofiler"]
+
+[build]
+incremental = true
