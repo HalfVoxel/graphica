@@ -16,8 +16,8 @@ use euclid;
 use std::rc::Rc;
 use std::time::Instant;
 use wgpu::{
-    BindGroup, Buffer, CommandEncoder, CommandEncoderDescriptor, Device, Extent3d, RenderPipeline, TextureDescriptor,
-    TextureFormat,
+    util::StagingBelt, BindGroup, Buffer, CommandEncoder, CommandEncoderDescriptor, Device, Extent3d, RenderPipeline,
+    TextureDescriptor, TextureFormat,
 };
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
@@ -133,7 +133,7 @@ fn create_multisampled_framebuffer(
             dimension: wgpu::TextureDimension::D2,
             format, //sc_desc.format,
             usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
-            label: Some("Framebuffer"),
+            label: Some("MSAA Framebuffer"),
         },
     )
 }
@@ -395,7 +395,7 @@ impl BrushRendererWithReadback {
                 let r = rect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y);
                 // let uv = vertices[(i*4)..(i+1)*4].iter().map(|x| x.uv_background_target).collect::<ArrayVec<[Point;4]>>();
                 // let r = Rect::from_points(uv);
-                temp_to_frame_blitter.blit(&encoder.device, encoder.encoder, rect(0.0, 0.0, 1.0, 1.0), r, 1);
+                temp_to_frame_blitter.blit(&encoder.device, encoder.encoder, rect(0.0, 0.0, 1.0, 1.0), r, 1, None);
             }
         }
 
@@ -407,6 +407,7 @@ impl BrushRendererWithReadback {
             rect(0.0, 0.0, 1.0, 1.0),
             rect(0.0, 0.0, 1.0, 1.0),
             8,
+            None,
         );
     }
 }
@@ -700,13 +701,12 @@ impl BrushRenderer {
 
         let view_matrix = view.canvas_to_view_matrix();
 
-        let (primitive_ubo, primitive_ubo_size) = create_buffer_via_transfer(
+        let (primitive_ubo, primitive_ubo_size) = create_buffer(
             device,
-            encoder,
             &[BrushUniforms {
                 mvp_matrix: view_matrix * Matrix4::from_translation([0.0, 0.0, 0.1].into()),
             }],
-            wgpu::BufferUsage::UNIFORM,
+            wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
             "Brush Primitive UBO",
         );
 
@@ -833,6 +833,7 @@ impl DocumentRenderer {
         view: &CanvasView,
         device: &Device,
         encoder: &mut CommandEncoder,
+        staging_belt: &mut StagingBelt,
         bind_group_layout: &wgpu::BindGroupLayout,
         wireframe: bool,
         render_pipeline: &Rc<RenderPipeline>,
@@ -857,13 +858,7 @@ impl DocumentRenderer {
             )
             .unwrap();
 
-        let (vbo, _) = create_buffer_via_transfer(
-            device,
-            encoder,
-            &geometry.vertices,
-            wgpu::BufferUsage::VERTEX,
-            "Document VBO",
-        );
+        let (vbo, _) = create_buffer(device, &geometry.vertices, wgpu::BufferUsage::VERTEX, "Document VBO");
 
         let indices: Vec<u32> = if wireframe {
             // Transform the triangle primitives into line primitives: (0,1,2) => (0,1),(1,2),(2,0)
@@ -877,31 +872,29 @@ impl DocumentRenderer {
         };
         // last_index_count = indices.len();
 
-        let (ibo, _) = create_buffer_via_transfer(device, encoder, &indices, wgpu::BufferUsage::INDEX, "Document IBO");
+        let (ibo, _) = create_buffer(device, &indices, wgpu::BufferUsage::INDEX, "Document IBO");
 
-        let (scene_ubo, scene_ubo_size) = create_buffer_via_transfer(
+        let (scene_ubo, scene_ubo_size) = create_buffer(
             device,
-            encoder,
             &[Globals {
                 resolution: [view.resolution.width as f32, view.resolution.height as f32],
                 zoom: view.zoom,
                 scroll_offset: view.scroll.to_array(),
             }],
-            wgpu::BufferUsage::UNIFORM,
+            wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
             "Document UBO",
         );
 
         let view_matrix = view.canvas_to_view_matrix();
 
-        let (primitive_ubo, primitive_ubo_size) = create_buffer_via_transfer(
+        let (primitive_ubo, primitive_ubo_size) = create_buffer(
             device,
-            encoder,
             &[Primitive {
                 color: [1.0, 1.0, 1.0, 1.0],
                 mvp_matrix: view_matrix * Matrix4::from_translation([0.0, 0.0, 0.1].into()),
                 width: 0.0,
             }],
-            wgpu::BufferUsage::UNIFORM,
+            wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
             "Document Primitive UBO",
         );
 
@@ -953,15 +946,22 @@ impl DocumentRenderer {
                 wireframe_render_pipeline.clone()
             },
         };
-        res.update(view, device, encoder);
+        res.update(view, device, encoder, staging_belt);
         res
     }
 
-    fn update(&mut self, view: &CanvasView, device: &Device, encoder: &mut CommandEncoder) {
+    fn update(
+        &mut self,
+        view: &CanvasView,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        staging_belt: &mut StagingBelt,
+    ) {
         // TODO: Verify expected size?
         update_buffer_via_transfer(
             device,
             encoder,
+            staging_belt,
             &[Globals {
                 resolution: [view.resolution.width as f32, view.resolution.height as f32],
                 zoom: view.zoom,
@@ -973,7 +973,7 @@ impl DocumentRenderer {
 
     fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
         {
-            let mut pass = encoder.begin_msaa_render_pass(None);
+            let mut pass = encoder.begin_msaa_render_pass(None, Some("document render pass"));
             pass.set_pipeline(&self.render_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_index_buffer(self.ibo.slice(..), wgpu::IndexFormat::Uint32);
@@ -1281,8 +1281,8 @@ pub fn main() {
     let mut fps_limiter = FPSLimiter::new();
     let mut last_hash1 = 0u64;
     let mut last_hash2 = 0u64;
-    let mut document_renderer1 = None;
-    let mut document_renderer2 = None;
+    let mut document_renderer1: Option<DocumentRenderer> = None;
+    let mut document_renderer2: Option<DocumentRenderer> = None;
 
     let mut init_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("Init encoder"),
@@ -1290,39 +1290,20 @@ pub fn main() {
 
     let blitter = Blitter::new(&device, &mut init_encoder);
 
-    let (bg_vbo, _) = create_buffer_via_transfer(
-        &device,
-        &mut init_encoder,
-        &bg_geometry.vertices,
-        wgpu::BufferUsage::VERTEX,
-        "BG VBO",
-    );
-    let (bg_ibo, _) = create_buffer_via_transfer(
-        &device,
-        &mut init_encoder,
-        &bg_geometry.indices,
-        wgpu::BufferUsage::INDEX,
-        "BG IBO",
-    );
+    let (bg_vbo, _) = create_buffer(&device, &bg_geometry.vertices, wgpu::BufferUsage::VERTEX, "BG VBO");
+    let (bg_ibo, _) = create_buffer(&device, &bg_geometry.indices, wgpu::BufferUsage::INDEX, "BG IBO");
 
     let bg_ubo_data = &[Primitive {
         color: [1.0, 1.0, 1.0, 1.0],
         mvp_matrix: Matrix4::from_translation([0.0, 0.0, 100.0].into()),
         width: 0.0,
     }];
-    let (bg_ubo, bg_ubo_size) = create_buffer_via_transfer(
-        &device,
-        &mut init_encoder,
-        bg_ubo_data,
-        wgpu::BufferUsage::UNIFORM,
-        "BG UBO",
-    );
+    let (bg_ubo, bg_ubo_size) = create_buffer(&device, bg_ubo_data, wgpu::BufferUsage::UNIFORM, "BG UBO");
 
-    let (globals_ubo, globals_ubo_size) = create_buffer_via_transfer(
+    let (globals_ubo, globals_ubo_size) = create_buffer(
         &device,
-        &mut init_encoder,
         &[Globals { ..Default::default() }],
-        wgpu::BufferUsage::UNIFORM,
+        wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         "Globals UBO",
     );
 
@@ -1506,6 +1487,7 @@ pub fn main() {
         update_buffer_via_transfer(
             &device,
             &mut encoder,
+            &mut staging_belt,
             &[Globals {
                 resolution: [scene.view.resolution.width as f32, scene.view.resolution.height as f32],
                 zoom: scene.view.zoom,
@@ -1522,6 +1504,7 @@ pub fn main() {
                 &dummy_view,
                 &device,
                 &mut encoder,
+                &mut staging_belt,
                 &bind_group_layout,
                 scene.show_wireframe,
                 &render_pipeline,
@@ -1544,6 +1527,7 @@ pub fn main() {
                 &ui_view,
                 &device,
                 &mut encoder,
+                &mut staging_belt,
                 &bind_group_layout,
                 scene.show_wireframe,
                 &render_pipeline,
@@ -1553,21 +1537,21 @@ pub fn main() {
         }
 
         // {
-        // let msaa_render_target = RenderTexture::from(multisampled_render_target.as_ref().unwrap().clone());
-        // let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
-        // let mut hl_encoder = Encoder {
-        //     device: &device,
-        //     encoder: &mut encoder,
-        //     multisampled_render_target: Some(msaa_render_target.default_view()),
-        //     target_texture: frame.default_view(),
-        //     depth_texture_view: depth_target.default_view(),
-        //     blitter: &blitter,
-        //     resolution: document_extent,
-        //     scratch_texture: scratch_texture.clone(),
-        // };
+        let msaa_render_target = RenderTexture::from(multisampled_render_target.as_ref().unwrap().clone());
+        let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
+        let mut hl_encoder = Encoder {
+            device: &device,
+            encoder: &mut encoder,
+            multisampled_render_target: Some(msaa_render_target.default_view()),
+            target_texture: frame.default_view(),
+            depth_texture_view: depth_target.default_view(),
+            blitter: &blitter,
+            resolution: document_extent,
+            scratch_texture: scratch_texture.clone(),
+        };
 
         // {
-        //     let mut pass = hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED));
+        //     let mut pass = hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background render pass"));
         //     pass.set_pipeline(&bg_pipeline);
         //     pass.set_bind_group(0, &bind_group, &[]);
         //     pass.set_index_buffer(bg_ibo.slice(..), wgpu::IndexFormat::Uint16);
@@ -1579,11 +1563,11 @@ pub fn main() {
         document_renderer1
             .as_mut()
             .unwrap()
-            .update(&dummy_view, &device, &mut encoder);
+            .update(&dummy_view, &device, &mut encoder, &mut staging_belt);
         document_renderer2
             .as_mut()
             .unwrap()
-            .update(&ui_view, &device, &mut encoder);
+            .update(&ui_view, &device, &mut encoder, &mut staging_belt);
 
         // let temp_window_frame = device.create_texture(&wgpu::TextureDescriptor {
         //     label: Some("Temp window texture"),
@@ -1615,7 +1599,8 @@ pub fn main() {
                 };
 
                 {
-                    let mut pass = hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED));
+                    let mut pass =
+                        hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background render pass"));
                     if scene.draw_background {
                         pass.set_pipeline(&bg_pipeline);
                         pass.set_bind_group(0, &bind_group, &[]);
@@ -1640,28 +1625,18 @@ pub fn main() {
             );
             mipmapper.generate_mipmaps(&device, &mut encoder, &temp_document_frame);
 
-            let msaa_render_target = RenderTexture::from(multisampled_render_target.as_ref().unwrap().clone());
+            let msaa_render_target = multisampled_render_target.clone().map(RenderTexture::from);
             let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
             let mut hl_encoder = Encoder {
                 device: &device,
                 encoder: &mut encoder,
-                multisampled_render_target: Some(msaa_render_target.default_view()),
+                multisampled_render_target: msaa_render_target.as_ref().map(RenderTexture::default_view),
                 target_texture: frame.default_view(),
                 depth_texture_view: depth_target.default_view(),
                 blitter: &blitter,
                 resolution: document_extent,
                 scratch_texture: scratch_texture.clone(),
             };
-
-            {
-                // Clear pass
-                hl_encoder.begin_msaa_render_pass(Some(wgpu::Color {
-                    r: 120.0 / 255.0,
-                    g: 41.0 / 255.0,
-                    b: 41.0 / 255.0,
-                    a: 1.0,
-                }));
-            }
 
             let canvas_in_screen_space =
                 scene
@@ -1670,41 +1645,58 @@ pub fn main() {
             let canvas_in_screen_uv_space =
                 canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
 
-            blitter.blit(
+            let blittex = blitter.with_textures(
                 &device,
-                hl_encoder.encoder,
                 &temp_document_frame.view,
                 &multisampled_render_target.as_ref().unwrap().view,
+            );
+            let blitop = blittex.blit_regions(
+                &device,
                 rect(0.0, 0.0, 1.0, 1.0),
                 canvas_in_screen_uv_space.to_untyped(),
                 sample_count,
             );
+
+            {
+                // Clear pass
+                let mut pass = hl_encoder.begin_msaa_render_pass(
+                    Some(wgpu::Color {
+                        r: 120.0 / 255.0,
+                        g: 41.0 / 255.0,
+                        b: 41.0 / 255.0,
+                        a: 1.0,
+                    }),
+                    Some("clear pass"),
+                );
+
+                blitop.render(&mut pass);
+            }
 
             document_renderer2
                 .as_ref()
                 .unwrap()
                 .render(&mut hl_encoder, &scene.view);
 
-            // blur.render(&mut hl_encoder);
+            // // // blur.render(&mut hl_encoder);
 
-            // let section = Section {
-            //     screen_position: (10.0, 10.0),
-            //     text: vec![Text::new("Hello wgpu_gfilyphåäöЎaњ").with_scale(36.0)],
-            //     ..Section::default() // color, position, etc
-            // };
+            let section = Section {
+                screen_position: (10.0, 10.0),
+                text: vec![Text::new("Hello wgpu_gfilyphåäöЎaњ").with_scale(36.0)],
+                ..Section::default() // color, position, etc
+            };
 
-            // glyph_brush.queue(section);
+            glyph_brush.queue(section);
 
-            // glyph_brush
-            //     .draw_queued(
-            //         &device,
-            //         &mut staging_belt,
-            //         &mut encoder,
-            //         frame.default_view().view,
-            //         window_extent.width,
-            //         window_extent.height,
-            //     )
-            //     .unwrap();
+            glyph_brush
+                .draw_queued(
+                    &device,
+                    &mut staging_belt,
+                    &mut encoder,
+                    frame.default_view().view,
+                    window_extent.width,
+                    window_extent.height,
+                )
+                .unwrap();
         }
 
         // blitter.blit(
@@ -1719,13 +1711,22 @@ pub fn main() {
 
         staging_belt.finish();
         queue.submit(std::iter::once(encoder.finish()));
-        task::block_on(staging_belt.recall());
+        let (sender, mut receiver) = futures::channel::oneshot::channel();
+        let recall = staging_belt.recall();
+        task::spawn(async move {
+            recall.await;
+            let _ = sender.send(());
+        });
+
         // dbg!(t3.elapsed());
 
         frame_count += 1.0;
         editor.input.tick_frame();
         // println!("Preparing GPU work = {:?}", t1.elapsed());
         fps_limiter.wait(std::time::Duration::from_secs_f32(1.0 / 60.0));
+        while receiver.try_recv().is_err() {
+            device.poll(wgpu::Maintain::Wait);
+        }
     });
 }
 

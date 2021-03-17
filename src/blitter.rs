@@ -2,9 +2,9 @@ use crate::wgpu_utils::*;
 use crate::{shader::load_shader, vertex::GPUVertex};
 use lyon::math::*;
 use wgpu::{
-    AddressMode, BindGroup, BindGroupLayout, BlendFactor, Buffer, CommandEncoder, ComputePipeline,
-    ComputePipelineDescriptor, Device, FilterMode, PipelineLayoutDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    Sampler, SamplerDescriptor, TextureView,
+    util::StagingBelt, AddressMode, BindGroup, BindGroupLayout, BlendFactor, Buffer, CommandEncoder, ComputePipeline,
+    ComputePipelineDescriptor, DepthStencilState, Device, FilterMode, PipelineLayoutDescriptor, RenderPass,
+    RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerDescriptor, TextureView,
 };
 
 #[repr(C)]
@@ -117,16 +117,8 @@ impl Blitter {
                         entry_point: "main",
                         targets: &[wgpu::ColorTargetState {
                             format: crate::config::TEXTURE_FORMAT,
-                            color_blend: wgpu::BlendState {
-                                src_factor: BlendFactor::One,
-                                dst_factor: BlendFactor::Zero,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            alpha_blend: wgpu::BlendState {
-                                src_factor: BlendFactor::One,
-                                dst_factor: BlendFactor::Zero,
-                                operation: wgpu::BlendOperation::Add,
-                            },
+                            color_blend: wgpu::BlendState::REPLACE,
+                            alpha_blend: wgpu::BlendState::REPLACE,
                             write_mask: wgpu::ColorWrite::ALL,
                         }],
                     }),
@@ -137,7 +129,14 @@ impl Blitter {
                         front_face: wgpu::FrontFace::Ccw,
                         cull_mode: wgpu::CullMode::None,
                     },
-                    depth_stencil: None,
+                    depth_stencil: Some(DepthStencilState {
+                        format: wgpu::TextureFormat::Depth32Float,
+                        depth_write_enabled: false,
+                        depth_compare: wgpu::CompareFunction::Always,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                        clamp_depth: false,
+                    }),
                     multisample: wgpu::MultisampleState {
                         count: sample_count,
                         mask: !0,
@@ -219,8 +218,7 @@ impl Blitter {
         });
 
         let indices = &[0, 1, 2, 3, 2, 0];
-        let (ibo, _ibo_size) =
-            create_buffer_via_transfer(device, encoder, indices, wgpu::BufferUsage::INDEX, "Blitter IBO");
+        let (ibo, _ibo_size) = create_buffer(device, indices, wgpu::BufferUsage::INDEX, "Blitter IBO");
 
         Blitter {
             render_pipelines,
@@ -271,6 +269,7 @@ impl Blitter {
         source_uv_rect: Rect,
         target_uv_rect: Rect,
         sample_count: u32,
+        resolve_target: Option<&wgpu::TextureView>,
     ) {
         self.with_textures(device, source_texture, target_texture).blit(
             device,
@@ -278,6 +277,7 @@ impl Blitter {
             source_uv_rect,
             target_uv_rect,
             sample_count,
+            resolve_target,
         );
     }
 
@@ -353,6 +353,7 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
         source_uv_rect: Rect,
         target_uv_rect: Rect,
         sample_count: u32,
+        resolve_target: Option<&wgpu::TextureView>,
     ) {
         let vertices = &[
             BlitGpuVertex {
@@ -383,7 +384,7 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
                     load: wgpu::LoadOp::Load,
                     store: true,
                 },
-                resolve_target: None,
+                resolve_target,
             }],
             depth_stencil_attachment: None,
         });
@@ -397,6 +398,65 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);
         pass.set_vertex_buffer(0, vbo.slice(..));
+        pass.draw_indexed(0..6, 0, 0..1);
+    }
+
+    pub fn blit_regions(
+        &'a self,
+        device: &Device,
+        source_uv_rect: Rect,
+        target_uv_rect: Rect,
+        sample_count: u32,
+    ) -> BlitOp<'a, 'a> {
+        let vertices = &[
+            BlitGpuVertex {
+                uv_source: point(source_uv_rect.min_x(), source_uv_rect.min_y()),
+                uv_target: point(target_uv_rect.min_x(), target_uv_rect.min_y()),
+            },
+            BlitGpuVertex {
+                uv_source: point(source_uv_rect.max_x(), source_uv_rect.min_y()),
+                uv_target: point(target_uv_rect.max_x(), target_uv_rect.min_y()),
+            },
+            BlitGpuVertex {
+                uv_source: point(source_uv_rect.max_x(), source_uv_rect.max_y()),
+                uv_target: point(target_uv_rect.max_x(), target_uv_rect.max_y()),
+            },
+            BlitGpuVertex {
+                uv_source: point(source_uv_rect.min_x(), source_uv_rect.max_y()),
+                uv_target: point(target_uv_rect.min_x(), target_uv_rect.max_y()),
+            },
+        ];
+
+        let (vbo, _) = create_buffer_with_data(&device, vertices, wgpu::BufferUsage::VERTEX);
+
+        let pipeline: &'a RenderPipeline = match sample_count {
+            1 => &self.blitter.render_pipelines[0],
+            8 => &self.blitter.render_pipelines[1],
+            _ => panic!("Unsupported blit sample count. Only 1 and 8 supported."),
+        };
+
+        BlitOp {
+            blitter: self.blitter,
+            bind_group: &self.bind_group,
+            pipeline,
+            vbo,
+        }
+    }
+}
+
+pub struct BlitOp<'a, 'b> {
+    blitter: &'a Blitter,
+    pipeline: &'a RenderPipeline,
+    bind_group: &'b BindGroup,
+    vbo: Buffer,
+}
+
+impl<'a, 'b> BlitOp<'a, 'b> {
+    pub fn render(&'a self, pass: &mut RenderPass<'a>) {
+        pass.set_pipeline(self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);
+        pass.set_vertex_buffer(0, self.vbo.slice(..));
         pass.draw_indexed(0..6, 0, 0..1);
     }
 }

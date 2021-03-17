@@ -15,7 +15,7 @@ pub struct Encoder<'a> {
 }
 
 impl Encoder<'_> {
-    pub fn begin_msaa_render_pass<'a>(&'a mut self, clear: Option<wgpu::Color>) -> wgpu::RenderPass<'a> {
+    pub fn begin_msaa_render_pass(&mut self, clear: Option<wgpu::Color>, label: Option<&str>) -> wgpu::RenderPass {
         // A resolve target is only supported if the attachment actually uses anti-aliasing
         // So if sample_count == 1 then we must render directly to the target texture
         let color_attachment = if let Some(msaa_target) = &self.multisampled_render_target {
@@ -35,7 +35,11 @@ impl Encoder<'_> {
             wgpu::RenderPassColorAttachmentDescriptor {
                 attachment: &self.target_texture.view,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                    load: if let Some(color) = clear {
+                        wgpu::LoadOp::Clear(color)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
                     store: true,
                 },
                 resolve_target: None,
@@ -43,7 +47,7 @@ impl Encoder<'_> {
         };
 
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("msaa render pass"),
+            label: label.or(Some("msaa render pass")),
             color_attachments: &[color_attachment],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
                 attachment: self.depth_texture_view.view,
