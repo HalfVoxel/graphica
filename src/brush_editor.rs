@@ -4,10 +4,7 @@ use crate::geometry_utilities::types::*;
 use crate::input::*;
 use crate::main::Document;
 use crate::path::*;
-use crate::path_collection::{
-    ControlPointReference, MutableReferenceResolver, PathCollection, PathReference, ReferenceResolver,
-    SelectionReference, VertexReference,
-};
+use crate::path_collection::PathReference;
 use crate::toolbar::ToolType;
 
 use palette::Srgba;
@@ -48,6 +45,7 @@ impl BrushEditor {
         let p = document.paths.resolve_path_mut(&self.debug_path.unwrap());
         p.clear();
 
+        #[allow(clippy::single_match)]
         match tool {
             ToolType::Brush => {
                 p.copy_from(&data.path);
@@ -64,13 +62,11 @@ impl BrushEditor {
                         BrushEditorState::Dragging(capture, last_point) => {
                             if !capture.is_pressed(input) {
                                 None
+                            } else if (last_point - mouse_pos_canvas).length() > 2.0 {
+                                data.line_to(mouse_pos_canvas, self.color);
+                                Some(BrushEditorState::Dragging(capture, mouse_pos_canvas))
                             } else {
-                                if (last_point - mouse_pos_canvas).length() > 2.0 {
-                                    data.line_to(mouse_pos_canvas, self.color);
-                                    Some(BrushEditorState::Dragging(capture, mouse_pos_canvas))
-                                } else {
-                                    Some(BrushEditorState::Dragging(capture, last_point))
-                                }
+                                Some(BrushEditorState::Dragging(capture, last_point))
                             }
                         }
                     },
@@ -81,11 +77,13 @@ impl BrushEditor {
     }
 }
 
+#[allow(dead_code)]
 struct BrushVertexAttrs {
     time: f32,
     pressure: f32,
 }
 
+#[allow(dead_code)]
 struct BrushSubpathAttrs {
     color: Srgba,
 }
@@ -107,6 +105,7 @@ pub struct BrushData {
 }
 
 impl BrushData {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> BrushData {
         BrushData {
             path: PathData::new(),

@@ -57,6 +57,7 @@ impl BlurCompute {
         }
     }
 
+    #[allow(dead_code)]
     pub fn render(&self, encoder: &mut Encoder) {
         let bind_group = encoder.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &self.bind_group_layout,

@@ -1,6 +1,6 @@
 use wgpu::{
     util::{DeviceExt, StagingBelt},
-    Buffer, BufferAddress, BufferSize, CommandEncoder, Device,
+    Buffer, BufferSize, CommandEncoder, Device,
 };
 
 fn as_u8_slice<T>(v: &[T]) -> &[u8] {

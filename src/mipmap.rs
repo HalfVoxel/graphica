@@ -1,9 +1,6 @@
 use crate::shader::load_shader;
 use crate::texture::Texture;
-use wgpu::{
-    BindGroupLayout, CommandEncoder, ComputePipeline, Device, Extent3d, TextureFormat, TextureViewDescriptor,
-    TextureViewDimension,
-};
+use wgpu::{BindGroupLayout, CommandEncoder, ComputePipeline, Device, Extent3d, TextureViewDimension};
 
 pub struct Mipmapper {
     pipeline: ComputePipeline,

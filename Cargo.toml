@@ -77,8 +77,3 @@ opt-level="z"
 
 [features]
 profile = ["cpuprofiler"]
-
-[build]
-incremental = true
-lto = false
-opt-level="z"

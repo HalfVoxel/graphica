@@ -102,7 +102,7 @@ pub struct BrushManager {
 }
 
 impl BrushManager {
-    pub fn load(device: &Device, sample_count: u32) -> BrushManager {
+    pub fn load(device: &Device, _sample_count: u32) -> BrushManager {
         let bind_group_layout_brush = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Bind group layout brush"),
             entries: &[

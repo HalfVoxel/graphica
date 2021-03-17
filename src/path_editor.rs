@@ -8,8 +8,7 @@ use crate::input::*;
 use crate::main::Document;
 use crate::path::*;
 use crate::path_collection::{
-    ControlPointReference, MutableReferenceResolver, PathCollection, PathReference, ReferenceResolver,
-    SelectionReference, VertexReference,
+    MutableReferenceResolver, PathCollection, PathReference, ReferenceResolver, SelectionReference, VertexReference,
 };
 use crate::toolbar::ToolType;
 use euclid::point2 as point;
@@ -51,15 +50,16 @@ impl PartialEq for Selection {
     }
 }
 
-pub struct ClosestInSelection {
-    distance: CanvasLength,
-    point: CanvasPoint,
-    closest: ClosestItemInSelection,
-}
-pub enum ClosestItemInSelection {
-    Curve { start: VertexReference },
-    ControlPoint(ControlPointReference),
-}
+// pub struct ClosestInSelection {
+//     distance: CanvasLength,
+//     point: CanvasPoint,
+//     closest: ClosestItemInSelection,
+// }
+
+// pub enum ClosestItemInSelection {
+//     Curve { start: VertexReference },
+//     ControlPoint(ControlPointReference),
+// }
 
 impl Selection {
     // pub fn distance_to(&self, paths: &PathCollection, point: CanvasPoint) -> Option<ClosestInSelection> {
@@ -146,36 +146,33 @@ impl Selection {
             }
         }
         for vertex_ref in &self.items {
-            match vertex_ref {
-                SelectionReference::VertexReference(vertex_ref2) => {
-                    let vertex = paths.resolve(vertex_ref2);
-                    if vertex_ref2
-                        .next(paths)
-                        .filter(|_next| point_set.contains(&vertex_ref2))
-                        .is_some()
-                    {
-                        let a = vertex.position();
-                        let b = vertex.control_after();
-                        let c = vertex.next().unwrap().control_before();
-                        let d = vertex.next().unwrap().position();
-                        if sqr_distance_bezier_point_lower_bound(a, b, c, d, point) < min_dist {
-                            let (dist, closest_on_curve) = sqr_distance_bezier_point_binary(a, b, c, d, point);
-                            if dist < min_dist {
-                                min_dist = dist;
-                                closest_point = Some(closest_on_curve);
-                                closest_ref = Some(vertex_ref2.clone());
-                            }
-                        }
-                    } else {
-                        let dist = (vertex.position() - point).square_length();
+            if let SelectionReference::VertexReference(vertex_ref2) = vertex_ref {
+                let vertex = paths.resolve(vertex_ref2);
+                if vertex_ref2
+                    .next(paths)
+                    .filter(|_next| point_set.contains(&vertex_ref2))
+                    .is_some()
+                {
+                    let a = vertex.position();
+                    let b = vertex.control_after();
+                    let c = vertex.next().unwrap().control_before();
+                    let d = vertex.next().unwrap().position();
+                    if sqr_distance_bezier_point_lower_bound(a, b, c, d, point) < min_dist {
+                        let (dist, closest_on_curve) = sqr_distance_bezier_point_binary(a, b, c, d, point);
                         if dist < min_dist {
                             min_dist = dist;
-                            closest_point = Some(vertex.position());
-                            closest_ref = Some(vertex_ref2.clone());
+                            closest_point = Some(closest_on_curve);
+                            closest_ref = Some(*vertex_ref2);
                         }
                     }
+                } else {
+                    let dist = (vertex.position() - point).square_length();
+                    if dist < min_dist {
+                        min_dist = dist;
+                        closest_point = Some(vertex.position());
+                        closest_ref = Some(*vertex_ref2);
+                    }
                 }
-                _ => {}
             }
         }
 
@@ -194,8 +191,8 @@ fn smooth_vertices(selection: &Selection, paths: &mut PathCollection) {
             let pos = vertex.position();
             let prev = vertex.prev();
             let next = vertex.next();
-            let dir = if prev.is_some() && next.is_some() {
-                next.unwrap().position() - prev.unwrap().position()
+            let dir = if let (Some(prev), Some(next)) = (&prev, &next) {
+                next.position() - prev.position()
             } else if let Some(prev) = prev {
                 pos - prev.position()
             } else if let Some(next) = next {
@@ -468,11 +465,11 @@ impl PathEditor {
         if path.len() == 0 {
             path.clear();
             for p in &self.vector_field.primitives {
-                match p {
-                    &VectorFieldPrimitive::Curl { center, .. } => {
+                match *p {
+                    VectorFieldPrimitive::Curl { center, .. } => {
                         path.add_circle(center, 1.0);
                     }
-                    &VectorFieldPrimitive::Linear { .. } => {}
+                    VectorFieldPrimitive::Linear { .. } => {}
                 }
             }
 
@@ -680,7 +677,7 @@ impl PathEditor {
                 self.update_selection(document, view, input);
             }
             ToolType::Pencil => {
-                if let Some(_) = input.capture_click(winit::event::MouseButton::Left) {
+                if input.capture_click(winit::event::MouseButton::Left).is_some() {
                     if document.paths.len() == 0 {
                         document.paths.push(PathData::new());
                     }

@@ -1,6 +1,3 @@
-use crate::path::ImmutablePathPoint;
-use euclid;
-
 use euclid::point2 as point;
 use euclid::vec2 as vector;
 use kurbo::common::GAUSS_LEGENDRE_COEFFS_9;
@@ -9,7 +6,7 @@ use kurbo::ParamCurve;
 use kurbo::ParamCurveDeriv;
 use kurbo::Point as KurboPoint;
 use lazy_static::lazy_static;
-use lyon::math::{Point, Vector};
+use lyon::math::Vector;
 // use packed_simd::f32x4;
 // use packed_simd::*;
 use rand::Rng;
@@ -216,6 +213,7 @@ fn test_find_t_at_distance() {
     }
 }
 
+#[allow(dead_code)]
 fn point_at_distance_binary_search(
     c: &CubicBez,
     distance_from_start: f64,
@@ -271,13 +269,13 @@ pub fn bezier_move_forward_distance<U>(
 
     let derivative = evalute_cubic_bezier_derivative(p0, p1, p2, p3, t);
 
-    const move_limit: f32 = 0.2;
+    const MOVE_LIMIT: f32 = 0.2;
 
     // Calculate a very approximate step in t-space to move.
     // Do not move too far in a single step to ensure the distance approximation
     // is not too bad
     // TODO: Approximate distance with second order curve?
-    let mut step = (distance / derivative.length()).min(move_limit).max(-move_limit);
+    let mut step = (distance / derivative.length()).min(MOVE_LIMIT).max(-MOVE_LIMIT);
     if step.abs() < 0.01 {
         return MoveResult::Point { t };
     }
@@ -358,6 +356,7 @@ lazy_static! {
     static ref WEIGHT_LOOKUP_BINARY: WeightLookupBinary = initialize_weights_binary();
 }
 
+#[allow(clippy::many_single_char_names)]
 fn initialize_weights() -> WeightLookup {
     let mut res = [0.0; 4 * (2187 + 1)];
     let step = 1.0 / 2187.0;
@@ -379,6 +378,7 @@ fn initialize_weights() -> WeightLookup {
     WeightLookup { data: res }
 }
 
+#[allow(clippy::many_single_char_names)]
 fn initialize_weights_binary() -> WeightLookupBinary {
     let mut res = [0.0; 4 * (4 * 1024 + 1)];
     let mut res2 = [0.0; 4 * (4 * 1024 + 1)];
@@ -569,6 +569,7 @@ fn ternary_search_distance(p0: Vector, p1: Vector, p2: Vector, p3: Vector, p: Ve
 //     (final_dist, final_t)
 // }
 
+#[allow(clippy::type_complexity)]
 pub fn split(
     p0: Vector,
     p1: Vector,
@@ -816,7 +817,7 @@ pub fn square_distance_segment_point<U>(
 
 impl VectorField {
     pub fn sample(&self, point: CanvasPoint) -> Option<CanvasVector> {
-        self.sample_time(0.0, point)
+        Some(self.sample_time(0.0, point))
     }
 
     pub fn is_solenoid_field() -> bool {
@@ -824,11 +825,11 @@ impl VectorField {
         true
     }
 
-    fn sample_time(&self, _time: f32, point: CanvasPoint) -> Option<CanvasVector> {
+    fn sample_time(&self, _time: f32, point: CanvasPoint) -> CanvasVector {
         let mut result = CanvasVector::new(0.0, 0.0);
         for primitive in &self.primitives {
-            match primitive {
-                &VectorFieldPrimitive::Curl {
+            match *primitive {
+                VectorFieldPrimitive::Curl {
                     center,
                     strength,
                     radius,
@@ -842,14 +843,14 @@ impl VectorField {
                         result += force;
                     }
                 }
-                &VectorFieldPrimitive::Linear { direction, strength } => {
+                VectorFieldPrimitive::Linear { direction, strength } => {
                     // This has a divergence of zero
                     // Producing a solenoid field: https://en.wikipedia.org/wiki/Solenoidal_vector_field
                     result += direction.normalize() * strength
                 }
             }
         }
-        Some(result)
+        result
     }
 
     fn normalize_safe(v: CanvasVector) -> CanvasVector {
@@ -867,10 +868,10 @@ impl VectorField {
         let mut result = vec![point];
         for i in 0..100 {
             let t = i as f32 * dt;
-            let k1 = Self::normalize_safe(self.sample_time(t, point).unwrap()) * dt;
-            let k2 = Self::normalize_safe(self.sample_time(t + dt * 0.5, point + k1 * 0.5).unwrap()) * dt;
-            let k3 = Self::normalize_safe(self.sample_time(t + dt * 0.5, point + k2 * 0.5).unwrap()) * dt;
-            let k4 = Self::normalize_safe(self.sample_time(t + dt, point + k3).unwrap()) * dt;
+            let k1 = Self::normalize_safe(self.sample_time(t, point)) * dt;
+            let k2 = Self::normalize_safe(self.sample_time(t + dt * 0.5, point + k1 * 0.5)) * dt;
+            let k3 = Self::normalize_safe(self.sample_time(t + dt * 0.5, point + k2 * 0.5)) * dt;
+            let k4 = Self::normalize_safe(self.sample_time(t + dt, point + k3)) * dt;
 
             let prev = point;
             point += k1 * (1.0 / 6.0) + k2 * (2.0 / 6.0) + k3 * (2.0 / 6.0) + k4 * (1.0 / 6.0);
@@ -894,10 +895,10 @@ impl VectorField {
         let mut result = vec![point];
         for i in 0..100 {
             let t = i as f32 * dt;
-            let k1 = Self::normalize_safe(self.sample_time(t, point).unwrap()) * dt;
-            let k2 = Self::normalize_safe(self.sample_time(t + dt * 0.5, point + k1 * 0.5).unwrap()) * dt;
-            let k3 = Self::normalize_safe(self.sample_time(t + dt * 0.5, point + k2 * 0.5).unwrap()) * dt;
-            let k4 = Self::normalize_safe(self.sample_time(t + dt, point + k3).unwrap()) * dt;
+            let k1 = Self::normalize_safe(self.sample_time(t, point)) * dt;
+            let k2 = Self::normalize_safe(self.sample_time(t + dt * 0.5, point + k1 * 0.5)) * dt;
+            let k3 = Self::normalize_safe(self.sample_time(t + dt * 0.5, point + k2 * 0.5)) * dt;
+            let k4 = Self::normalize_safe(self.sample_time(t + dt, point + k3)) * dt;
 
             point += k1 * (1.0 / 6.0) + k2 * (2.0 / 6.0) + k3 * (2.0 / 6.0) + k4 * (1.0 / 6.0);
             result.push(point);
@@ -906,29 +907,30 @@ impl VectorField {
     }
 }
 
-struct PathClearanceGrid<'a, U> {
-    clearance: f32,
-    bounds: euclid::Rect<f32, U>,
-    grid: Vec<Option<ImmutablePathPoint<'a>>>,
-}
+// struct PathClearanceGrid<'a, U> {
+//     clearance: f32,
+//     bounds: euclid::Rect<f32, U>,
+//     grid: Vec<Option<ImmutablePathPoint<'a>>>,
+// }
 
-impl<'a, U> PathClearanceGrid<'a, U> {
-    fn new(clearance: f32, bounds: euclid::Rect<f32, U>) -> PathClearanceGrid<'a, U> {
-        let cell_size = clearance * 2.0;
-        PathClearanceGrid {
-            clearance,
-            bounds,
-            grid: vec![
-                None;
-                (bounds.width() / cell_size).ceil() as usize * (bounds.height() / cell_size).ceil() as usize
-            ],
-        }
-    }
+// impl<'a, U> PathClearanceGrid<'a, U> {
+//     #[allow(dead_code)]
+//     fn new(clearance: f32, bounds: euclid::Rect<f32, U>) -> PathClearanceGrid<'a, U> {
+//         let cell_size = clearance * 2.0;
+//         PathClearanceGrid {
+//             clearance,
+//             bounds,
+//             grid: vec![
+//                 None;
+//                 (bounds.width() / cell_size).ceil() as usize * (bounds.height() / cell_size).ceil() as usize
+//             ],
+//         }
+//     }
 
-    fn add(_point: ImmutablePathPoint<'a>) {
-        // point.prev()
-    }
-}
+//     // fn add(_point: ImmutablePathPoint<'a>) {
+//     //     // point.prev()
+//     // }
+// }
 
 pub fn poisson_disc_sampling<U>(
     bounds: euclid::Rect<f32, U>,

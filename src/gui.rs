@@ -63,13 +63,13 @@ impl<T: WidgetTrait> WidgetTypeTrait for WidgetWrapper<T> {
     }
 }
 
-enum PointerEvent {
-    PointerDown,
-    PointerUp,
-    PointerEnter,
-    PointerExit,
-    PointerActive(bool),
-}
+// enum PointerEvent {
+//     PointerDown,
+//     PointerUp,
+//     PointerEnter,
+//     PointerExit,
+//     PointerActive(bool),
+// }
 
 pub struct WidgetContext<'a, 'b, T: WidgetTrait + 'static + ?Sized> {
     root: &'a mut RootWrapper<'b>,
@@ -82,7 +82,7 @@ impl<'a, 'b, T: WidgetTrait> WidgetContext<'a, 'b, T> {
         TypedWidgetReference {
             reference: WidgetReference {
                 index: self.index,
-                version: 0,
+                _version: 0,
             },
             _p: PhantomData,
         }
@@ -123,7 +123,7 @@ pub struct WrappedCallback<T: WidgetTrait + 'static, U: 'static> {
 #[derive(Copy, Clone)]
 pub struct WidgetReference {
     index: u32,
-    version: u32,
+    _version: u32,
 }
 
 #[derive(Copy, Clone)]
@@ -258,7 +258,7 @@ impl<'a> RootWrapper<'a> {
         // TypedWidgetReference {
         //     reference: WidgetReference {
         //         index,
-        //         version: 0,
+        //         _version: 0,
         //     },
         //     _p: PhantomData,
         // }
@@ -311,7 +311,7 @@ impl<'a> Root {
         let reference = TypedWidgetReference {
             reference: WidgetReference {
                 index: (self.widgets.len() - 1) as u32,
-                version: 0,
+                _version: 0,
             },
             _p: PhantomData,
         };

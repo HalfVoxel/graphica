@@ -3,21 +3,18 @@ use euclid::rect;
 use euclid::size2 as size;
 use euclid::vec2 as vector;
 use lyon::math::Point;
-use lyon::path::builder::*;
 use lyon::path::Path;
-use lyon::tessellation;
 use lyon::tessellation::geometry_builder::*;
 use lyon::tessellation::FillOptions;
 use lyon::tessellation::{StrokeOptions, StrokeTessellator};
 use std::num::NonZeroU64;
 use wgpu_glyph::{ab_glyph::FontArc, GlyphBrushBuilder, Section, Text};
 
-use euclid;
 use std::rc::Rc;
 use std::time::Instant;
 use wgpu::{
-    util::StagingBelt, BindGroup, Buffer, CommandEncoder, CommandEncoderDescriptor, Device, Extent3d, RenderPipeline,
-    TextureDescriptor, TextureFormat,
+    util::StagingBelt, BindGroup, Buffer, CommandEncoder, CommandEncoderDescriptor, Device, RenderPipeline,
+    TextureDescriptor,
 };
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
@@ -50,11 +47,9 @@ use async_std::task;
 #[cfg(feature = "profile")]
 use cpuprofiler::PROFILER;
 
-use cgmath::prelude::*;
-use cgmath::{Matrix4, Vector3};
+use cgmath::Matrix4;
 use kurbo::CubicBez;
 use kurbo::Point as KurboPoint;
-use lazy_init::Lazy;
 use palette::Pixel;
 use palette::Srgba;
 use std::sync::Arc;
@@ -142,6 +137,7 @@ struct DocumentRenderer {
     vbo: Buffer,
     ibo: Buffer,
     scene_ubo: Buffer,
+    #[allow(dead_code)]
     primitive_ubo: Buffer,
     bind_group: BindGroup,
     index_buffer_length: usize,
@@ -202,9 +198,7 @@ fn sample_points_along_sub_path(sub_path: &SubPath, spacing: f32, result: &mut V
 }
 
 #[derive(Copy, Clone)]
-struct BrushUniforms {
-    mvp_matrix: Matrix4<f32>,
-}
+struct BrushUniforms {}
 
 pub struct BrushRendererWithReadback {
     ibo: Buffer,
@@ -218,6 +212,7 @@ pub struct BrushRendererWithReadback {
 }
 
 impl BrushRendererWithReadback {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         brush_data: &BrushData,
         view: &CanvasView,
@@ -275,6 +270,7 @@ impl BrushRendererWithReadback {
 
         let (vbo, _) = create_buffer_with_data(&device, &vertices, wgpu::BufferUsage::VERTEX);
 
+        #[allow(clippy::identity_op)]
         let indices: Vec<u32> = (0..points.len() as u32)
             .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
             .collect();
@@ -438,6 +434,7 @@ struct ReadbackUniforms {
 }
 
 impl BrushRendererWithReadbackBatched {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         brush_data: &BrushData,
         _view: &CanvasView,
@@ -518,7 +515,7 @@ impl BrushRendererWithReadbackBatched {
         }
     }
 
-    pub fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
+    pub fn render(&self, encoder: &mut Encoder, _view: &CanvasView) {
         if self.ubo_size == 0 {
             return;
         }
@@ -587,60 +584,65 @@ impl BrushRendererWithReadbackBatched {
     }
 }
 
-fn catmull_rom_smooth(points: &Vec<CanvasPoint>) -> PathData {
+fn catmull_rom_smooth(points: &[CanvasPoint]) -> PathData {
     let mut result = PathData::new();
-    if points.len() < 2 {
-        // emit nothing
-    } else if points.len() == 2 {
-        result.move_to(points[0]);
-        result.line_to(points[1]);
-    } else {
-        let catmull_rom_to =
-            |path: &mut PathData, p0: CanvasPoint, p1: CanvasPoint, p2: CanvasPoint, p3: CanvasPoint| {
-                let p0 = p0.to_vector();
-                let p1 = p1.to_vector();
-                let p2 = p2.to_vector();
-                let p3 = p3.to_vector();
-                let _c0 = p1;
-                let c1 = (-p0 + p1 * 6.0 + p2 * 1.0) * (1.0 / 6.0);
-                let c2 = (p1 + p2 * 6.0 - p3) * (1.0 / 6.0);
-                let c3 = p2;
-                let vertex = path.line_to(c3.to_point());
-                path.point_mut(vertex)
-                    .prev_mut()
-                    .unwrap()
-                    .set_control_after(c1.to_point());
-                path.point_mut(vertex).set_control_before(c2.to_point());
-            };
-        // count >= 3
-        let count = points.len();
-        result.move_to(points[0]);
-
-        // Draw first curve, this is special because the first two control points are the same
-        catmull_rom_to(&mut result, points[0], points[0], points[1], points[2]);
-        for i in 0..count - 3 {
-            catmull_rom_to(&mut result, points[i], points[i + 1], points[i + 2], points[i + 3]);
+    match points.len() {
+        0 | 1 => {
+            // emit nothing
         }
-        // Draw last curve
-        catmull_rom_to(
-            &mut result,
-            points[count - 3],
-            points[count - 2],
-            points[count - 1],
-            points[count - 1],
-        );
-        result.end();
+        2 => {
+            result.move_to(points[0]);
+            result.line_to(points[1]);
+        }
+        _ => {
+            let catmull_rom_to =
+                |path: &mut PathData, p0: CanvasPoint, p1: CanvasPoint, p2: CanvasPoint, p3: CanvasPoint| {
+                    let p0 = p0.to_vector();
+                    let p1 = p1.to_vector();
+                    let p2 = p2.to_vector();
+                    let p3 = p3.to_vector();
+                    let _c0 = p1;
+                    let c1 = (-p0 + p1 * 6.0 + p2 * 1.0) * (1.0 / 6.0);
+                    let c2 = (p1 + p2 * 6.0 - p3) * (1.0 / 6.0);
+                    let c3 = p2;
+                    let vertex = path.line_to(c3.to_point());
+                    path.point_mut(vertex)
+                        .prev_mut()
+                        .unwrap()
+                        .set_control_after(c1.to_point());
+                    path.point_mut(vertex).set_control_before(c2.to_point());
+                };
+            // count >= 3
+            let count = points.len();
+            result.move_to(points[0]);
+
+            // Draw first curve, this is special because the first two control points are the same
+            catmull_rom_to(&mut result, points[0], points[0], points[1], points[2]);
+            for i in 0..count - 3 {
+                catmull_rom_to(&mut result, points[i], points[i + 1], points[i + 2], points[i + 3]);
+            }
+            // Draw last curve
+            catmull_rom_to(
+                &mut result,
+                points[count - 3],
+                points[count - 2],
+                points[count - 1],
+                points[count - 1],
+            );
+            result.end();
+        }
     }
 
     result
 }
 
 impl BrushRenderer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         brush_data: &BrushData,
-        view: &CanvasView,
+        _view: &CanvasView,
         device: &Device,
-        encoder: &mut CommandEncoder,
+        _encoder: &mut CommandEncoder,
         scene_ubo: &Buffer,
         scene_ubo_size: u64,
         brush_manager: &Rc<BrushManager>,
@@ -694,17 +696,17 @@ impl BrushRenderer {
         }
 
         let (vbo, _) = create_buffer_with_data(device, &vertices, wgpu::BufferUsage::VERTEX);
+
+        #[allow(clippy::identity_op)]
         let indices: Vec<u32> = (0..(vertices.len() / 4) as u32)
             .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
             .collect();
         let (ibo, _) = create_buffer_with_data(device, &indices, wgpu::BufferUsage::INDEX);
 
-        let view_matrix = view.canvas_to_view_matrix();
-
         let (primitive_ubo, primitive_ubo_size) = create_buffer(
             device,
             &[BrushUniforms {
-                mvp_matrix: view_matrix * Matrix4::from_translation([0.0, 0.0, 0.1].into()),
+                // mvp_matrix: view_matrix * Matrix4::from_translation([0.0, 0.0, 0.1].into()),
             }],
             wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
             "Brush Primitive UBO",
@@ -828,6 +830,7 @@ impl BrushRenderer {
 }
 
 impl DocumentRenderer {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         document: &Document,
         view: &CanvasView,
@@ -854,7 +857,7 @@ impl DocumentRenderer {
             .tessellate_path(
                 &p,
                 &StrokeOptions::tolerance(canvas_tolerance.get()).with_line_width(canvas_line_width.get()),
-                &mut BuffersBuilder::new(&mut geometry, WithId(0 as i32)),
+                &mut BuffersBuilder::new(&mut geometry, WithId(0)),
             )
             .unwrap();
 
@@ -939,7 +942,7 @@ impl DocumentRenderer {
             primitive_ubo,
             bind_group,
             index_buffer_length: indices.len(),
-            brush_renderer: brush_renderer,
+            brush_renderer,
             render_pipeline: if !wireframe {
                 render_pipeline.clone()
             } else {
@@ -985,6 +988,7 @@ impl DocumentRenderer {
     }
 }
 
+#[allow(unused_variables)]
 pub fn main() {
     #[cfg(feature = "profile")]
     PROFILER
@@ -1051,10 +1055,10 @@ pub fn main() {
     let mut editor = Editor {
         path_editor: PathEditor::new(&mut ui_document),
         brush_editor: BrushEditor::new(),
-        document: document,
-        ui_document: ui_document,
-        gui: gui,
-        gui_root: gui_root,
+        document,
+        ui_document,
+        gui,
+        gui_root,
         scene: SceneParams {
             target_zoom: 1.0,
             view: CanvasView {
@@ -1212,7 +1216,7 @@ pub fn main() {
             cull_mode: wgpu::CullMode::None,
             polygon_mode: wgpu::PolygonMode::Fill,
         },
-        depth_stencil: depth_stencil_state.clone(),
+        depth_stencil: depth_stencil_state,
         multisample: wgpu::MultisampleState {
             count: sample_count,
             mask: !0,
@@ -1336,7 +1340,7 @@ pub fn main() {
         Texture::load_from_file(std::path::Path::new("brush.png"), &device, &mut init_encoder).unwrap(),
     );
     editor.document.textures.push(tex.clone());
-    editor.ui_document.textures.push(tex.clone());
+    editor.ui_document.textures.push(tex);
 
     queue.submit(std::iter::once(init_encoder.finish()));
 
@@ -1550,15 +1554,15 @@ pub fn main() {
             scratch_texture: scratch_texture.clone(),
         };
 
-        // {
-        //     let mut pass = hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background render pass"));
-        //     pass.set_pipeline(&bg_pipeline);
-        //     pass.set_bind_group(0, &bind_group, &[]);
-        //     pass.set_index_buffer(bg_ibo.slice(..), wgpu::IndexFormat::Uint16);
-        //     pass.set_vertex_buffer(0, bg_vbo.slice(..));
+        {
+            let mut pass = hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background render pass"));
+            pass.set_pipeline(&bg_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_index_buffer(bg_ibo.slice(..), wgpu::IndexFormat::Uint16);
+            pass.set_vertex_buffer(0, bg_vbo.slice(..));
 
-        //     pass.draw_indexed(0..6, 0, 0..1);
-        // }
+            pass.draw_indexed(0..6, 0, 0..1);
+        }
 
         document_renderer1
             .as_mut()
@@ -1945,5 +1949,5 @@ fn update_inputs(
 
     *control_flow = ControlFlow::Poll;
 
-    return true;
+    true
 }

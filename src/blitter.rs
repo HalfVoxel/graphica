@@ -2,9 +2,9 @@ use crate::wgpu_utils::*;
 use crate::{shader::load_shader, vertex::GPUVertex};
 use lyon::math::*;
 use wgpu::{
-    util::StagingBelt, AddressMode, BindGroup, BindGroupLayout, BlendFactor, Buffer, CommandEncoder, ComputePipeline,
-    ComputePipelineDescriptor, DepthStencilState, Device, FilterMode, PipelineLayoutDescriptor, RenderPass,
-    RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerDescriptor, TextureView,
+    AddressMode, BindGroup, BindGroupLayout, Buffer, CommandEncoder, ComputePipeline, ComputePipelineDescriptor,
+    DepthStencilState, Device, FilterMode, PipelineLayoutDescriptor, RenderPass, RenderPipeline,
+    RenderPipelineDescriptor, Sampler, SamplerDescriptor, TextureView,
 };
 
 #[repr(C)]
@@ -52,7 +52,7 @@ pub struct Blitter {
 }
 
 impl Blitter {
-    pub fn new(device: &Device, encoder: &mut CommandEncoder) -> Blitter {
+    pub fn new(device: &Device, _encoder: &mut CommandEncoder) -> Blitter {
         let blit_vs = load_shader(&device, "shaders/blit.vert.spv");
         let blit_fs = load_shader(&device, "shaders/blit.frag.spv");
 
