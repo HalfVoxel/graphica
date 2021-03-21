@@ -816,20 +816,7 @@ impl DocumentRenderer {
             .unwrap();
 
         let (vbo, _) = create_buffer(device, &geometry.vertices, wgpu::BufferUsage::VERTEX, "Document VBO");
-
-        let indices: Vec<u32> = if wireframe {
-            // Transform the triangle primitives into line primitives: (0,1,2) => (0,1),(1,2),(2,0)
-            geometry
-                .indices
-                .chunks_exact(3)
-                .flat_map(|v| vec![v[0], v[1], v[1], v[2], v[2], v[0]])
-                .collect()
-        } else {
-            geometry.indices
-        };
-        // last_index_count = indices.len();
-
-        let (ibo, _) = create_buffer(device, &indices, wgpu::BufferUsage::INDEX, "Document IBO");
+        let (ibo, _) = create_buffer(device, &geometry.indices, wgpu::BufferUsage::INDEX, "Document IBO");
 
         let (scene_ubo, scene_ubo_size) = create_buffer(
             device,
@@ -895,7 +882,7 @@ impl DocumentRenderer {
             scene_ubo,
             primitive_ubo,
             bind_group,
-            index_buffer_length: indices.len(),
+            index_buffer_length: geometry.indices.len(),
             brush_renderer,
             render_pipeline: if !wireframe {
                 render_pipeline.clone()
@@ -1139,9 +1126,6 @@ pub fn main() {
     };
 
     let render_pipeline = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor));
-
-    // TODO: this isn't what we want: we'd need the equivalent of VK_POLYGON_MODE_LINE,
-    // but it doesn't seem to be exposed by wgpu?
     render_pipeline_descriptor.primitive.polygon_mode = wgpu::PolygonMode::Line;
     let wireframe_render_pipeline = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor));
 
