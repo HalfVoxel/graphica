@@ -374,7 +374,7 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
             },
         ];
 
-        let (vbo, _) = create_buffer_with_data(&device, vertices, wgpu::BufferUsage::VERTEX);
+        let (vbo, _) = create_buffer(&device, vertices, wgpu::BufferUsage::VERTEX, None);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("blit"),
@@ -427,7 +427,7 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
             },
         ];
 
-        let (vbo, _) = create_buffer_with_data(&device, vertices, wgpu::BufferUsage::VERTEX);
+        let (vbo, _) = create_buffer(&device, vertices, wgpu::BufferUsage::VERTEX, None);
 
         let pipeline: &'a RenderPipeline = match sample_count {
             1 => &self.blitter.render_pipelines[0],

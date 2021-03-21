@@ -271,13 +271,13 @@ impl BrushRendererWithReadback {
             })
             .collect();
 
-        let (vbo, _) = create_buffer_with_data(&device, &vertices, wgpu::BufferUsage::VERTEX);
+        let (vbo, _) = create_buffer(&device, &vertices, wgpu::BufferUsage::VERTEX, None);
 
         #[allow(clippy::identity_op)]
         let indices: Vec<u32> = (0..points.len() as u32)
             .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
             .collect();
-        let (ibo, _) = create_buffer_with_data(&device, &indices, wgpu::BufferUsage::INDEX);
+        let (ibo, _) = create_buffer(&device, &indices, wgpu::BufferUsage::INDEX, None);
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -465,7 +465,7 @@ impl BrushRendererWithReadbackBatched {
             })
             .collect();
 
-        let (ubo, ubo_size) = create_buffer_with_data(&device, &primitives, wgpu::BufferUsage::STORAGE);
+        let (ubo, ubo_size) = create_buffer(&device, &primitives, wgpu::BufferUsage::STORAGE, None);
 
         const LOCAL_SIZE: u32 = 32;
         let width_per_group = (size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
@@ -528,7 +528,7 @@ impl BrushRendererWithReadbackBatched {
         let width_per_group = (self.size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
         let height_per_group = (self.size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
 
-        let (settings_ubo, settings_ubo_size) = create_buffer_with_data(
+        let (settings_ubo, settings_ubo_size) = create_buffer(
             &encoder.device,
             &[ReadbackUniforms {
                 width_per_group: width_per_group as i32,
@@ -536,6 +536,7 @@ impl BrushRendererWithReadbackBatched {
                 num_primitives: self.points.len() as i32 - 1,
             }],
             wgpu::BufferUsage::UNIFORM,
+            "Readback settings",
         );
 
         let bind_group = encoder.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -646,13 +647,13 @@ impl BrushRenderer {
             stroke_ranges.push(start_triangle..end_triangle);
         }
 
-        let (vbo, _) = create_buffer_with_data(device, &vertices, wgpu::BufferUsage::VERTEX);
+        let (vbo, _) = create_buffer(device, &vertices, wgpu::BufferUsage::VERTEX, None);
 
         #[allow(clippy::identity_op)]
         let indices: Vec<u32> = (0..(vertices.len() / 4) as u32)
             .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
             .collect();
-        let (ibo, _) = create_buffer_with_data(device, &indices, wgpu::BufferUsage::INDEX);
+        let (ibo, _) = create_buffer(device, &indices, wgpu::BufferUsage::INDEX, None);
 
         let view_matrix = view.canvas_to_view_matrix();
 
