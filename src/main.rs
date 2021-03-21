@@ -1279,8 +1279,8 @@ pub fn main() {
 
     let mipmapper = crate::mipmap::Mipmapper::new(&device);
 
-    let font: &[u8] = include_bytes!("../fonts/Bitter-Regular.ttf");
-    let font = FontArc::try_from_slice(font).unwrap();
+    let font: Vec<u8> = std::fs::read("fonts/Bitter-Regular.ttf").expect("Could not find font");
+    let font = FontArc::try_from_vec(font).unwrap();
     let mut glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, crate::config::TEXTURE_FORMAT);
 
     let document_extent = wgpu::Extent3d {
