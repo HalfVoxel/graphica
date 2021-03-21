@@ -1,3 +1,4 @@
+mod blend_modes;
 mod blitter;
 mod blur;
 mod brush_editor;

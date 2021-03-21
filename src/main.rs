@@ -21,7 +21,6 @@ use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCo
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use crate::brush_editor::{BrushData, BrushEditor};
 use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex};
 use crate::canvas::CanvasView;
 use crate::encoder::Encoder;
@@ -36,6 +35,10 @@ use crate::path_collection::{PathCollection, VertexReference};
 use crate::path_editor::*;
 use crate::shader::load_shader;
 use crate::toolbar::GUIRoot;
+use crate::{
+    blend_modes,
+    brush_editor::{BrushData, BrushEditor},
+};
 use crate::{blitter::Blitter, vertex::GPUVertex};
 use crate::{
     texture::{RenderTexture, SwapchainImageWrapper, Texture},
@@ -1097,16 +1100,8 @@ pub fn main() {
             entry_point: "main",
             targets: &[wgpu::ColorTargetState {
                 format: crate::config::TEXTURE_FORMAT,
-                color_blend: wgpu::BlendState {
-                    src_factor: wgpu::BlendFactor::SrcAlpha,
-                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    operation: wgpu::BlendOperation::Add,
-                },
-                alpha_blend: wgpu::BlendState {
-                    src_factor: wgpu::BlendFactor::SrcAlpha,
-                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    operation: wgpu::BlendOperation::Add,
-                },
+                color_blend: blend_modes::NORMAL_COLOR,
+                alpha_blend: blend_modes::NORMAL_ALPHA,
                 write_mask: wgpu::ColorWrite::ALL,
             }],
         }),
