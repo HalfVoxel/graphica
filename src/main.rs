@@ -198,7 +198,10 @@ fn sample_points_along_sub_path(sub_path: &SubPath, spacing: f32, result: &mut V
 }
 
 #[derive(Copy, Clone)]
-struct BrushUniforms {}
+#[allow(dead_code)]
+struct BrushUniforms {
+    mvp_matrix: Matrix4<f32>,
+}
 
 pub struct BrushRendererWithReadback {
     ibo: Buffer,
@@ -588,7 +591,7 @@ impl BrushRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         brush_data: &BrushData,
-        _view: &CanvasView,
+        view: &CanvasView,
         device: &Device,
         _encoder: &mut CommandEncoder,
         scene_ubo: &Buffer,
@@ -651,10 +654,12 @@ impl BrushRenderer {
             .collect();
         let (ibo, _) = create_buffer_with_data(device, &indices, wgpu::BufferUsage::INDEX);
 
+        let view_matrix = view.canvas_to_view_matrix();
+
         let (primitive_ubo, primitive_ubo_size) = create_buffer(
             device,
             &[BrushUniforms {
-                // mvp_matrix: view_matrix * Matrix4::from_translation([0.0, 0.0, 0.1].into()),
+                mvp_matrix: view_matrix * Matrix4::from_translation([0.0, 0.0, 0.1].into()),
             }],
             wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
             "Brush Primitive UBO",
