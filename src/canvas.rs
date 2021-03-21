@@ -16,6 +16,8 @@ pub struct CanvasView {
 
 #[test]
 fn test_canvas_to_view_matrix() {
+    use euclid::vec2 as vector;
+
     let v = CanvasView {
         zoom: 1.0,
         scroll: vector(0.0, 0.0),
