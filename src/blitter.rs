@@ -1,3 +1,4 @@
+use crate::shader::load_wgsl_shader;
 use crate::wgpu_utils::*;
 use crate::{shader::load_shader, vertex::GPUVertex};
 use lyon::math::*;
@@ -22,12 +23,12 @@ impl GPUVertex for BlitGpuVertex {
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                     shader_location: 0,
                 },
                 wgpu::VertexAttribute {
                     offset: 8,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                     shader_location: 1,
                 },
             ],
@@ -53,8 +54,7 @@ pub struct Blitter {
 
 impl Blitter {
     pub fn new(device: &Device, _encoder: &mut CommandEncoder) -> Blitter {
-        let blit_vs = load_shader(&device, "shaders/blit.vert.spv");
-        let blit_fs = load_shader(&device, "shaders/blit.frag.spv");
+        let blit_module = load_wgsl_shader(&device, "shaders/blit.wgsl");
 
         let sampler = device.create_sampler(&SamplerDescriptor {
             label: Some("Blitter sampler"),
@@ -108,17 +108,16 @@ impl Blitter {
                     label: Some("blit pipeline"),
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {
-                        module: &blit_vs,
-                        entry_point: "main",
+                        module: &blit_module,
+                        entry_point: "vs_main",
                         buffers: &[BlitGpuVertex::desc()],
                     },
                     fragment: Some(wgpu::FragmentState {
-                        module: &blit_fs,
-                        entry_point: "main",
+                        module: &blit_module,
+                        entry_point: "fs_main",
                         targets: &[wgpu::ColorTargetState {
                             format: crate::config::TEXTURE_FORMAT,
-                            color_blend: wgpu::BlendState::REPLACE,
-                            alpha_blend: wgpu::BlendState::REPLACE,
+                            blend: Some(wgpu::BlendState::REPLACE),
                             write_mask: wgpu::ColorWrite::ALL,
                         }],
                     }),
@@ -127,7 +126,9 @@ impl Blitter {
                         polygon_mode: wgpu::PolygonMode::Fill,
                         topology: wgpu::PrimitiveTopology::TriangleList,
                         front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: wgpu::CullMode::None,
+                        cull_mode: None,
+                        clamp_depth: false,
+                        conservative: false,
                     },
                     depth_stencil: Some(DepthStencilState {
                         format: wgpu::TextureFormat::Depth32Float,
@@ -135,7 +136,6 @@ impl Blitter {
                         depth_compare: wgpu::CompareFunction::Always,
                         stencil: wgpu::StencilState::default(),
                         bias: wgpu::DepthBiasState::default(),
-                        clamp_depth: false,
                     }),
                     multisample: wgpu::MultisampleState {
                         count: sample_count,
@@ -378,8 +378,8 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("blit"),
-            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                attachment: self.target_texture,
+            color_attachments: &[wgpu::RenderPassColorAttachment {
+                view: self.target_texture,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: true,

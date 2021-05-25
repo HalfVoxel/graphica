@@ -81,17 +81,17 @@ impl GPUVertex for PosNormVertex {
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                     shader_location: 0,
                 },
                 wgpu::VertexAttribute {
                     offset: 8,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                     shader_location: 1,
                 },
                 wgpu::VertexAttribute {
                     offset: 16,
-                    format: wgpu::VertexFormat::Int,
+                    format: wgpu::VertexFormat::Sint32,
                     shader_location: 2,
                 },
             ],
@@ -123,7 +123,7 @@ fn create_multisampled_framebuffer(
             size: wgpu::Extent3d {
                 width: size.width,
                 height: size.height,
-                depth: 1,
+                depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             // array_layer_count: 1,
@@ -302,7 +302,7 @@ impl BrushRendererWithReadback {
         let texture_extent = wgpu::Extent3d {
             width: width_in_pixels,
             height: width_in_pixels,
-            depth: 1,
+            depth_or_array_layers: 1,
         };
 
         let temp_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -372,8 +372,8 @@ impl BrushRendererWithReadback {
             {
                 let mut pass = encoder.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Brush with readback. First pass."),
-                    color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                        attachment: &self.temp_texture_view,
+                    color_attachments: &[wgpu::RenderPassColorAttachment {
+                        view: &self.temp_texture_view,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::RED),
                             store: true,
@@ -476,7 +476,7 @@ impl BrushRendererWithReadbackBatched {
         let texture_extent = wgpu::Extent3d {
             width: width_per_group * 32,
             height: width_per_group * 32,
-            depth: 1,
+            depth_or_array_layers: 1,
         };
 
         let temp_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -564,20 +564,20 @@ impl BrushRendererWithReadbackBatched {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::Buffer {
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &self.ubo,
                         offset: 0,
                         // TODO: Use None?
                         size: Some(NonZeroU64::new(self.ubo_size).unwrap()),
-                    },
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::Buffer {
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &settings_ubo,
                         offset: 0,
                         size: Some(NonZeroU64::new(settings_ubo_size).unwrap()),
-                    },
+                    }),
                 },
             ],
         });
@@ -698,19 +698,19 @@ impl BrushRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &scene_ubo,
                         offset: 0,
                         size: Some(NonZeroU64::new(scene_ubo_size).unwrap()),
-                    },
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer {
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &primitive_ubo,
                         offset: 0,
                         size: Some(NonZeroU64::new(primitive_ubo_size).unwrap()),
-                    },
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -757,8 +757,8 @@ impl BrushRenderer {
             {
                 let mut pass = encoder.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("brush"),
-                    color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                        attachment: &encoder.scratch_texture.view,
+                    color_attachments: &[wgpu::RenderPassColorAttachment {
+                        view: &encoder.scratch_texture.view,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                             store: true,
@@ -851,19 +851,19 @@ impl DocumentRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &scene_ubo,
                         offset: 0,
                         size: Some(NonZeroU64::new(scene_ubo_size).unwrap()),
-                    },
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer {
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &primitive_ubo,
                         offset: 0,
                         size: Some(NonZeroU64::new(primitive_ubo_size).unwrap()),
-                    },
+                    }),
                 },
             ],
         });
@@ -1041,10 +1041,12 @@ pub fn main() {
 
     let mut staging_belt = wgpu::util::StagingBelt::new(1024);
 
-    let vs_module = load_shader(&device, "shaders/geometry.vert.spv");
-    let fs_module = load_shader(&device, "shaders/geometry.frag.spv");
-    let bg_vs_module = load_shader(&device, "shaders/background.vert.spv");
-    let bg_fs_module = load_shader(&device, "shaders/background.frag.spv");
+    let vs_module = crate::shader::load_wgsl_shader(&device, "shaders/geometry.wgsl");
+    let bg_module = crate::shader::load_wgsl_shader(&device, "shaders/background.wgsl");
+    // let vs_module = load_shader(&device, "shaders/geometry.vert.spv");
+    // let fs_module = load_shader(&device, "shaders/geometry.frag.spv");
+    // let bg_vs_module = load_shader(&device, "shaders/background.vert.spv");
+    // let bg_fs_module = load_shader(&device, "shaders/background.frag.spv");
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Geometry Bind Group Layout"),
@@ -1084,7 +1086,6 @@ pub fn main() {
         depth_compare: wgpu::CompareFunction::Greater,
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState::default(),
-        clamp_depth: false,
     });
 
     let mut render_pipeline_descriptor = wgpu::RenderPipelineDescriptor {
@@ -1092,16 +1093,15 @@ pub fn main() {
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &vs_module,
-            entry_point: "main",
+            entry_point: "vs_main",
             buffers: &[PosNormVertex::desc()],
         },
         fragment: Some(wgpu::FragmentState {
-            module: &fs_module,
-            entry_point: "main",
+            module: &vs_module,
+            entry_point: "fs_main",
             targets: &[wgpu::ColorTargetState {
                 format: crate::config::TEXTURE_FORMAT,
-                color_blend: blend_modes::NORMAL_COLOR,
-                alpha_blend: blend_modes::NORMAL_ALPHA,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrite::ALL,
             }],
         }),
@@ -1109,8 +1109,10 @@ pub fn main() {
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
-            cull_mode: wgpu::CullMode::None,
+            cull_mode: None,
             polygon_mode: wgpu::PolygonMode::Fill,
+            clamp_depth: false,
+            conservative: false,
         },
         depth_stencil: depth_stencil_state.clone(),
         multisample: wgpu::MultisampleState {
@@ -1128,17 +1130,16 @@ pub fn main() {
         label: Some("Background pipeline"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
-            module: &bg_vs_module,
-            entry_point: "main",
+            module: &bg_module,
+            entry_point: "vs_main",
             buffers: &[Point::desc()],
         },
         fragment: Some(wgpu::FragmentState {
-            module: &bg_fs_module,
-            entry_point: "main",
+            module: &bg_module,
+            entry_point: "fs_main",
             targets: &[wgpu::ColorTargetState {
                 format: crate::config::TEXTURE_FORMAT,
-                color_blend: wgpu::BlendState::REPLACE,
-                alpha_blend: wgpu::BlendState::REPLACE,
+                blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrite::ALL,
             }],
         }),
@@ -1146,8 +1147,10 @@ pub fn main() {
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
-            cull_mode: wgpu::CullMode::None,
+            cull_mode: None,
             polygon_mode: wgpu::PolygonMode::Fill,
+            clamp_depth: false,
+            conservative: false,
         },
         depth_stencil: depth_stencil_state,
         multisample: wgpu::MultisampleState {
@@ -1185,7 +1188,7 @@ pub fn main() {
         let document_extent = wgpu::Extent3d {
             width: editor.document.size.unwrap().width,
             height: editor.document.size.unwrap().height,
-            depth: 1,
+            depth_or_array_layers: 1,
         };
         depth_texture_document = Some(Rc::new(Texture::new(
             &device,
@@ -1250,19 +1253,19 @@ pub fn main() {
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer {
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: &globals_ubo,
                     offset: 0,
                     size: Some(NonZeroU64::new(globals_ubo_size).unwrap()),
-                },
+                }),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Buffer {
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: &bg_ubo,
                     offset: 0,
                     size: Some(NonZeroU64::new(bg_ubo_size).unwrap()),
-                },
+                }),
             },
         ],
     });
@@ -1286,7 +1289,7 @@ pub fn main() {
     let document_extent = wgpu::Extent3d {
         width: editor.document.size.unwrap().width,
         height: editor.document.size.unwrap().height,
-        depth: 1,
+        depth_or_array_layers: 1,
     };
 
     // Render into this texture
@@ -1372,7 +1375,7 @@ pub fn main() {
         let window_extent = wgpu::Extent3d {
             width: swap_chain_desc.width,
             height: swap_chain_desc.height,
-            depth: 1,
+            depth_or_array_layers: 1,
         };
 
         if scene.size_changed {

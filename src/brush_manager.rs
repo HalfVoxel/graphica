@@ -1,4 +1,5 @@
-use crate::{blend_modes, shader::load_shader};
+use crate::shader::load_shader;
+use crate::shader::load_wgsl_shader;
 use crate::{geometry_utilities::types::*, vertex::GPUVertex};
 use lyon::math::*;
 use wgpu::{ComputePipeline, Device, RenderPipeline, TextureViewDimension};
@@ -21,17 +22,17 @@ impl GPUVertex for BrushGpuVertex {
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                     shader_location: 0,
                 },
                 wgpu::VertexAttribute {
                     offset: 8,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                     shader_location: 1,
                 },
                 wgpu::VertexAttribute {
                     offset: 16,
-                    format: wgpu::VertexFormat::Uchar4Norm,
+                    format: wgpu::VertexFormat::Unorm8x4,
                     shader_location: 2,
                 },
             ],
@@ -57,27 +58,27 @@ impl GPUVertex for CloneBrushGpuVertex {
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                     shader_location: 0,
                 },
                 wgpu::VertexAttribute {
                     offset: 8,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                     shader_location: 1,
                 },
                 wgpu::VertexAttribute {
                     offset: 16,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                     shader_location: 2,
                 },
                 wgpu::VertexAttribute {
                     offset: 24,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                     shader_location: 3,
                 },
                 wgpu::VertexAttribute {
                     offset: 32,
-                    format: wgpu::VertexFormat::Uchar4Norm,
+                    format: wgpu::VertexFormat::Unorm8x4,
                     shader_location: 4,
                 },
             ],
@@ -140,7 +141,7 @@ impl BrushManager {
                     visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        multisampled: true,
+                        multisampled: false,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,
@@ -148,10 +149,8 @@ impl BrushManager {
             ],
         });
 
-        let brush_vs_module = load_shader(&device, "shaders/brush.vert.spv");
-        let brush_fs_module = load_shader(&device, "shaders/brush.frag.spv");
-        let clone_brush_vs_module = load_shader(&device, "shaders/clone_brush.vert.spv");
-        let clone_brush_fs_module = load_shader(&device, "shaders/clone_brush.frag.spv");
+        let brush_module = load_wgsl_shader(&device, "shaders/brush.wgsl");
+        let clone_brush_module = load_wgsl_shader(&device, "shaders/clone_brush.wgsl");
 
         let pipeline_layout_brush = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
@@ -163,17 +162,16 @@ impl BrushManager {
             label: None,
             layout: Some(&pipeline_layout_brush),
             vertex: wgpu::VertexState {
-                module: &brush_vs_module,
-                entry_point: "main",
+                module: &brush_module,
+                entry_point: "vs_main",
                 buffers: &[BrushGpuVertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &brush_fs_module,
-                entry_point: "main",
+                module: &brush_module,
+                entry_point: "fs_main",
                 targets: &[wgpu::ColorTargetState {
                     format: crate::config::TEXTURE_FORMAT,
-                    color_blend: blend_modes::NORMAL_COLOR,
-                    alpha_blend: blend_modes::NORMAL_ALPHA,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrite::ALL,
                 }],
             }),
@@ -182,7 +180,9 @@ impl BrushManager {
                 strip_index_format: None,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::None,
+                cull_mode: None,
+                clamp_depth: false,
+                conservative: false,
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
@@ -205,7 +205,7 @@ impl BrushManager {
                     visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        multisampled: true,
+                        multisampled: false,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,
@@ -215,7 +215,7 @@ impl BrushManager {
                     visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        multisampled: true,
+                        multisampled: false,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,
@@ -233,17 +233,16 @@ impl BrushManager {
             label: None,
             layout: Some(&pipeline_layout_clone_brush),
             vertex: wgpu::VertexState {
-                module: &clone_brush_vs_module,
-                entry_point: "main",
+                module: &clone_brush_module,
+                entry_point: "vs_main",
                 buffers: &[CloneBrushGpuVertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &clone_brush_fs_module,
-                entry_point: "main",
+                module: &clone_brush_module,
+                entry_point: "fs_main",
                 targets: &[wgpu::ColorTargetState {
                     format: crate::config::TEXTURE_FORMAT,
-                    color_blend: wgpu::BlendState::REPLACE,
-                    alpha_blend: wgpu::BlendState::REPLACE,
+                    blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrite::ALL,
                 }],
             }),
@@ -252,7 +251,9 @@ impl BrushManager {
                 strip_index_format: None,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::None,
+                cull_mode: None,
+                clamp_depth: false,
+                conservative: false,
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),

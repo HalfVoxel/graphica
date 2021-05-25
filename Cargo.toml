@@ -12,11 +12,11 @@ path = "src/bin/main.rs"
 # lyon = { path = "../lyon", features = ["extra"] }
 lyon = "0.17"
 # wgpu = { path = "../wgpu-rs" }
-wgpu = "0.7"
+wgpu = "0.8"
 # wgpu-core = { path = "../wgpu/wgpu-core"}
 # wgpu-native = { path = "../wgpu/wgpu-native"}
 # wgpu = { path = "../wgpu-rs"}
-winit = "0.24.0"
+winit = "0.25.0"
 euclid = "0.22"
 log = "0.4"
 env_logger = "0.8"
@@ -27,8 +27,8 @@ palette = "0.5"
 image = "0.23"
 kurbo = "0.8"
 async-std = "1.6"
-arrayvec = "0.5"
-wgpu_glyph = "0.11"
+arrayvec = "0.7"
+wgpu_glyph = "0.12"
 cpuprofiler = { version = "0.0.4", optional = true }
 cgmath = "0.18"
 lazy-init = "0.5"
@@ -57,6 +57,7 @@ shaderc = "0.7"
 # gfx-descriptor = { version = "0.1.0", path = "../gfx-extras/gfx-descriptor" }
 # gfx-memory = { version = "0.1.0", path = "../gfx-extras/gfx-memory" }
 # wgpu = { path = "../wgpu-rs"}
+# naga = { path = "../naga"}
 
 [dev-dependencies]
 criterion = "0.3"

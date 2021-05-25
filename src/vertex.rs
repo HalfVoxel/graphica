@@ -11,7 +11,7 @@ impl GPUVertex for Point {
             step_mode: wgpu::InputStepMode::Vertex,
             attributes: &[wgpu::VertexAttribute {
                 offset: 0,
-                format: wgpu::VertexFormat::Float2,
+                format: wgpu::VertexFormat::Float32x2,
                 shader_location: 0,
             }],
         }

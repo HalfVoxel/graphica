@@ -81,7 +81,7 @@ impl RenderTexture {
             RenderTexture::SwapchainImage(tex) => Extent3d {
                 width: tex.descriptor.width,
                 height: tex.descriptor.width,
-                depth: 1,
+                depth_or_array_layers: 1,
             },
         }
     }
@@ -120,7 +120,7 @@ impl Texture {
                 dimension: Some(wgpu::TextureViewDimension::D2),
                 aspect: wgpu::TextureAspect::All,
                 base_mip_level: miplevel,
-                level_count: Some(NonZeroU32::new(1).unwrap()),
+                mip_level_count: Some(NonZeroU32::new(1).unwrap()),
                 base_array_layer: 0,
                 array_layer_count: None,
             })
@@ -168,9 +168,9 @@ impl Texture {
         let height = rgba.height();
 
         let texture_extent = wgpu::Extent3d {
-            width: width,
-            height: height,
-            depth: 1,
+            width,
+            height,
+            depth_or_array_layers: 1,
         };
         let descriptor = wgpu::TextureDescriptor {
             label: Some(path.to_str().unwrap()),
@@ -193,15 +193,17 @@ impl Texture {
         });
 
         encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
+            wgpu::ImageCopyBuffer {
                 buffer: &transfer_buffer,
-                layout: wgpu::TextureDataLayout {
+                layout: wgpu::ImageDataLayout {
                     offset: 0,
-                    bytes_per_row: 4 * width * std::mem::size_of::<u8>() as u32,
-                    rows_per_image: height,
+                    bytes_per_row: Some(
+                        NonZeroU32::new(4 * width * std::mem::size_of::<u8>() as u32).expect("image width was zero"),
+                    ),
+                    rows_per_image: Some(NonZeroU32::new(height).expect("image height was zero")),
                 },
             },
-            wgpu::TextureCopyView {
+            wgpu::ImageCopyTexture {
                 texture: &texture.buffer,
                 mip_level: 0,
                 // array_layer: 0,
