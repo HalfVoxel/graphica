@@ -23,6 +23,7 @@ use winit::window::Window;
 
 use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex};
 use crate::canvas::CanvasView;
+use crate::egui_wrapper::EguiWrapper;
 use crate::encoder::Encoder;
 use crate::fps_limiter::FPSLimiter;
 use crate::geometry_utilities;
@@ -1169,7 +1170,7 @@ pub fn main() {
 
     let mut swap_chain_desc = wgpu::SwapChainDescriptor {
         usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
-        format: wgpu::TextureFormat::Bgra8Unorm,
+        format: crate::config::FRAMEBUFFER_TEXTURE_FORMAT,
         width: size.width,
         height: size.height,
         present_mode: wgpu::PresentMode::Fifo,
@@ -1321,7 +1322,13 @@ pub fn main() {
         },
     ));
 
+    let start_time = Instant::now();
+
+    let mut egui_wrapper = EguiWrapper::new(&device, size, window.scale_factor());
+
     event_loop.run(move |event, _, control_flow| {
+        egui_wrapper.platform.handle_event(&event);
+
         let scene = &mut editor.scene;
         let new_time = Instant::now();
         let dt = (new_time.duration_since(last_time)).as_secs_f32();
@@ -1331,6 +1338,8 @@ pub fn main() {
             // keep polling inputs.
             return;
         }
+
+        egui_wrapper.platform.update_time(start_time.elapsed().as_secs_f64());
 
         editor.gui.update();
         editor.gui.input(&mut editor.ui_document, &mut editor.input);
@@ -1424,17 +1433,7 @@ pub fn main() {
             resolution: PhysicalSize::new(doc_size.width, doc_size.height),
         };
 
-        update_buffer_via_transfer(
-            &device,
-            &mut encoder,
-            &mut staging_belt,
-            &[Globals {
-                resolution: [scene.view.resolution.width as f32, scene.view.resolution.height as f32],
-                zoom: scene.view.zoom,
-                scroll_offset: scene.view.scroll.to_array(),
-            }],
-            &globals_ubo,
-        );
+        scene.update_uniform_globals(&device, &mut encoder, &mut staging_belt, &globals_ubo);
 
         let hash = editor.document.hash() ^ scene.view.hash();
         if hash != last_hash1 || document_renderer1.is_none() {
@@ -1490,6 +1489,7 @@ pub fn main() {
             scratch_texture: scratch_texture.clone(),
         };
 
+        // render_background(hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
         {
             let mut pass = hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background render pass"));
             pass.set_pipeline(&bg_pipeline);
@@ -1508,18 +1508,6 @@ pub fn main() {
             .as_mut()
             .unwrap()
             .update(&ui_view, &device, &mut encoder, &mut staging_belt);
-
-        // let temp_window_frame = device.create_texture(&wgpu::TextureDescriptor {
-        //     label: Some("Temp window texture"),
-        //     size: window_extent,
-        //     mip_level_count: 1,
-        //     sample_count: 1,
-        //     array_layer_count: 1,
-        //     dimension: wgpu::TextureDimension::D2,
-        //     format: crate::config::TEXTURE_FORMAT,
-        //     usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::STORAGE,
-        // });
-        // let temp_window_frame_view = temp_window_frame.create_default_view();
 
         {
             {
@@ -1650,6 +1638,32 @@ pub fn main() {
         // );
 
         staging_belt.finish();
+
+        // Upload all resources for the GPU.
+        let screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
+            physical_width: window_extent.width,
+            physical_height: window_extent.height,
+            scale_factor: window.scale_factor() as f32,
+        };
+
+        let paint_jobs = egui_wrapper.frame(|ctx| {
+            egui::SidePanel::left("side", 300.0).show(&ctx, |ui| {
+                ui.label("Hello");
+                if ui.button("Hello").clicked() {
+                    ui.label("BLAH!");
+                }
+            });
+        });
+
+        egui_wrapper.render(
+            &paint_jobs,
+            &device,
+            frame.default_view().view,
+            &queue,
+            &mut encoder,
+            &screen_descriptor,
+        );
+
         queue.submit(std::iter::once(encoder.finish()));
         let (sender, mut receiver) = futures::channel::oneshot::channel();
         let recall = staging_belt.recall();
@@ -1772,6 +1786,28 @@ pub struct SceneParams {
     pub draw_background: bool,
     pub cursor_position: (f32, f32),
     pub size_changed: bool,
+}
+
+impl SceneParams {
+    pub fn update_uniform_globals(
+        &self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        staging_belt: &mut StagingBelt,
+        globals_ubo: &Buffer,
+    ) {
+        update_buffer_via_transfer(
+            device,
+            encoder,
+            staging_belt,
+            &[Globals {
+                resolution: [self.view.resolution.width as f32, self.view.resolution.height as f32],
+                zoom: self.view.zoom,
+                scroll_offset: self.view.scroll.to_array(),
+            }],
+            globals_ubo,
+        );
+    }
 }
 
 fn update_inputs(

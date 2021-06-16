@@ -46,6 +46,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "739f4a8db6605981345c5654f3a85b056ce52f37a39d34da03f25bf2151ea16e"
 
 [[package]]
+name = "ahash"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43bb833f0bf979d8475d38fbf09ed3b8a55e1885fe93ad3f93239fc6a4f17b98"
+dependencies = [
+ "getrandom 0.2.3",
+ "once_cell",
+ "version_check",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -238,6 +249,12 @@ name = "atomic-waker"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "065374052e7df7ee4047b1160cca5e1467a12351a40b3da123c870ba0b8eda2a"
+
+[[package]]
+name = "atomic_refcell"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "681b971236e0f76b20fcafca0236b8718c9186ee778d67cd78bd5f28fd85427f"
 
 [[package]]
 name = "atty"
@@ -836,10 +853,46 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
 
 [[package]]
+name = "egui"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "788148861d80b87d28d64440a3d31cae190e50ccc3ea585597466d38428365d7"
+dependencies = [
+ "epaint",
+]
+
+[[package]]
+name = "egui_wgpu_backend"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c42342b2a0ff8450b21d9c97a8be2651aec64139bd89797380be68d60e318677"
+dependencies = [
+ "bytemuck",
+ "epi",
+ "wgpu",
+]
+
+[[package]]
+name = "egui_winit_platform"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd4cf17c0cd4dbcf2f8fef55a3592b9b7cfd970576c7302d8ba5c521b8560371"
+dependencies = [
+ "egui",
+ "winit",
+]
+
+[[package]]
 name = "either"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e78d4f1cc4ae33bbfc157ed5d5a5ef3bc29227303d595861deb238fcec4e9457"
+
+[[package]]
+name = "emath"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e73d6c8c70eadb71756fbbc3c303ab25e163b46b656886dd250de5636efea12"
 
 [[package]]
 name = "env_logger"
@@ -852,6 +905,28 @@ dependencies = [
  "log",
  "regex",
  "termcolor",
+]
+
+[[package]]
+name = "epaint"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80e2db640801230bdda80629bc3a063927a462f5eaf38a98da676954e78ccb99"
+dependencies = [
+ "ahash 0.7.4",
+ "atomic_refcell",
+ "emath",
+ "ordered-float",
+ "rusttype",
+]
+
+[[package]]
+name = "epi"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59c4f6cbede1fc8f836384f85295a59199a4825940abcc3a8a29cfe2e3c37583"
+dependencies = [
+ "egui",
 ]
 
 [[package]]
@@ -1342,6 +1417,9 @@ dependencies = [
  "cgmath",
  "cpuprofiler",
  "criterion",
+ "egui",
+ "egui_wgpu_backend",
+ "egui_winit_platform",
  "env_logger",
  "euclid",
  "fs_extra",
@@ -1373,7 +1451,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7afe4a420e3fe79967a00898cc1f4db7c8a49a9333a29f8a4bd76a253d5cd04"
 dependencies = [
- "ahash",
+ "ahash 0.4.7",
 ]
 
 [[package]]

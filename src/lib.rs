@@ -6,6 +6,7 @@ mod brush_manager;
 pub mod canvas;
 mod catmull_rom;
 mod config;
+mod egui_wrapper;
 mod encoder;
 pub mod fps_limiter;
 pub mod geometry_utilities;

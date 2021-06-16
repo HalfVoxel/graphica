@@ -33,6 +33,9 @@ cpuprofiler = { version = "0.0.4", optional = true }
 cgmath = "0.18"
 lazy-init = "0.5"
 futures = "0.3"
+egui = "0.12"
+egui_wgpu_backend = "0.8"
+egui_winit_platform = "0.8"
 
 [build-dependencies]
 anyhow = "1.0"
