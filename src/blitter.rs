@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::shader::load_wgsl_shader;
 use crate::wgpu_utils::*;
 use crate::{shader::load_shader, vertex::GPUVertex};
@@ -37,7 +39,7 @@ impl GPUVertex for BlitGpuVertex {
 }
 pub struct BlitterWithTextures<'a, 'b> {
     blitter: &'a Blitter,
-    bind_group: BindGroup,
+    bind_group: Rc<BindGroup>,
     target_texture: &'b TextureView,
 }
 
@@ -238,7 +240,7 @@ impl Blitter {
         source_texture: &wgpu::TextureView,
         target_texture: &'b wgpu::TextureView,
     ) -> BlitterWithTextures<'a, 'b> {
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = Rc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &self.bind_group_layout,
             label: Some("Blit bind group"),
             entries: &[
@@ -251,7 +253,7 @@ impl Blitter {
                     resource: wgpu::BindingResource::TextureView(source_texture),
                 },
             ],
-        });
+        }));
 
         BlitterWithTextures {
             blitter: self,
@@ -402,12 +404,12 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
     }
 
     pub fn blit_regions(
-        &'a self,
+        &self,
         device: &Device,
         source_uv_rect: Rect,
         target_uv_rect: Rect,
         sample_count: u32,
-    ) -> BlitOp<'a, 'a> {
+    ) -> BlitOp<'a> {
         let vertices = &[
             BlitGpuVertex {
                 uv_source: point(source_uv_rect.min_x(), source_uv_rect.min_y()),
@@ -437,21 +439,21 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
 
         BlitOp {
             blitter: self.blitter,
-            bind_group: &self.bind_group,
+            bind_group: self.bind_group.clone(),
             pipeline,
             vbo,
         }
     }
 }
 
-pub struct BlitOp<'a, 'b> {
+pub struct BlitOp<'a> {
     blitter: &'a Blitter,
     pipeline: &'a RenderPipeline,
-    bind_group: &'b BindGroup,
+    bind_group: Rc<BindGroup>,
     vbo: Buffer,
 }
 
-impl<'a, 'b> BlitOp<'a, 'b> {
+impl<'a> BlitOp<'a> {
     pub fn render(&'a self, pass: &mut RenderPass<'a>) {
         pass.set_pipeline(self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);

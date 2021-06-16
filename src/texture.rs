@@ -68,6 +68,14 @@ impl RenderTexture {
         }
     }
 
+    pub fn sample_count(&self) -> u32 {
+        match self {
+            RenderTexture::Texture(tex) => tex.descriptor.sample_count,
+            // Swapchain images are never multi-sampled
+            RenderTexture::SwapchainImage(tex) => 1,
+        }
+    }
+
     pub fn format(&self) -> TextureFormat {
         match self {
             RenderTexture::Texture(tex) => tex.descriptor.format,

@@ -2,12 +2,17 @@ use euclid::point2 as point;
 use euclid::rect;
 use euclid::size2 as size;
 use euclid::vec2 as vector;
+use euclid::Size2D;
 use lyon::math::Point;
 use lyon::path::Path;
 use lyon::tessellation::geometry_builder::*;
 use lyon::tessellation::FillOptions;
 use lyon::tessellation::{StrokeOptions, StrokeTessellator};
 use std::num::NonZeroU64;
+use wgpu::BufferView;
+use wgpu::Extent3d;
+use wgpu::RenderPass;
+use wgpu::TextureView;
 use wgpu_glyph::{ab_glyph::FontArc, GlyphBrushBuilder, Section, Text};
 
 use std::rc::Rc;
@@ -21,6 +26,7 @@ use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCo
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
+use crate::blitter::BlitOp;
 use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex};
 use crate::canvas::CanvasView;
 use crate::egui_wrapper::EguiWrapper;
@@ -933,6 +939,49 @@ impl DocumentRenderer {
     }
 }
 
+fn render_background(
+    encoder: &mut Encoder,
+    bg_pipeline: &RenderPipeline,
+    bind_group: &BindGroup,
+    bg_ibo: &Buffer,
+    bg_vbo: &Buffer,
+) {
+    let mut pass = encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background render pass"));
+    pass.set_pipeline(&bg_pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.set_index_buffer(bg_ibo.slice(..), wgpu::IndexFormat::Uint16);
+    pass.set_vertex_buffer(0, bg_vbo.slice(..));
+
+    pass.draw_indexed(0..6, 0, 0..1);
+}
+
+fn blit_document_to_window<'a>(
+    hl_encoder: &mut Encoder<'a>,
+    scene: &SceneParams,
+    doc_size: Size2D<u32, CanvasSpace>,
+    window_extent: Extent3d,
+    source: &TextureView,
+    target: &RenderTexture,
+) -> BlitOp<'a> {
+    let canvas_in_screen_space =
+        scene
+            .view
+            .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
+    let canvas_in_screen_uv_space =
+        canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
+
+    let blittex = hl_encoder
+        .blitter
+        .with_textures(&hl_encoder.device, source, &target.default_view().view);
+
+    blittex.blit_regions(
+        &hl_encoder.device,
+        rect(0.0, 0.0, 1.0, 1.0),
+        canvas_in_screen_uv_space.to_untyped(),
+        target.sample_count(),
+    )
+}
+
 #[allow(unused_variables)]
 pub fn main() {
     #[cfg(feature = "profile")]
@@ -1489,16 +1538,7 @@ pub fn main() {
             scratch_texture: scratch_texture.clone(),
         };
 
-        // render_background(hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
-        {
-            let mut pass = hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background render pass"));
-            pass.set_pipeline(&bg_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            pass.set_index_buffer(bg_ibo.slice(..), wgpu::IndexFormat::Uint16);
-            pass.set_vertex_buffer(0, bg_vbo.slice(..));
-
-            pass.draw_indexed(0..6, 0, 0..1);
-        }
+        render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
 
         document_renderer1
             .as_mut()
@@ -1525,18 +1565,12 @@ pub fn main() {
                     resolution: document_extent,
                     scratch_texture: scratch_texture.clone(),
                 };
+                // render_main_view(&scene);
 
-                {
-                    let mut pass =
-                        hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background render pass"));
-                    if scene.draw_background {
-                        pass.set_pipeline(&bg_pipeline);
-                        pass.set_bind_group(0, &bind_group, &[]);
-                        pass.set_index_buffer(bg_ibo.slice(..), wgpu::IndexFormat::Uint16);
-                        pass.set_vertex_buffer(0, bg_vbo.slice(..));
-
-                        pass.draw_indexed(0..6, 0, 0..1);
-                    }
+                if scene.draw_background {
+                    render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
+                } else {
+                    hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background clear pass"));
                 }
 
                 document_renderer1
@@ -1566,23 +1600,13 @@ pub fn main() {
                 scratch_texture: scratch_texture.clone(),
             };
 
-            let canvas_in_screen_space =
-                scene
-                    .view
-                    .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
-            let canvas_in_screen_uv_space =
-                canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
-
-            let blittex = blitter.with_textures(
-                &device,
+            let blitop = blit_document_to_window(
+                &mut hl_encoder,
+                &scene,
+                doc_size,
+                window_extent,
                 &temp_document_frame.view,
-                &multisampled_render_target.as_ref().unwrap().view,
-            );
-            let blitop = blittex.blit_regions(
-                &device,
-                rect(0.0, 0.0, 1.0, 1.0),
-                canvas_in_screen_uv_space.to_untyped(),
-                sample_count,
+                msaa_render_target.as_ref().unwrap_or(&frame),
             );
 
             {
@@ -1607,24 +1631,24 @@ pub fn main() {
 
             // // // blur.render(&mut hl_encoder);
 
-            let section = Section {
-                screen_position: (10.0, 10.0),
-                text: vec![Text::new("Hello wgpu_gfilyphåäöЎaњ").with_scale(36.0)],
-                ..Section::default() // color, position, etc
-            };
+            // let section = Section {
+            //     screen_position: (10.0, 10.0),
+            //     text: vec![Text::new("Hello wgpu_gfilyphåäöЎaњ").with_scale(36.0)],
+            //     ..Section::default() // color, position, etc
+            // };
 
-            glyph_brush.queue(section);
+            // glyph_brush.queue(section);
 
-            glyph_brush
-                .draw_queued(
-                    &device,
-                    &mut staging_belt,
-                    &mut encoder,
-                    frame.default_view().view,
-                    window_extent.width,
-                    window_extent.height,
-                )
-                .unwrap();
+            // glyph_brush
+            //     .draw_queued(
+            //         &device,
+            //         &mut staging_belt,
+            //         &mut encoder,
+            //         frame.default_view().view,
+            //         window_extent.width,
+            //         window_extent.height,
+            //     )
+            //     .unwrap();
         }
 
         // blitter.blit(
