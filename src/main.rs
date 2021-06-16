@@ -807,6 +807,8 @@ impl DocumentRenderer {
         wireframe_render_pipeline: &Rc<RenderPipeline>,
         brush_manager: &Rc<BrushManager>,
     ) -> DocumentRenderer {
+        puffin::profile_function!();
+
         let mut builder = Path::builder();
         document.build(&mut builder);
         let p = builder.build();
@@ -926,6 +928,7 @@ impl DocumentRenderer {
     }
 
     fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
+        puffin::profile_function!();
         {
             let mut pass = encoder.begin_msaa_render_pass(None, Some("document render pass"));
             pass.set_pipeline(&self.render_pipeline);
@@ -946,6 +949,7 @@ fn render_background(
     bg_ibo: &Buffer,
     bg_vbo: &Buffer,
 ) {
+    puffin::profile_function!();
     let mut pass = encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background render pass"));
     pass.set_pipeline(&bg_pipeline);
     pass.set_bind_group(0, &bind_group, &[]);
@@ -963,6 +967,7 @@ fn blit_document_to_window<'a>(
     source: &TextureView,
     target: &RenderTexture,
 ) -> BlitOp<'a> {
+    puffin::profile_function!();
     let canvas_in_screen_space =
         scene
             .view
@@ -998,6 +1003,7 @@ pub fn main() {
     println!("  w: toggle wireframe mode");
     println!("  b: toggle drawing the background");
     println!("  a/z: increase/decrease the stroke width");
+    puffin::set_scopes_on(true);
 
     let mut data = PathData::new();
     data.line_to(point(0.0, 0.0));
@@ -1376,17 +1382,23 @@ pub fn main() {
     let mut egui_wrapper = EguiWrapper::new(&device, size, window.scale_factor());
 
     event_loop.run(move |event, _, control_flow| {
-        egui_wrapper.platform.handle_event(&event);
-
         let scene = &mut editor.scene;
-        let new_time = Instant::now();
-        let dt = (new_time.duration_since(last_time)).as_secs_f32();
-        last_time = new_time;
+        {
+            puffin::profile_scope!("event handling");
+            egui_wrapper.platform.handle_event(&event);
 
-        if update_inputs(event, control_flow, &mut editor.input, scene, dt) {
-            // keep polling inputs.
-            return;
+            let new_time = Instant::now();
+            let dt = (new_time.duration_since(last_time)).as_secs_f32();
+            last_time = new_time;
+
+            if update_inputs(event, control_flow, &mut editor.input, scene, dt) {
+                // keep polling inputs.
+                return;
+            }
         }
+
+        puffin::GlobalProfiler::lock().new_frame();
+        puffin::profile_scope!("event loop");
 
         egui_wrapper.platform.update_time(start_time.elapsed().as_secs_f64());
 
@@ -1437,6 +1449,7 @@ pub fn main() {
         };
 
         if scene.size_changed {
+            puffin::profile_scope!("rebuild swapchain");
             println!("Rebuilding swap chain");
             scene.size_changed = false;
             swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
@@ -1466,7 +1479,10 @@ pub fn main() {
             };
         }
 
-        let swapchain_output = swap_chain.get_current_frame().unwrap();
+        let swapchain_output = {
+            puffin::profile_scope!("aquire swapchain");
+            swap_chain.get_current_frame().unwrap()
+        };
         let frame = RenderTexture::from(SwapchainImageWrapper::from_swapchain_image(
             swapchain_output,
             &swap_chain_desc,
@@ -1677,6 +1693,8 @@ pub fn main() {
                     ui.label("BLAH!");
                 }
             });
+
+            puffin_egui::profiler_window(&ctx);
         });
 
         egui_wrapper.render(
@@ -1688,7 +1706,10 @@ pub fn main() {
             &screen_descriptor,
         );
 
-        queue.submit(std::iter::once(encoder.finish()));
+        {
+            puffin::profile_scope!("queue.submit");
+            queue.submit(std::iter::once(encoder.finish()));
+        }
         let (sender, mut receiver) = futures::channel::oneshot::channel();
         let recall = staging_belt.recall();
         task::spawn(async move {
@@ -1702,8 +1723,11 @@ pub fn main() {
         editor.input.tick_frame();
         // println!("Preparing GPU work = {:?}", t1.elapsed());
         fps_limiter.wait(std::time::Duration::from_secs_f32(1.0 / 60.0));
-        while receiver.try_recv().is_err() {
-            device.poll(wgpu::Maintain::Wait);
+        {
+            puffin::profile_scope!("wait for device");
+            while receiver.try_recv().is_err() {
+                device.poll(wgpu::Maintain::Wait);
+            }
         }
     });
 }
@@ -1765,6 +1789,7 @@ impl Document {
     }
 
     fn hash(&self) -> u64 {
+        puffin::profile_function!();
         let mut h = 0u64;
         for path in self.paths.iter() {
             h = h.wrapping_mul(32) ^ path.hash();

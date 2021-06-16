@@ -240,6 +240,7 @@ impl Blitter {
         source_texture: &wgpu::TextureView,
         target_texture: &'b wgpu::TextureView,
     ) -> BlitterWithTextures<'a, 'b> {
+        puffin::profile_function!();
         let bind_group = Rc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &self.bind_group_layout,
             label: Some("Blit bind group"),
@@ -455,6 +456,7 @@ pub struct BlitOp<'a> {
 
 impl<'a> BlitOp<'a> {
     pub fn render(&'a self, pass: &mut RenderPass<'a>) {
+        puffin::profile_function!();
         pass.set_pipeline(self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);

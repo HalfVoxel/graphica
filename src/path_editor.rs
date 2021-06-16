@@ -665,6 +665,7 @@ impl PathEditor {
         input: &mut InputManager,
         tool: &ToolType,
     ) {
+        puffin::profile_function!();
         let canvas_mouse_pos = view.screen_to_canvas_point(input.mouse_position);
 
         match tool {

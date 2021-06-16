@@ -36,6 +36,8 @@ futures = "0.3"
 egui = "0.12"
 egui_wgpu_backend = "0.8"
 egui_winit_platform = "0.8"
+puffin = "0.5"
+puffin_egui = "0.3"
 
 [build-dependencies]
 anyhow = "1.0"

@@ -36,6 +36,7 @@ impl BrushEditor {
         input: &mut InputManager,
         tool: &ToolType,
     ) {
+        puffin::profile_function!();
         let data = &mut document.brushes;
         let mouse_pos_canvas = view.screen_to_canvas_point(input.mouse_position);
         if self.debug_path.is_none() {

@@ -345,6 +345,7 @@ impl<'a> Root {
     }
 
     pub fn update(&mut self) {
+        puffin::profile_function!();
         let mut mods = RootWrapper::new(self);
         for widget in &self.widgets {
             if let Some(widget) = widget {
@@ -357,6 +358,7 @@ impl<'a> Root {
     }
 
     pub fn render(&mut self, ui_document: &mut Document, view: &CanvasView) {
+        puffin::profile_function!();
         let mut mods = RootWrapper::new(self);
         for widget in &self.widgets {
             if let Some(widget) = widget {
@@ -369,6 +371,7 @@ impl<'a> Root {
     }
 
     pub fn input(&mut self, _ui_document: &mut Document, input: &mut InputManager) {
+        puffin::profile_function!();
         let mut mods = RootWrapper::new(self);
         for widget in &self.widgets {
             if let Some(widget) = widget {

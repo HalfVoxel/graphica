@@ -20,6 +20,7 @@ pub fn create_buffer<'a, T>(
     usage: wgpu::BufferUsage,
     label: impl Into<Option<&'a str>>,
 ) -> (Buffer, u64) {
+    puffin::profile_function!();
     let data = as_u8_slice(data);
     let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: label.into(),
@@ -37,6 +38,7 @@ pub fn update_buffer_via_transfer<T>(
     v: &[T],
     target_buffer: &Buffer,
 ) {
+    puffin::profile_function!();
     if !v.is_empty() {
         let data = as_u8_slice(v);
         staging_belt

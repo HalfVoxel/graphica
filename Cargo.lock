@@ -1432,6 +1432,8 @@ dependencies = [
  "log",
  "lyon",
  "palette",
+ "puffin",
+ "puffin_egui",
  "rand 0.8.4",
  "shaderc",
  "wgpu",
@@ -2299,6 +2301,27 @@ name = "profiling"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0a7c000c0ce9d9bb94c0fbacdf20e5087fbe652c556ffb2c9387d980e17d51fb"
+
+[[package]]
+name = "puffin"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "298fd52e432bba94b023a7c1e9cd8ac4dfb53088afeb2b8551ec16c629b3e2a8"
+dependencies = [
+ "byteorder",
+ "once_cell",
+]
+
+[[package]]
+name = "puffin_egui"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19596f760f6c221e12e8620bd8eb4eccfc6fb00f545077c37dcab8b8baf0d3f2"
+dependencies = [
+ "egui",
+ "once_cell",
+ "puffin",
+]
 
 [[package]]
 name = "quote"
