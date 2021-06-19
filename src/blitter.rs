@@ -1,5 +1,8 @@
 use std::rc::Rc;
+use std::sync::Arc;
 
+use crate::material_cache::{BindingResourceArc, Material};
+use crate::render_pipeline_cache::RenderPipelineBase;
 use crate::shader::load_wgsl_shader;
 use crate::wgpu_utils::*;
 use crate::{shader::load_shader, vertex::GPUVertex};
@@ -12,9 +15,9 @@ use wgpu::{
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct BlitGpuVertex {
-    uv_source: Point,
-    uv_target: Point,
+pub struct BlitGpuVertex {
+    pub uv_source: Point,
+    pub uv_target: Point,
 }
 
 impl GPUVertex for BlitGpuVertex {
@@ -44,21 +47,23 @@ pub struct BlitterWithTextures<'a, 'b> {
 }
 
 pub struct Blitter {
-    render_pipelines: Vec<RenderPipeline>,
-    bind_group_layout: BindGroupLayout,
-    bind_group_layout_compute: BindGroupLayout,
-    bind_group_layout_compute_in_place: BindGroupLayout,
-    sampler: Sampler,
-    ibo: Buffer,
+    pub render_pipeline_base: Arc<RenderPipelineBase>,
+    pub render_pipelines: Vec<Rc<RenderPipeline>>,
+    pub bind_group_layout: Arc<BindGroupLayout>,
+    pub bind_group_layout_compute: BindGroupLayout,
+    pub bind_group_layout_compute_in_place: BindGroupLayout,
+    pub material: Material,
+    pub sampler: Arc<Sampler>,
+    pub ibo: Buffer,
     render_pipeline_blend_over: ComputePipeline,
     render_pipeline_rgb_to_srgb: ComputePipeline,
 }
 
 impl Blitter {
     pub fn new(device: &Device, _encoder: &mut CommandEncoder) -> Blitter {
-        let blit_module = load_wgsl_shader(&device, "shaders/blit.wgsl");
+        let blit_module = Arc::new(load_wgsl_shader(&device, "shaders/blit.wgsl"));
 
-        let sampler = device.create_sampler(&SamplerDescriptor {
+        let sampler = Arc::new(device.create_sampler(&SamplerDescriptor {
             label: Some("Blitter sampler"),
             address_mode_u: AddressMode::ClampToEdge,
             address_mode_v: AddressMode::ClampToEdge,
@@ -71,9 +76,9 @@ impl Blitter {
             compare: None,
             anisotropy_clamp: None,
             border_color: None,
-        });
+        }));
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let bind_group_layout = Arc::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Bind group layout blit"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
@@ -96,11 +101,30 @@ impl Blitter {
                     count: None,
                 },
             ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+        }));
+        let pipeline_layout = Arc::new(device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
+        }));
+
+        let render_pipeline_base = Arc::new(RenderPipelineBase {
+            label: "blit pipeline".to_string(),
+            layout: pipeline_layout.clone(),
+            module: blit_module.clone(),
+            vertex_buffer_layout: BlitGpuVertex::desc(),
+            vertex_entry: "vs_main".to_string(),
+            fragment_entry: "fs_main".to_string(),
+            primitive: wgpu::PrimitiveState {
+                strip_index_format: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                clamp_depth: false,
+                conservative: false,
+            },
+            target_count: 1,
         });
 
         let render_pipelines = (&[1, 8])
@@ -145,10 +169,15 @@ impl Blitter {
                         alpha_to_coverage_enabled: false,
                     },
                 };
-                device.create_render_pipeline(&render_pipeline_descriptor)
+                Rc::new(device.create_render_pipeline(&render_pipeline_descriptor))
             })
-            .collect::<Vec<RenderPipeline>>();
+            .collect::<Vec<_>>();
 
+        let material = Material::from_consecutive_entries(device, "blit material", bind_group_layout.clone(), vec![
+            BindingResourceArc::sampler(Some(sampler.clone())),
+            BindingResourceArc::texture(None),
+        ]);
+        
         let blend_over_module = load_shader(&device, "shaders/blend_over.comp.spv");
 
         let bind_group_layout_compute_in_place = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -223,6 +252,7 @@ impl Blitter {
         let (ibo, _ibo_size) = create_buffer(device, indices, wgpu::BufferUsage::INDEX, "Blitter IBO");
 
         Blitter {
+            render_pipeline_base,
             render_pipelines,
             bind_group_layout,
             bind_group_layout_compute,
@@ -231,6 +261,7 @@ impl Blitter {
             render_pipeline_rgb_to_srgb,
             sampler,
             ibo,
+            material,
         }
     }
 
@@ -346,6 +377,14 @@ impl Blitter {
             1,
         );
     }
+
+    pub fn blit_pipeline(&self, sample_count: u32) -> Rc<RenderPipeline> {
+        match sample_count {
+            1 => self.render_pipelines[0].clone(),
+            8 => self.render_pipelines[1].clone(),
+            _ => panic!("Unsupported blit sample count. Only 1 and 8 supported."),
+        }
+    }
 }
 
 impl<'a, 'b> BlitterWithTextures<'a, 'b> {
@@ -378,6 +417,7 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
         ];
 
         let (vbo, _) = create_buffer(&device, vertices, wgpu::BufferUsage::VERTEX, None);
+        let pipeline = self.blitter.blit_pipeline(sample_count);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("blit"),
@@ -392,12 +432,7 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
             depth_stencil_attachment: None,
         });
 
-        let pipeline = match sample_count {
-            1 => &self.blitter.render_pipelines[0],
-            8 => &self.blitter.render_pipelines[1],
-            _ => panic!("Unsupported blit sample count. Only 1 and 8 supported."),
-        };
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);
         pass.set_vertex_buffer(0, vbo.slice(..));

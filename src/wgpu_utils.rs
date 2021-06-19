@@ -3,7 +3,7 @@ use wgpu::{
     Buffer, BufferSize, CommandEncoder, Device,
 };
 
-fn as_u8_slice<T>(v: &[T]) -> &[u8] {
+pub fn as_u8_slice<T>(v: &[T]) -> &[u8] {
     assert!(
         std::mem::size_of::<T>() != 0,
         "You should not use zero sized type for buffers"

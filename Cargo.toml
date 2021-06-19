@@ -38,6 +38,7 @@ egui_wgpu_backend = "0.8"
 egui_winit_platform = "0.8"
 puffin = "0.5"
 puffin_egui = "0.3"
+by_address = "1.0"
 
 [build-dependencies]
 anyhow = "1.0"
