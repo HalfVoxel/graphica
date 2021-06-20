@@ -1652,10 +1652,17 @@ pub fn main() {
 
             ephermal_buffer_cache.reset();
 
+            let canvas_in_screen_space =
+            scene
+                .view
+                .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
+        let canvas_in_screen_uv_space =
+            canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
+
             let mut render_graph = crate::render_graph::RenderGraph::default();
             let mut t = render_graph.clear(Size2D::new(frame.size().width, frame.size().height), wgpu::Color::GREEN);
             let blue = render_graph.clear(Size2D::new(128, 128), wgpu::Color::BLUE);
-            t = render_graph.blit(blue, t, rect(0.0, 0.0, 128.0, 128.0), rect(10.0, 10.0, 512.0, 512.0));
+            t = render_graph.blit(blue, t, rect(0.0, 0.0, 128.0, 128.0), canvas_in_screen_space.cast_unit());
             let mut render_graph_compiler = crate::render_graph::RenderGraphCompiler {
                 device: &device,
                 encoder: &mut encoder,

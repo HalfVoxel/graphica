@@ -24,6 +24,7 @@ pub mod types {
     pub type CanvasLength = euclid::Length<f32, CanvasSpace>;
     pub type ScreenLength = euclid::Length<f32, ScreenSpace>;
     pub type CanvasRect = euclid::Rect<f32, CanvasSpace>;
+    pub type UVRect = euclid::Rect<f32, UVSpace>;
 }
 
 pub enum VectorFieldPrimitive {

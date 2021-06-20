@@ -4,20 +4,13 @@ use euclid::default::Size2D;
 use lyon::math::{point, Rect};
 use wgpu::{util::StagingBelt, BindGroup, BlendState, Color, CommandEncoder, Device, Extent3d, LoadOp, TextureFormat};
 
-use crate::{
-    blitter::{BlitGpuVertex, Blitter},
-    cache::ephermal_buffer_cache::{BufferRange, EphermalBufferCache},
-    cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache},
-    cache::render_pipeline_cache::{CachedRenderPipeline, RenderPipelineCache, RenderPipelineKey},
-    cache::render_texture_cache::RenderTextureCache,
-    texture::RenderTexture,
-};
+use crate::{blitter::{BlitGpuVertex, Blitter}, cache::ephermal_buffer_cache::{BufferRange, EphermalBufferCache}, cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache}, cache::render_pipeline_cache::{CachedRenderPipeline, RenderPipelineCache, RenderPipelineKey}, cache::render_texture_cache::RenderTextureCache, geometry_utilities::types::{CanvasRect, UVRect}, texture::RenderTexture};
 
 struct Blit {
     source: GraphNode,
     target: GraphNode,
-    source_rect: Rect,
-    target_rect: Rect,
+    source_rect: CanvasRect,
+    target_rect: CanvasRect,
 }
 
 #[derive(Default)]
@@ -64,7 +57,7 @@ impl RenderGraph {
 
     // }
 
-    pub fn blit(&mut self, source: GraphNode, target: GraphNode, source_rect: Rect, target_rect: Rect) -> GraphNode {
+    pub fn blit(&mut self, source: GraphNode, target: GraphNode, source_rect: CanvasRect, target_rect: CanvasRect) -> GraphNode {
         self.push_primitive(RenderingPrimitive::Blit(Blit {
             source,
             target,
@@ -108,7 +101,7 @@ type PassIndex = usize;
 struct RenderTextureHandle(usize);
 
 impl<'a> RenderGraphCompiler<'a> {
-    fn blit_vertices(&mut self, source_uv_rect: &Rect, target_uv_rect: &Rect) -> BufferRange {
+    fn blit_vertices(&mut self, source_uv_rect: &UVRect, target_uv_rect: &UVRect) -> BufferRange {
         puffin::profile_function!();
         let vertices = &[
             BlitGpuVertex {
@@ -195,8 +188,8 @@ impl<'a> RenderGraphCompiler<'a> {
         }
     }
 
-    fn pixel_to_uv_rect(pixel_rect: &Rect, texture_size: &Size2D<u32>) -> Rect {
-        pixel_rect.scale(1.0 / (texture_size.width as f32), 1.0 / (texture_size.height as f32))
+    fn pixel_to_uv_rect(pixel_rect: &CanvasRect, texture_size: &Size2D<u32>) -> UVRect {
+        pixel_rect.scale(1.0 / (texture_size.width as f32), 1.0 / (texture_size.height as f32)).cast_unit()
     }
 
     fn build(
@@ -234,7 +227,7 @@ impl<'a> RenderGraphCompiler<'a> {
             }) => {
                 let source_texture_size = sizes[source.index];
                 let target_texture_size = sizes[target.index];
-                let target_texture_rect = Rect::from_size(target_texture_size.to_f32());
+                let target_texture_rect = CanvasRect::from_size(target_texture_size.to_f32().cast_unit());
                 if !target_texture_rect.intersects(target_rect) {
                     // Blit would end up outside the texture.
                     // We can ignore it.
