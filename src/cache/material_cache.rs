@@ -116,6 +116,7 @@ pub enum BindingResourceArc {
     // It is there to work around a rustc ICE
     Sampler(Option<ByAddress<Arc<Sampler>>>),
     Texture(Option<RenderTexture>),
+    Mipmap(Option<(RenderTexture, u32)>),
     Buffer(Option<BufferRange>),
 }
 
@@ -124,6 +125,7 @@ impl BindingResourceArc {
         match self {
             BindingResourceArc::Sampler(Some(sampler)) => Some(wgpu::BindingResource::Sampler(sampler)),
             BindingResourceArc::Texture(Some(tex)) => Some(wgpu::BindingResource::TextureView(tex.default_view().view)),
+            BindingResourceArc::Mipmap(Some((tex, mip))) => Some(wgpu::BindingResource::TextureView(tex.get_mip_level_view(*mip).unwrap().view)),
             BindingResourceArc::Buffer(Some(buffer)) => Some(wgpu::BindingResource::Buffer(buffer.as_binding())),
             _ => None,
         }
@@ -136,6 +138,10 @@ impl BindingResourceArc {
     pub fn sampler(sampler: Option<Arc<Sampler>>) -> Self {
         Self::Sampler(sampler.map(ByAddress::from))
         // Self::texture(None)
+    }
+
+    pub fn mipmap(texture: Option<(RenderTexture, u32)>) -> Self {
+        Self::Mipmap(texture)
     }
 
     pub fn texture(texture: Option<Rc<Texture>>) -> Self {
@@ -153,6 +159,12 @@ impl BindingResourceArc {
             BindingResourceArc::Texture(Some(RenderTexture::SwapchainImage(t))) => Rc::as_ptr(&t.0) as u64,
             BindingResourceArc::Buffer(Some(b)) => {
                 Arc::as_ptr(&b.buffer) as u64 ^ (31 * (b.range.start ^ (31 * b.range.end)))
+            },
+            BindingResourceArc::Mipmap(Some((RenderTexture::Texture(t), index))) => {
+                Rc::as_ptr(&t.0) as u64 ^ (31*(*index as u64))
+            },
+            BindingResourceArc::Mipmap(Some((RenderTexture::SwapchainImage(t), index))) => {
+                Rc::as_ptr(&t.0) as u64 ^ (31*(*index as u64))
             },
             _ => 0,
         }

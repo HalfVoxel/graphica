@@ -1339,6 +1339,11 @@ pub fn main() {
         BindingResourceArc::buffer(Some(bg_ubo.clone())),
     ]));
 
+    let screen_bg_material_base = Arc::new(Material::from_consecutive_entries(&device, "background", bind_group_layout.clone(), vec![
+        BindingResourceArc::buffer(Some(globals_ubo.clone())),
+        BindingResourceArc::buffer(Some(bg_ubo.clone())),
+    ]));
+
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: &bind_group_layout,
         label: Some("Background Bind Group"),
@@ -1701,6 +1706,9 @@ pub fn main() {
             let mut t = render_graph.clear(Size2D::new(frame.size().width, frame.size().height), wgpu::Color::GREEN);
             let mut canvas = render_graph.clear(doc_size.to_untyped(), wgpu::Color::BLUE);
             canvas = render_graph.quad(canvas, CanvasRect::from_size(doc_size.cast()), bg_pipeline_base.clone(), bg_material_base.clone());
+            canvas = render_graph.generate_mipmaps(canvas);
+
+            t = render_graph.quad(t, CanvasRect::from_size(Size2D::new(frame.size().width as f32, frame.size().height as f32)), bg_pipeline_base.clone(), screen_bg_material_base.clone());
 
             t = render_graph.blit(canvas, t, CanvasRect::from_size(doc_size.cast()), canvas_in_screen_space.cast_unit());
             let mut render_graph_compiler = crate::render_graph::RenderGraphCompiler {
@@ -1712,6 +1720,7 @@ pub fn main() {
                 render_texture_cache: &mut render_texture_cache,
                 material_cache: &mut material_cache,
                 staging_belt: &mut staging_belt,
+                mipmapper: &mipmapper,
             };
             let passes = render_graph_compiler.compile(&render_graph, t, &frame);
             render_graph_compiler.render(&passes);

@@ -1,10 +1,14 @@
+use std::sync::Arc;
+
+use crate::cache::material_cache::{BindingResourceArc, Material};
 use crate::shader::load_shader;
 use crate::texture::Texture;
 use wgpu::{BindGroupLayout, CommandEncoder, ComputePipeline, Device, Extent3d, TextureViewDimension};
 
 pub struct Mipmapper {
-    pipeline: ComputePipeline,
-    bind_group_layout: BindGroupLayout,
+    pub pipeline: Arc<ComputePipeline>,
+    pub bind_group_layout: Arc<BindGroupLayout>,
+    pub material: Arc<Material>,
 }
 
 pub fn max_mipmaps(texture_size: Extent3d) -> u32 {
@@ -19,7 +23,7 @@ impl Mipmapper {
     pub fn new(device: &Device) -> Mipmapper {
         let shader = load_shader(device, "shaders/downsample_2x2_box.comp.spv");
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let bind_group_layout = Arc::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -43,24 +47,30 @@ impl Mipmapper {
                 },
             ],
             label: None,
-        });
+        }));
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout = Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
-        });
+        }));
 
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let material = Arc::new(Material::from_consecutive_entries(device, "mipmap", bind_group_layout.clone(), vec![
+            BindingResourceArc::texture(None),
+            BindingResourceArc::texture(None),
+        ]));
+
+        let pipeline = Arc::new(device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: "main",
-        });
+        }));
 
         Mipmapper {
             pipeline,
             bind_group_layout,
+            material,
         }
     }
 

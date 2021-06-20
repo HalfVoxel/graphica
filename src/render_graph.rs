@@ -1,10 +1,10 @@
 use std::{rc::Rc, sync::Arc};
 
 use euclid::default::Size2D;
-use lyon::math::{point, Rect};
-use wgpu::{BindGroup, BlendState, BufferUsage, Color, CommandEncoder, Device, Extent3d, LoadOp, TextureFormat, util::StagingBelt};
+use lyon::math::{Rect, point, size};
+use wgpu::{BindGroup, BlendState, BufferUsage, Color, CommandEncoder, ComputePipeline, Device, Extent3d, LoadOp, TextureFormat, TextureUsage, util::StagingBelt};
 
-use crate::{blitter::{BlitGpuVertex, Blitter}, cache::ephermal_buffer_cache::{BufferRange, EphermalBufferCache}, cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache}, cache::{material_cache::Material, render_pipeline_cache::{CachedRenderPipeline, RenderPipelineBase, RenderPipelineCache, RenderPipelineKey}}, cache::render_texture_cache::RenderTextureCache, geometry_utilities::types::{CanvasRect, UVRect}, texture::RenderTexture, vertex::GPUVertex};
+use crate::{blitter::{BlitGpuVertex, Blitter}, cache::ephermal_buffer_cache::{BufferRange, EphermalBufferCache}, cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache}, cache::{material_cache::Material, render_pipeline_cache::{CachedRenderPipeline, RenderPipelineBase, RenderPipelineCache, RenderPipelineKey}}, cache::render_texture_cache::RenderTextureCache, geometry_utilities::types::{CanvasRect, UVRect}, mipmap::Mipmapper, texture::RenderTexture, vertex::GPUVertex};
 
 struct Blit {
     source: GraphNode,
@@ -27,7 +27,10 @@ enum RenderingPrimitive {
         rect: CanvasRect,
         pipeline: Arc<RenderPipelineBase>,
         material: Arc<Material>,
-    }
+    },
+    GenerateMipmaps {
+        target: GraphNode,
+    },
 }
 
 pub struct GraphNode {
@@ -35,7 +38,16 @@ pub struct GraphNode {
 }
 
 #[derive(Debug)]
-enum CompiledRenderingPrimitive {
+pub enum CompiledComputePrimitive {
+    GenerateMipmaps {
+        target: RenderTexture,
+        pipeline: Arc<ComputePipeline>,
+        bind_groups: Vec<Rc<BindGroup>>,
+    },
+}
+
+#[derive(Debug)]
+pub enum CompiledRenderingPrimitive {
     // Clear(RenderTexture, Color),
     Blit {
         source: RenderTexture,
@@ -83,6 +95,12 @@ impl RenderGraph {
         }))
     }
 
+    pub fn generate_mipmaps(&mut self, target: GraphNode) -> GraphNode {
+        self.push_primitive(RenderingPrimitive::GenerateMipmaps {
+            target,
+        })
+    }
+
     fn render(self, _source: GraphNode) {}
 }
 
@@ -95,6 +113,7 @@ pub struct RenderGraphCompiler<'a> {
     pub ephermal_buffer_cache: &'a mut EphermalBufferCache,
     pub render_texture_cache: &'a mut RenderTextureCache,
     pub material_cache: &'a mut MaterialCache,
+    pub mipmapper: &'a Mipmapper,
 }
 
 struct RenderTextureSlot {
@@ -106,16 +125,28 @@ struct RenderTextureSlot {
 }
 
 #[derive(Debug)]
-pub struct CompiledPass {
-    target: RenderTexture,
-    clear: Option<LoadOp<Color>>,
-    ops: Vec<CompiledRenderingPrimitive>,
+pub enum CompiledPass {
+    RenderPass {
+        target: RenderTexture,
+        clear: Option<LoadOp<Color>>,
+        ops: Vec<CompiledRenderingPrimitive>,
+    },
+    ComputePass {
+        ops: Vec<CompiledComputePrimitive>,
+    }
 }
 
 type PassIndex = usize;
 
 #[derive(Debug)]
 struct RenderTextureHandle(usize);
+
+#[derive(Debug, Clone)]
+struct Usage {
+    size: Size2D<u32>,
+    usages: TextureUsage,
+    requires_mipmaps: bool,
+}
 
 impl<'a> RenderGraphCompiler<'a> {
     fn blit_vertices(&mut self, source_uv_rect: &UVRect, target_uv_rect: &UVRect) -> BufferRange {
@@ -155,53 +186,140 @@ impl<'a> RenderGraphCompiler<'a> {
         target_texture: &RenderTexture,
     ) -> Vec<CompiledPass> {
         puffin::profile_scope!("compile render graph");
-        let mut sizes = vec![None; render_graph.nodes.len()];
-        let mut usages = vec![0; render_graph.nodes.len()];
+        let mut usages = vec![Usage {
+            size: Size2D::new(0, 0),
+            requires_mipmaps: false,
+            usages: TextureUsage::empty(),
+        }; render_graph.nodes.len()];
 
-        fn trace(
-            nodes: &[RenderingPrimitive],
-            sizes: &mut [Option<Size2D<u32>>],
-            usages: &mut [u32],
-            node: &GraphNode,
-        ) -> Size2D<u32> {
-            if let Some(size) = sizes[node.index] {
-                size
-            } else {
-                let size = match &nodes[node.index] {
-                    RenderingPrimitive::UninitializedTexture(size) => *size,
-                    RenderingPrimitive::Clear(target, _) => {
-                        usages[node.index] += 1;
-                        trace(nodes, sizes, usages, target)
-                    }
-                    RenderingPrimitive::Blit(Blit { source, target, .. }) => {
-                        trace(nodes, sizes, usages, source);
-                        trace(nodes, sizes, usages, target)
-                    }
-                    RenderingPrimitive::Quad { target: source, .. } => trace(nodes, sizes, usages, source),
-                };
-                sizes[node.index] = Some(size);
-                size
+        let nodes = &render_graph.nodes;
+        // Propagate backwards
+        for i in (0..render_graph.nodes.len()).rev() {
+            let mut usage = usages[i].clone();
+            match &nodes[i] {
+                RenderingPrimitive::UninitializedTexture(_) => {},
+                RenderingPrimitive::Clear(_, _) => {
+                    usage.usages |= TextureUsage::RENDER_ATTACHMENT;
+                },
+                RenderingPrimitive::Blit(_) => {
+                    usage.usages |= TextureUsage::RENDER_ATTACHMENT;
+                },
+                RenderingPrimitive::Quad { .. } => {
+                    usage.usages |= TextureUsage::RENDER_ATTACHMENT;
+                },
+                RenderingPrimitive::GenerateMipmaps { .. } => {
+                    usage.usages |= TextureUsage::STORAGE;
+                    usage.requires_mipmaps = true;
+                }
             }
+
+            match &nodes[i] {
+                RenderingPrimitive::UninitializedTexture(_size) => {},
+                RenderingPrimitive::Clear(target, _) => {
+                    usages[target.index].requires_mipmaps |= usage.requires_mipmaps;
+                    usages[target.index].usages |= usage.usages;
+                }
+                RenderingPrimitive::Blit(Blit { target, source, .. }) => {
+                    usages[target.index].requires_mipmaps |= usage.requires_mipmaps;
+                    usages[target.index].usages |= usage.usages;
+                    usages[source.index].usages |= TextureUsage::SAMPLED;
+
+                }
+                RenderingPrimitive::Quad { target, .. } => {
+                    usages[target.index].requires_mipmaps |= usage.requires_mipmaps;
+                    usages[target.index].usages |= usage.usages;
+                },
+                RenderingPrimitive::GenerateMipmaps { target} => {
+                    usages[target.index].requires_mipmaps |= usage.requires_mipmaps;
+                    usages[target.index].usages |= usage.usages;
+                }
+            };
+
+            usages[i] = usage;
         }
+
+        // Propagate forwards
+        for i in 0..render_graph.nodes.len() {
+            let mut usage = usages[i].clone();
+            match &nodes[i] {
+                RenderingPrimitive::UninitializedTexture(size) => {
+                    usage.size = *size;
+                },
+                RenderingPrimitive::Clear(target, _) => {
+                    usage.size = usages[target.index].size;
+                    usage.requires_mipmaps = usages[target.index].requires_mipmaps;
+                    usage.usages = usages[target.index].usages;
+                }
+                RenderingPrimitive::Blit(Blit { source, target, .. }) => {
+                    usage.size = usages[target.index].size;
+                    usage.requires_mipmaps = usages[target.index].requires_mipmaps;
+                    usage.usages = usages[target.index].usages;
+                }
+                RenderingPrimitive::Quad { target, .. } => {
+                    usage.size = usages[target.index].size;
+                    usage.requires_mipmaps = usages[target.index].requires_mipmaps;
+                    usage.usages = usages[target.index].usages;
+                },
+                RenderingPrimitive::GenerateMipmaps { target} => {
+                    usage.size = usages[target.index].size;
+                    usage.requires_mipmaps = usages[target.index].requires_mipmaps;
+                    usage.usages = usages[target.index].usages;
+                }
+            };
+            usages[i] = usage;
+        }
+
+        // fn trace(
+        //     nodes: &[RenderingPrimitive],
+        //     sizes: &mut [Option<Size2D<u32>>],
+        //     usages: &mut [Usage],
+        //     node: &GraphNode,
+        //     requires_mipmaps: bool,
+        // ) -> Size2D<u32> {
+        //     if let Some(size) = sizes[node.index] {
+        //         size
+        //     } else {
+        //         let size = match &nodes[node.index] {
+        //             RenderingPrimitive::UninitializedTexture(size) => *size,
+        //             RenderingPrimitive::Clear(target, _) => {
+        //                 trace(nodes, sizes, usages, target, requires_mipmaps)
+        //             }
+        //             RenderingPrimitive::Blit(Blit { source, target, .. }) => {
+        //                 trace(nodes, sizes, usages, source, false);
+        //                 trace(nodes, sizes, usages, target, requires_mipmaps)
+        //             }
+        //             RenderingPrimitive::Quad { target: source, .. } => trace(nodes, sizes, usages, source, requires_mipmaps),
+        //             RenderingPrimitive::GenerateMipmaps { target} => trace(nodes, sizes, usages, target, true),
+        //         };
+        //         sizes[node.index] = Some(size);
+        //         usages[node.index].requires_mipmaps = requires_mipmaps;
+        //         size
+        //     }
+        // }
 
         {
             puffin::profile_scope!("trace");
-            let output_size = trace(&render_graph.nodes, &mut sizes, &mut usages, &source);
+            let output_size = usages[source.index].size;
+            //trace(&render_graph.nodes, &mut sizes, &mut usages, &source, false);
             assert_eq!(
                 output_size,
                 Size2D::new(target_texture.size().width, target_texture.size().height)
             );
         }
 
-        let sizes = sizes
-            .into_iter()
-            .map(|s| s.unwrap_or_else(|| Size2D::new(0, 0)))
-            .collect::<Vec<_>>();
+        if !target_texture.usage().contains(usages[source.index].usages) {
+            panic!("The render target doesn't have sufficient usage flags. The render target has: {:?}, but required {:?}", target_texture.usage(), usages[source.index].usages);
+        }
+
+        // let sizes = sizes
+        //     .into_iter()
+        //     .map(|s| s.unwrap_or_else(|| Size2D::new(0, 0)))
+        //     .collect::<Vec<_>>();
 
         {
             puffin::profile_scope!("build");
             let mut passes = vec![];
-            self.build(&render_graph.nodes, &sizes, &mut passes, &source, target_texture);
+            self.build(&render_graph.nodes, &usages, &mut passes, &source, target_texture);
             passes
         }
     }
@@ -210,10 +328,36 @@ impl<'a> RenderGraphCompiler<'a> {
         pixel_rect.scale(1.0 / (texture_size.width as f32), 1.0 / (texture_size.height as f32)).cast_unit()
     }
 
+    fn push_compute_op(passes: &mut Vec<CompiledPass>, target_pass: PassIndex, op: CompiledComputePrimitive) -> PassIndex {
+        if let CompiledPass::ComputePass { ops, .. } = &mut passes[target_pass] {
+            ops.push(op);
+            target_pass
+        } else {
+            passes.push(CompiledPass::ComputePass {
+                ops: vec![op],
+            });
+            passes.len() - 1
+        }
+    }
+
+    fn push_render_op(passes: &mut Vec<CompiledPass>, target_texture: &RenderTexture, target_pass: PassIndex, op: CompiledRenderingPrimitive) -> PassIndex {
+        if let CompiledPass::RenderPass { ops, .. } = &mut passes[target_pass] {
+            ops.push(op);
+            target_pass
+        } else {
+            passes.push(CompiledPass::RenderPass {
+                target: target_texture.to_owned(),
+                clear: Some(LoadOp::Load),
+                ops: vec![op],
+            });
+            passes.len() - 1
+        }
+    }
+
     fn build(
         &mut self,
         nodes: &[RenderingPrimitive],
-        sizes: &[Size2D<u32>],
+        usages: &[Usage],
         passes: &mut Vec<CompiledPass>,
         node: &GraphNode,
         target_texture: &RenderTexture,
@@ -229,7 +373,7 @@ impl<'a> RenderGraphCompiler<'a> {
                 // passes.len() - 1
             }
             RenderingPrimitive::Clear(_, color) => {
-                passes.push(CompiledPass {
+                passes.push(CompiledPass::RenderPass {
                     target: target_texture.clone(),
                     clear: Some(LoadOp::Clear(*color)),
                     ops: vec![],
@@ -243,13 +387,13 @@ impl<'a> RenderGraphCompiler<'a> {
                 source_rect,
                 target_rect,
             }) => {
-                let source_texture_size = sizes[source.index];
-                let target_texture_size = sizes[target.index];
+                let source_texture_size = usages[source.index].size;
+                let target_texture_size = usages[target.index].size;
                 let target_texture_rect = CanvasRect::from_size(target_texture_size.to_f32().cast_unit());
                 if !target_texture_rect.intersects(target_rect) {
                     // Blit would end up outside the texture.
                     // We can ignore it.
-                    self.build(nodes, sizes, passes, target, target_texture)
+                    self.build(nodes, usages, passes, target, target_texture)
                 } else {
                     let pipeline = self
                         .render_pipeline_cache
@@ -266,8 +410,10 @@ impl<'a> RenderGraphCompiler<'a> {
                         .to_owned();
                     let source_texture = self.render_texture_cache.temporary_render_texture(
                         self.device,
-                        sizes[source.index],
+                        usages[source.index].size,
                         crate::config::TEXTURE_FORMAT,
+                        usages[source.index].requires_mipmaps,
+                        usages[source.index].usages,
                     );
 
                     let mat = self.material_cache.override_material(
@@ -290,11 +436,11 @@ impl<'a> RenderGraphCompiler<'a> {
                         ),
                     };
 
-                    let _source_pass = self.build(nodes, sizes, passes, source, &source_texture);
+                    let _source_pass = self.build(nodes, usages, passes, source, &source_texture);
 
                     let pass = if target_rect.contains_rect(&target_texture_rect) {
                         // Blit covers the whole target, this means we can discard whatever was inside the target before.
-                        passes.push(CompiledPass {
+                        passes.push(CompiledPass::RenderPass {
                             target: target_texture.clone(),
                             clear: None,
                             ops: vec![op],
@@ -303,9 +449,8 @@ impl<'a> RenderGraphCompiler<'a> {
                     } else {
                         // Common path
                         // Blit does not cover the whole target
-                        let target_pass = self.build(nodes, sizes, passes, target, target_texture);
-                        passes[target_pass].ops.push(op);
-                        target_pass
+                        let target_pass = self.build(nodes, usages, passes, target, target_texture);
+                        Self::push_render_op(passes, target_texture, target_pass, op)
                     };
 
                     // We are done using the source texture now
@@ -315,8 +460,8 @@ impl<'a> RenderGraphCompiler<'a> {
                 }
             }
             RenderingPrimitive::Quad { target, rect, pipeline, material } => {
-                let target_pass = self.build(nodes, sizes, passes, target, target_texture);
-                let target_size = sizes[target.index];
+                let target_pass = self.build(nodes, usages, passes, target, target_texture);
+                let target_size = usages[target.index].size;
 
                 let uv_rect = Self::pixel_to_uv_rect(rect, &target_size);
                 let vbo = self.ephermal_buffer_cache.get(self.device, self.encoder, self.staging_belt, BufferUsage::VERTEX, &[
@@ -330,7 +475,7 @@ impl<'a> RenderGraphCompiler<'a> {
                     0, 1, 2, 3, 2, 0
                 ]);
 
-                passes[target_pass].ops.push(CompiledRenderingPrimitive::Render {
+                let op = CompiledRenderingPrimitive::Render {
                     vbo,
                     ibo,
                     pipeline: self.render_pipeline_cache.get(self.device, RenderPipelineKey {
@@ -341,9 +486,51 @@ impl<'a> RenderGraphCompiler<'a> {
                         blend_state: BlendState::REPLACE,
                     }).to_owned(),
                     bind_group: material.bind_group().to_owned(),
-                });
+                };
 
-                target_pass
+                Self::push_render_op(passes, target_texture, target_pass, op)
+            },
+            RenderingPrimitive::GenerateMipmaps { target } => {
+                let target_pass = self.build(nodes, usages, passes, target, target_texture);
+
+                let bind_groups = (1..target_texture.mip_level_count()).map(|mip_level| {
+                    puffin::profile_scope!("create bind group");
+                    let mat = self.material_cache.override_material(self.device, &self.mipmapper.material, &[
+                        BindGroupEntryArc {
+                            binding: 0,
+                            resource: BindingResourceArc::Mipmap(Some((target_texture.clone(), mip_level - 1))),
+                        },
+                        BindGroupEntryArc {
+                            binding: 1,
+                            resource: BindingResourceArc::Mipmap(Some((target_texture.clone(), mip_level))),
+                        }
+                    ]);
+
+                    mat.bind_group().to_owned()
+
+                    // let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    //     layout: &self.bind_group_layout,
+                    //     entries: &[
+                    //         wgpu::BindGroupEntry {
+                    //             binding: 0,
+                    //             resource: wgpu::BindingResource::TextureView(prev_level),
+                    //         },
+                    //         wgpu::BindGroupEntry {
+                    //             binding: 1,
+                    //             resource: wgpu::BindingResource::TextureView(current_level),
+                    //         },
+                    //     ],
+                    //     label: None,
+                    // });
+                    // bind_groups.push(bind_group);
+                    // prev_level = current_level;
+                }).collect::<Vec<_>>();
+
+                Self::push_compute_op(passes, target_pass, CompiledComputePrimitive::GenerateMipmaps {
+                    target: target_texture.to_owned(),
+                    pipeline: self.mipmapper.pipeline.clone(),
+                    bind_groups,
+                })
             },
         }
     }
@@ -351,67 +538,112 @@ impl<'a> RenderGraphCompiler<'a> {
     pub fn render(&mut self, passes: &[CompiledPass]) {
         puffin::profile_function!();
         for pass in passes {
-            let color_attachment = wgpu::RenderPassColorAttachment {
-                view: pass.target.default_view().view,
-                ops: wgpu::Operations {
-                    load: pass.clear.unwrap_or(LoadOp::Load),
-                    store: true,
+            match pass {
+                CompiledPass::RenderPass { target, clear, ops } => {
+                    let color_attachment = wgpu::RenderPassColorAttachment {
+                        view: target.default_view().view,
+                        ops: wgpu::Operations {
+                            load: clear.unwrap_or(LoadOp::Load),
+                            store: true,
+                        },
+                        resolve_target: None,
+                    };
+        
+                    let mut render_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("pass"),
+                        color_attachments: &[color_attachment],
+                        depth_stencil_attachment: None,
+                        // Some(wgpu::RenderPassDepthStencilAttachment {
+                        //     view: self.depth_texture_view.view,
+                        //     depth_ops: Some(wgpu::Operations {
+                        //         load: wgpu::LoadOp::Clear(0.0),
+                        //         store: true,
+                        //     }),
+                        //     stencil_ops: Some(wgpu::Operations {
+                        //         load: wgpu::LoadOp::Clear(0),
+                        //         store: true,
+                        //     }),
+                        // }),
+                    });
+        
+                    for op in ops {
+                        match op {
+                            CompiledRenderingPrimitive::Blit {
+                                source: _,
+                                vbo,
+                                pipeline,
+                                bind_group,
+                            } => {
+                                puffin::profile_scope!("op:blit");
+                                render_pass.set_pipeline(&pipeline.pipeline);
+                                render_pass.set_bind_group(0, bind_group, &[]);
+                                render_pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);
+                                render_pass.set_vertex_buffer(0, vbo.as_slice());
+                                render_pass.draw_indexed(0..6, 0, 0..1);
+                            }
+                            CompiledRenderingPrimitive::Render {
+                                vbo,
+                                ibo,
+                                pipeline,
+                                bind_group,
+                            } => {
+                                puffin::profile_scope!("op:render");
+                                render_pass.set_pipeline(&pipeline.pipeline);
+                                render_pass.set_bind_group(0, bind_group, &[]);
+                                render_pass.set_index_buffer(ibo.as_slice(), wgpu::IndexFormat::Uint32);
+                                render_pass.set_vertex_buffer(0, vbo.as_slice());
+                                render_pass.draw_indexed(0..6, 0, 0..1);
+                            }
+                        }
+                    }
+        
+                    {
+                        puffin::profile_scope!("drop render pass");
+                        drop(render_pass);
+                    }
                 },
-                resolve_target: None,
-            };
+                CompiledPass::ComputePass { ops } => {
+                    let mut cpass = self.encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("cpass"),
+                    });
 
-            let mut render_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("pass"),
-                color_attachments: &[color_attachment],
-                depth_stencil_attachment: None,
-                // Some(wgpu::RenderPassDepthStencilAttachment {
-                //     view: self.depth_texture_view.view,
-                //     depth_ops: Some(wgpu::Operations {
-                //         load: wgpu::LoadOp::Clear(0.0),
-                //         store: true,
-                //     }),
-                //     stencil_ops: Some(wgpu::Operations {
-                //         load: wgpu::LoadOp::Clear(0),
-                //         store: true,
-                //     }),
-                // }),
-            });
-
-            for op in &pass.ops {
-                match op {
-                    CompiledRenderingPrimitive::Blit {
-                        source: _,
-                        vbo,
-                        pipeline,
-                        bind_group,
-                    } => {
-                        puffin::profile_scope!("op:blit");
-                        render_pass.set_pipeline(&pipeline.pipeline);
-                        render_pass.set_bind_group(0, bind_group, &[]);
-                        render_pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);
-                        render_pass.set_vertex_buffer(0, vbo.as_slice());
-                        render_pass.draw_indexed(0..6, 0, 0..1);
+                    for op in ops {
+                        match op {
+                            CompiledComputePrimitive::GenerateMipmaps { target, pipeline, bind_groups } => {
+                                assert!(target.mip_level_count() > 1);
+                                // assert!((texture.descriptor.size.width & (texture.descriptor.size.width - 1)) == 0, "Texture width must be a power of two. Found {}", texture.descriptor.size.width);
+                                // assert!((texture.descriptor.size.height & (texture.descriptor.size.height - 1)) == 0, "Texture height must be a power of two. Found {}", texture.descriptor.size.height);
+        
+                                let mut width = target.size().width;
+                                let mut height = target.size().height;
+        
+                                cpass.set_pipeline(pipeline);
+        
+                                for bind_group in bind_groups {
+                                    width = (width / 2).max(1);
+                                    height = (height / 2).max(1);
+                                    let local_size: u32 = 8;
+                                    {
+                                        cpass.set_bind_group(0, bind_group, &[]);
+                                        cpass.dispatch(
+                                            (width + local_size - 1) / local_size,
+                                            (height + local_size - 1) / local_size,
+                                            1,
+                                        );
+                                    }
+                                }
+    
+                            },
+                        }
                     }
-                    CompiledRenderingPrimitive::Render {
-                        vbo,
-                        ibo,
-                        pipeline,
-                        bind_group,
-                    } => {
-                        puffin::profile_scope!("op:render");
-                        render_pass.set_pipeline(&pipeline.pipeline);
-                        render_pass.set_bind_group(0, bind_group, &[]);
-                        render_pass.set_index_buffer(ibo.as_slice(), wgpu::IndexFormat::Uint32);
-                        render_pass.set_vertex_buffer(0, vbo.as_slice());
-                        render_pass.draw_indexed(0..6, 0, 0..1);
-                    }
-                }
-            }
 
-            {
-                puffin::profile_scope!("drop render pass");
-                drop(render_pass);
+                    {
+                        puffin::profile_scope!("drop cpass");
+                        drop(cpass);
+                    }
+                },
             }
+            
         }
     }
 }

@@ -2,7 +2,7 @@ use by_address::ByAddress;
 use euclid::rect;
 use lazy_init::Lazy;
 use std::{num::NonZeroU32, rc::Rc};
-use wgpu::{util::DeviceExt, CommandEncoder, Device, Extent3d, TextureFormat, TextureView};
+use wgpu::{CommandEncoder, Device, Extent3d, TextureFormat, TextureUsage, TextureView, util::DeviceExt};
 
 pub struct Texture {
     pub descriptor: wgpu::TextureDescriptor<'static>,
@@ -122,6 +122,20 @@ impl RenderTexture {
                 height: tex.descriptor.height,
                 depth_or_array_layers: 1,
             },
+        }
+    }
+
+    pub fn usage(&self) -> TextureUsage {
+        match self {
+            RenderTexture::Texture(tex) => tex.descriptor.usage,
+            RenderTexture::SwapchainImage(t) => t.descriptor.usage,
+        }
+    }
+
+    pub fn mip_level_count(&self) -> u32 {
+        match self {
+            RenderTexture::Texture(tex) => tex.descriptor.mip_level_count,
+            &RenderTexture::SwapchainImage(_) => 1,
         }
     }
 }
