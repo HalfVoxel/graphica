@@ -1434,7 +1434,6 @@ pub fn main() {
             }
         }
 
-        puffin::GlobalProfiler::lock().new_frame();
         puffin::profile_scope!("event loop");
 
         egui_wrapper.platform.update_time(start_time.elapsed().as_secs_f64());
@@ -1809,6 +1808,8 @@ pub fn main() {
                 device.poll(wgpu::Maintain::Wait);
             }
         }
+
+        profiling::finish_frame!();
     });
 }
 

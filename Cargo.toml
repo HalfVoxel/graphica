@@ -39,6 +39,7 @@ egui_winit_platform = "0.8"
 puffin = "0.5"
 puffin_egui = "0.3"
 by_address = "1.0"
+profiling = { version = "1.0", features = ["profile-with-puffin"] }
 
 [build-dependencies]
 anyhow = "1.0"
@@ -47,6 +48,7 @@ glob = "0.3"
 shaderc = "0.7"
 
 [patch.crates-io]
+profiling = { path = "../profiling" }
 # gfx-hal = { path = "../gfx/src/hal"}
 # gfx-backend-vulkan = { path = "../gfx/src/backend/vulkan"}
 # gfx-backend-empty = { path = "../gfx/src/backend/empty"}
