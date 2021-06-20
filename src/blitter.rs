@@ -173,11 +173,16 @@ impl Blitter {
             })
             .collect::<Vec<_>>();
 
-        let material = Material::from_consecutive_entries(device, "blit material", bind_group_layout.clone(), vec![
-            BindingResourceArc::sampler(Some(sampler.clone())),
-            BindingResourceArc::texture(None),
-        ]);
-        
+        let material = Material::from_consecutive_entries(
+            device,
+            "blit material",
+            bind_group_layout.clone(),
+            vec![
+                BindingResourceArc::sampler(Some(sampler.clone())),
+                BindingResourceArc::texture(None),
+            ],
+        );
+
         let blend_over_module = load_shader(&device, "shaders/blend_over.comp.spv");
 
         let bind_group_layout_compute_in_place = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

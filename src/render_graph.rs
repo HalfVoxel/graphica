@@ -1,10 +1,17 @@
-use std::{rc::Rc};
+use std::rc::Rc;
 
 use euclid::default::Size2D;
 use lyon::math::{point, Rect};
-use wgpu::{BindGroup, BlendState, Color, CommandEncoder, Device, Extent3d, LoadOp, TextureFormat, util::{StagingBelt}};
+use wgpu::{util::StagingBelt, BindGroup, BlendState, Color, CommandEncoder, Device, Extent3d, LoadOp, TextureFormat};
 
-use crate::{blitter::{BlitGpuVertex, Blitter}, cache::ephermal_buffer_cache::{BufferRange, EphermalBufferCache}, cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache}, cache::render_pipeline_cache::{CachedRenderPipeline, RenderPipelineCache, RenderPipelineKey}, cache::render_texture_cache::RenderTextureCache, texture::{RenderTexture}};
+use crate::{
+    blitter::{BlitGpuVertex, Blitter},
+    cache::ephermal_buffer_cache::{BufferRange, EphermalBufferCache},
+    cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache},
+    cache::render_pipeline_cache::{CachedRenderPipeline, RenderPipelineCache, RenderPipelineKey},
+    cache::render_texture_cache::RenderTextureCache,
+    texture::RenderTexture,
+};
 
 struct Blit {
     source: GraphNode,
@@ -101,7 +108,6 @@ type PassIndex = usize;
 struct RenderTextureHandle(usize);
 
 impl<'a> RenderGraphCompiler<'a> {
-
     fn blit_vertices(&mut self, source_uv_rect: &Rect, target_uv_rect: &Rect) -> BufferRange {
         puffin::profile_function!();
         let vertices = &[
@@ -123,10 +129,21 @@ impl<'a> RenderGraphCompiler<'a> {
             },
         ];
 
-        self.ephermal_buffer_cache.get(self.device, self.encoder, self.staging_belt, wgpu::BufferUsage::VERTEX, vertices)
+        self.ephermal_buffer_cache.get(
+            self.device,
+            self.encoder,
+            self.staging_belt,
+            wgpu::BufferUsage::VERTEX,
+            vertices,
+        )
     }
 
-    pub fn compile(&mut self, render_graph: &RenderGraph, source: GraphNode, target_texture: &RenderTexture) -> Vec<CompiledPass> {
+    pub fn compile(
+        &mut self,
+        render_graph: &RenderGraph,
+        source: GraphNode,
+        target_texture: &RenderTexture,
+    ) -> Vec<CompiledPass> {
         puffin::profile_scope!("compile render graph");
         let mut sizes = vec![None; render_graph.nodes.len()];
         let mut usages = vec![0; render_graph.nodes.len()];
@@ -149,7 +166,7 @@ impl<'a> RenderGraphCompiler<'a> {
                     RenderingPrimitive::Blit(Blit { source, target, .. }) => {
                         trace(nodes, sizes, usages, source);
                         trace(nodes, sizes, usages, target)
-                    },
+                    }
                 };
                 sizes[node.index] = Some(size);
                 size
@@ -159,14 +176,17 @@ impl<'a> RenderGraphCompiler<'a> {
         {
             puffin::profile_scope!("trace");
             let output_size = trace(&render_graph.nodes, &mut sizes, &mut usages, &source);
-            assert_eq!(output_size, Size2D::new(target_texture.size().width, target_texture.size().height));
+            assert_eq!(
+                output_size,
+                Size2D::new(target_texture.size().width, target_texture.size().height)
+            );
         }
 
         let sizes = sizes
             .into_iter()
             .map(|s| s.unwrap_or_else(|| Size2D::new(0, 0)))
             .collect::<Vec<_>>();
-        
+
         {
             puffin::profile_scope!("build");
             let mut passes = vec![];
@@ -176,7 +196,7 @@ impl<'a> RenderGraphCompiler<'a> {
     }
 
     fn pixel_to_uv_rect(pixel_rect: &Rect, texture_size: &Size2D<u32>) -> Rect {
-        pixel_rect.scale(1.0/(texture_size.width as f32), 1.0/(texture_size.height as f32))
+        pixel_rect.scale(1.0 / (texture_size.width as f32), 1.0 / (texture_size.height as f32))
     }
 
     fn build(
@@ -220,19 +240,33 @@ impl<'a> RenderGraphCompiler<'a> {
                     // We can ignore it.
                     self.build(nodes, sizes, passes, target, target_texture)
                 } else {
-                    let pipeline = self.render_pipeline_cache.get(self.device, RenderPipelineKey {
-                        base: self.blitter.render_pipeline_base.clone().into(),
-                        sample_count: target_texture.sample_count(),
-                        depth_format: None,
-                        target_format: target_texture.format(),
-                        blend_state: BlendState::REPLACE,
-                    }).to_owned();
-                    let source_texture = self.render_texture_cache.temporary_render_texture(self.device, sizes[source.index], crate::config::TEXTURE_FORMAT);
+                    let pipeline = self
+                        .render_pipeline_cache
+                        .get(
+                            self.device,
+                            RenderPipelineKey {
+                                base: self.blitter.render_pipeline_base.clone().into(),
+                                sample_count: target_texture.sample_count(),
+                                depth_format: None,
+                                target_format: target_texture.format(),
+                                blend_state: BlendState::REPLACE,
+                            },
+                        )
+                        .to_owned();
+                    let source_texture = self.render_texture_cache.temporary_render_texture(
+                        self.device,
+                        sizes[source.index],
+                        crate::config::TEXTURE_FORMAT,
+                    );
 
-                    let mat = self.material_cache.override_material(self.device, &self.blitter.material, &[BindGroupEntryArc {
-                        binding: 1,
-                        resource: BindingResourceArc::render_texture(Some(source_texture.clone())),
-                    }]);
+                    let mat = self.material_cache.override_material(
+                        self.device,
+                        &self.blitter.material,
+                        &[BindGroupEntryArc {
+                            binding: 1,
+                            resource: BindingResourceArc::render_texture(Some(source_texture.clone())),
+                        }],
+                    );
                     let op = CompiledRenderingPrimitive::Blit {
                         source: source_texture.clone(),
                         // target: target_texture,

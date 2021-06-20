@@ -1,9 +1,8 @@
 use std::{collections::HashMap, num::NonZeroU64, ops::Range, sync::Arc};
 
-use wgpu::{Buffer, BufferAddress, BufferDescriptor, BufferUsage, CommandEncoder, Device, util::StagingBelt};
+use wgpu::{util::StagingBelt, Buffer, BufferAddress, BufferDescriptor, BufferUsage, CommandEncoder, Device};
 
 use crate::wgpu_utils::{as_u8_slice, create_buffer};
-
 
 #[derive(Default)]
 pub struct EphermalBufferCache {
@@ -31,7 +30,14 @@ struct Chunk {
 const ENABLE_CACHE: bool = true;
 
 impl EphermalBufferCache {
-    pub fn get<T>(&mut self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt, mut usage: BufferUsage, contents: &[T]) -> BufferRange {
+    pub fn get<T>(
+        &mut self,
+        device: &Device,
+        encoder: &mut CommandEncoder,
+        staging_belt: &mut StagingBelt,
+        mut usage: BufferUsage,
+        contents: &[T],
+    ) -> BufferRange {
         let bytes = as_u8_slice(contents);
         let content_size = bytes.len() as u64;
 
@@ -40,7 +46,7 @@ impl EphermalBufferCache {
             return BufferRange {
                 buffer: Arc::new(vbo),
                 range: 0..content_size,
-            }
+            };
         }
 
         // We need to be able to copy to the buffer in order to be able to use the staging belt
@@ -50,7 +56,9 @@ impl EphermalBufferCache {
         let chunk_idx = if let Some(idx) = chunks.iter().position(|chunk| chunk.used + content_size <= chunk.size) {
             idx
         } else {
-            let new_size = (content_size).next_power_of_two().max(chunks.last().map(|x| x.size).unwrap_or(0));
+            let new_size = (content_size)
+                .next_power_of_two()
+                .max(chunks.last().map(|x| x.size).unwrap_or(0));
             println!("Creating a new buffer with size={}", new_size);
             chunks.push(Chunk {
                 buffer: Arc::new(device.create_buffer(&BufferDescriptor {
@@ -68,7 +76,9 @@ impl EphermalBufferCache {
 
         let chunk = &mut chunks[chunk_idx];
         if let Some(size) = NonZeroU64::new(content_size) {
-            staging_belt.write_buffer(encoder, &chunk.buffer, chunk.used, size, device).copy_from_slice(bytes);
+            staging_belt
+                .write_buffer(encoder, &chunk.buffer, chunk.used, size, device)
+                .copy_from_slice(bytes);
         }
 
         let result = BufferRange {

@@ -28,27 +28,25 @@ use winit::window::Window;
 
 use crate::blitter::BlitOp;
 use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex};
+use crate::cache::ephermal_buffer_cache::EphermalBufferCache;
+use crate::cache::material_cache::MaterialCache;
+use crate::cache::render_pipeline_cache::RenderPipelineCache;
+use crate::cache::render_texture_cache::RenderTextureCache;
 use crate::canvas::CanvasView;
 use crate::egui_wrapper::EguiWrapper;
 use crate::encoder::Encoder;
-use crate::cache::ephermal_buffer_cache::EphermalBufferCache;
 use crate::fps_limiter::FPSLimiter;
 use crate::geometry_utilities;
 use crate::geometry_utilities::types::*;
 use crate::geometry_utilities::ParamCurveDistanceEval;
 use crate::gui;
 use crate::input::{InputManager, KeyCombination};
-use crate::cache::material_cache::MaterialCache;
 use crate::path::*;
 use crate::path_collection::{PathCollection, VertexReference};
 use crate::path_editor::*;
-use crate::cache::render_pipeline_cache::RenderPipelineCache;
-use crate::cache::render_texture_cache::RenderTextureCache;
 
+use crate::brush_editor::{BrushData, BrushEditor};
 use crate::toolbar::GUIRoot;
-use crate::{
-    brush_editor::{BrushData, BrushEditor},
-};
 use crate::{blitter::Blitter, vertex::GPUVertex};
 use crate::{
     texture::{RenderTexture, SwapchainImageWrapper, Texture},
@@ -1658,7 +1656,7 @@ pub fn main() {
             let mut t = render_graph.clear(Size2D::new(frame.size().width, frame.size().height), wgpu::Color::GREEN);
             let blue = render_graph.clear(Size2D::new(128, 128), wgpu::Color::BLUE);
             t = render_graph.blit(blue, t, rect(0.0, 0.0, 128.0, 128.0), rect(10.0, 10.0, 512.0, 512.0));
-            let mut render_graph_compiler  = crate::render_graph::RenderGraphCompiler {
+            let mut render_graph_compiler = crate::render_graph::RenderGraphCompiler {
                 device: &device,
                 encoder: &mut encoder,
                 blitter: &blitter,

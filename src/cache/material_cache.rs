@@ -1,4 +1,9 @@
-use std::{collections::{HashMap}, hash::{Hash, Hasher}, rc::Rc, sync::Arc};
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+    rc::Rc,
+    sync::Arc,
+};
 
 use by_address::ByAddress;
 use wgpu::{BindGroup, BindGroupDescriptor, BindGroupLayout, Device, Sampler};
@@ -21,31 +26,52 @@ impl Material {
         }
     }
 
-    pub fn new(device: &Device, label: String, bind_group_layout: Arc<BindGroupLayout>, bindings: Vec<BindGroupEntryArc>) -> Material {
+    pub fn new(
+        device: &Device,
+        label: String,
+        bind_group_layout: Arc<BindGroupLayout>,
+        bindings: Vec<BindGroupEntryArc>,
+    ) -> Material {
         let bind_group = Self::bind_group_from_entries(device, &label, &bind_group_layout, &bindings).map(Rc::new);
         Material {
             bind_group_layout: bind_group_layout.into(),
             label,
             bindings,
-            bind_group
+            bind_group,
         }
     }
 
-    pub fn from_consecutive_entries(device: &Device, label: &str, bind_group_layout: Arc<BindGroupLayout>, bindings: Vec<BindingResourceArc>) -> Material {
-        let entries = bindings.into_iter().enumerate().map(|(index, resource)| BindGroupEntryArc {
-            binding: index as u32,
-            resource,
-        }).collect::<Vec<_>>();
+    pub fn from_consecutive_entries(
+        device: &Device,
+        label: &str,
+        bind_group_layout: Arc<BindGroupLayout>,
+        bindings: Vec<BindingResourceArc>,
+    ) -> Material {
+        let entries = bindings
+            .into_iter()
+            .enumerate()
+            .map(|(index, resource)| BindGroupEntryArc {
+                binding: index as u32,
+                resource,
+            })
+            .collect::<Vec<_>>();
         Self::new(device, label.to_string(), bind_group_layout, entries)
     }
 
-    fn bind_group_from_entries(device: &Device, label: &str, layout: &BindGroupLayout, entries: &[BindGroupEntryArc]) -> Option<BindGroup> {
+    fn bind_group_from_entries(
+        device: &Device,
+        label: &str,
+        layout: &BindGroupLayout,
+        entries: &[BindGroupEntryArc],
+    ) -> Option<BindGroup> {
         let bind_entries = entries.iter().map(|b| b.to_wgpu()).collect::<Option<Vec<_>>>();
-        bind_entries.map(|entries| device.create_bind_group(&BindGroupDescriptor {
+        bind_entries.map(|entries| {
+            device.create_bind_group(&BindGroupDescriptor {
                 label: Some(label),
                 layout,
                 entries: &entries,
-            }))
+            })
+        })
     }
 
     pub fn modified(&self, device: &Device, overrides: &[BindGroupEntryArc]) -> Material {
@@ -55,13 +81,14 @@ impl Material {
             new_bindings[change.binding as usize] = change.to_owned();
         }
 
-        let bind_group = Self::bind_group_from_entries(device, &self.label, &self.bind_group_layout, &new_bindings).map(Rc::new);
+        let bind_group =
+            Self::bind_group_from_entries(device, &self.label, &self.bind_group_layout, &new_bindings).map(Rc::new);
 
         Material {
             bind_group_layout: self.bind_group_layout.clone(),
             label: self.label.clone(),
             bindings: new_bindings,
-            bind_group
+            bind_group,
         }
     }
 }
@@ -113,15 +140,9 @@ impl BindingResourceArc {
 
     pub fn hashcode(&self) -> usize {
         match self {
-            BindingResourceArc::Sampler(Some(o)) => {
-                Arc::as_ptr(&o.0) as usize
-            },
-            BindingResourceArc::Texture(Some(RenderTexture::Texture(t))) => {
-                Rc::as_ptr(&t.0) as usize
-            },
-            BindingResourceArc::Texture(Some(RenderTexture::SwapchainImage(t))) => {
-                Rc::as_ptr(&t.0) as usize
-            },
+            BindingResourceArc::Sampler(Some(o)) => Arc::as_ptr(&o.0) as usize,
+            BindingResourceArc::Texture(Some(RenderTexture::Texture(t))) => Rc::as_ptr(&t.0) as usize,
+            BindingResourceArc::Texture(Some(RenderTexture::SwapchainImage(t))) => Rc::as_ptr(&t.0) as usize,
             _ => 0,
         }
     }
@@ -173,10 +194,15 @@ impl MaterialCache {
         // }
     }
 
-    pub fn override_material(&mut self, device: &Device, material: &Material, overrides: &[BindGroupEntryArc]) -> &Arc<Material> {
+    pub fn override_material(
+        &mut self,
+        device: &Device,
+        material: &Material,
+        overrides: &[BindGroupEntryArc],
+    ) -> &Arc<Material> {
         let hash = MaterialCache::hash_material(material, overrides);
-        self.cache.entry(hash).or_insert_with(|| {
-            Arc::new(material.modified(device, overrides))
-        })
+        self.cache
+            .entry(hash)
+            .or_insert_with(|| Arc::new(material.modified(device, overrides)))
     }
 }

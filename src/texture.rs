@@ -13,7 +13,11 @@ pub struct Texture {
 
 impl std::fmt::Debug for Texture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Texture({}x{})", self.descriptor.size.width, self.descriptor.size.height)
+        write!(
+            f,
+            "Texture({}x{})",
+            self.descriptor.size.width, self.descriptor.size.height
+        )
     }
 }
 
@@ -24,7 +28,11 @@ pub struct SwapchainImageWrapper {
 
 impl std::fmt::Debug for SwapchainImageWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SwapchainImage({}x{})", self.descriptor.width, self.descriptor.height)
+        write!(
+            f,
+            "SwapchainImage({}x{})",
+            self.descriptor.width, self.descriptor.height
+        )
     }
 }
 
