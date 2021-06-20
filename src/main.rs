@@ -1383,7 +1383,7 @@ pub fn main() {
 
     let font: Vec<u8> = std::fs::read("fonts/Bitter-Regular.ttf").expect("Could not find font");
     let font = FontArc::try_from_vec(font).unwrap();
-    let glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, crate::config::TEXTURE_FORMAT);
+    // let glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, crate::config::TEXTURE_FORMAT);
 
     let document_extent = wgpu::Extent3d {
         width: editor.document.size.unwrap().width,
@@ -1422,7 +1422,7 @@ pub fn main() {
 
     let start_time = Instant::now();
 
-    let mut egui_wrapper = EguiWrapper::new(&device, size, window.scale_factor());
+    let mut egui_wrapper = EguiWrapper::new(&device, size, window.scale_factor(), 1);
     let mut render_pipeline_cache = RenderPipelineCache::default();
     let mut ephermal_buffer_cache = EphermalBufferCache::default();
     let mut render_texture_cache = RenderTextureCache::default();

@@ -8,7 +8,7 @@ pub struct EguiWrapper {
 }
 
 impl EguiWrapper {
-    pub fn new(device: &Device, size: PhysicalSize<u32>, scale_factor: f64) -> Self {
+    pub fn new(device: &Device, size: PhysicalSize<u32>, scale_factor: f64, msaa_samples: u32) -> Self {
         // We use the egui_winit_platform crate as the platform.
         let platform = egui_winit_platform::Platform::new(egui_winit_platform::PlatformDescriptor {
             physical_width: size.width,
@@ -19,7 +19,7 @@ impl EguiWrapper {
         });
 
         // We use the egui_wgpu_backend crate as the render backend.
-        let egui_render_pass = egui_wgpu_backend::RenderPass::new(device, crate::config::TEXTURE_FORMAT);
+        let egui_render_pass = egui_wgpu_backend::RenderPass::new(device, crate::config::TEXTURE_FORMAT, msaa_samples);
 
         Self {
             platform,

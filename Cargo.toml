@@ -12,7 +12,7 @@ path = "src/bin/main.rs"
 # lyon = { path = "../lyon", features = ["extra"] }
 lyon = "0.17"
 # wgpu = { path = "../wgpu-rs" }
-wgpu = "0.8"
+wgpu = "0.9"
 # wgpu-core = { path = "../wgpu/wgpu-core"}
 # wgpu-native = { path = "../wgpu/wgpu-native"}
 # wgpu = { path = "../wgpu-rs"}
@@ -34,7 +34,7 @@ cgmath = "0.18"
 lazy-init = "0.5"
 futures = "0.3"
 egui = "0.12"
-egui_wgpu_backend = "0.8"
+egui_wgpu_backend = "0.9"
 egui_winit_platform = "0.8"
 puffin = "0.5"
 puffin_egui = "0.3"
