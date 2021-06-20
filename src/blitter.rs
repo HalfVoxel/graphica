@@ -1,8 +1,8 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::material_cache::{BindingResourceArc, Material};
-use crate::render_pipeline_cache::RenderPipelineBase;
+use crate::cache::material_cache::{BindingResourceArc, Material};
+use crate::cache::render_pipeline_cache::RenderPipelineBase;
 use crate::shader::load_wgsl_shader;
 use crate::wgpu_utils::*;
 use crate::{shader::load_shader, vertex::GPUVertex};

@@ -1,16 +1,10 @@
-use std::{collections::{hash_map::DefaultHasher, HashMap}, num::NonZeroU64, ops::Range, rc::Rc, sync::Arc};
+use std::{rc::Rc};
 
 use euclid::default::Size2D;
 use lyon::math::{point, Rect};
-use wgpu::{BindGroup, BlendState, Buffer, BufferAddress, BufferDescriptor, BufferUsage, Color, CommandEncoder, Device, Extent3d, LoadOp, RenderPipeline, TextureFormat, TextureView, util::{DeviceExt, StagingBelt}};
+use wgpu::{BindGroup, BlendState, Color, CommandEncoder, Device, Extent3d, LoadOp, TextureFormat, util::{StagingBelt}};
 
-use crate::{blitter::{BlitGpuVertex, Blitter}, encoder::Encoder, material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache}, render_pipeline_cache::{CachedRenderPipeline, RenderPipelineCache, RenderPipelineKey}, texture::{RenderTexture, Texture}, wgpu_utils::{as_u8_slice, create_buffer}};
-
-#[derive(Debug)]
-pub struct BufferRange {
-    buffer: Arc<Buffer>,
-    range: Range<BufferAddress>,
-}
+use crate::{blitter::{BlitGpuVertex, Blitter}, cache::ephermal_buffer_cache::{BufferRange, EphermalBufferCache}, cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache}, cache::render_pipeline_cache::{CachedRenderPipeline, RenderPipelineCache, RenderPipelineKey}, cache::render_texture_cache::RenderTextureCache, texture::{RenderTexture}};
 
 struct Blit {
     source: GraphNode,
@@ -75,131 +69,6 @@ impl RenderGraph {
     fn render(self, source: GraphNode) {}
 }
 
-#[derive(Default)]
-pub struct EphermalBufferCache {
-    chunks: HashMap<BufferUsage, Vec<Chunk>>,
-}
-
-struct Chunk {
-    buffer: Arc<Buffer>,
-    used: u64,
-    size: u64,
-}
-
-impl EphermalBufferCache {
-    pub fn get<T>(&mut self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt, mut usage: BufferUsage, contents: &[T]) -> BufferRange {
-        usage |= BufferUsage::COPY_DST;
-
-        let bytes = as_u8_slice(contents);
-        let content_size = bytes.len() as u64;
-
-        let chunks = self.chunks.entry(usage).or_default();
-        let chunk_idx = if let Some(idx) = chunks.iter().position(|chunk| chunk.used + content_size <= chunk.size) {
-            idx
-        } else {
-            let new_size = (content_size).next_power_of_two().max(chunks.last().map(|x| x.size).unwrap_or(0));
-            println!("Creating a new buffer with size={}", new_size);
-            chunks.push(Chunk {
-                buffer: Arc::new(device.create_buffer(&BufferDescriptor {
-                    label: Some("ephermal buffer"),
-                    size: new_size,
-                    usage,
-                    mapped_at_creation: false,
-                })),
-                used: 0,
-                size: new_size,
-            });
-
-            chunks.len() - 1
-        };
-
-        let chunk = &mut chunks[chunk_idx];
-        if let Some(size) = NonZeroU64::new(content_size) {
-            staging_belt.write_buffer(encoder, &chunk.buffer, chunk.used, size, device).copy_from_slice(bytes);
-        }
-
-        let result = BufferRange {
-            buffer: chunk.buffer.clone(),
-            range: chunk.used..chunk.used + content_size,
-        };
-
-        chunk.used += content_size;
-        // Round up to the next multiple of 8
-        // TODO: Investigate alignment requirements
-        let remainder = chunk.used % 8;
-        if remainder != 0 {
-            chunk.used += 8 - remainder;
-        }
-
-        result
-    }
-
-    pub fn reset(&mut self) {
-        for chunks in self.chunks.values_mut() {
-            for chunk in chunks {
-                chunk.used = 0;
-            }
-        }
-    }
-}
-
-#[derive(Default)]
-pub struct RenderTextureCache {
-    render_textures: Vec<RenderTexture>,
-}
-
-impl RenderTextureCache {
-    pub fn push(&mut self, rt: RenderTexture) {
-        self.render_textures.push(rt);
-    }
-
-    pub fn temporary_render_texture(&mut self, device: &Device, size: Size2D<u32>, format: TextureFormat) -> RenderTexture {
-        puffin::profile_function!();
-        let best_tex = self.render_textures.iter().enumerate().filter(|(_,t)| {
-            if t.format() != format {
-                return false;
-            }
-            let tsize = t.size();
-            tsize.width >= size.width && tsize.height >= size.height && tsize.width*tsize.height <= size.area()*4
-        }).min_by_key(|(i,t)| t.size().width*t.size().height).map(|(i,t)| i);
-
-        if let Some(index) = best_tex {
-            self.render_textures.swap_remove(index)
-        } else {
-            let tex = Texture::new(device, wgpu::TextureDescriptor {
-                label: Some("Temp texture"),
-                size: Extent3d {
-                    width: size.width,
-                    height: size.height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                // array_layer_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: crate::config::TEXTURE_FORMAT,
-                usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT,
-            });
-            let rt = RenderTexture::from(Rc::new(tex));
-            rt
-        }
-
-        // self.render_textures.push(RenderTextureSlot {
-        //     texture: None,
-        //     size: Extent3d {
-        //         width: size.width,
-        //         height: size.height,
-        //         depth_or_array_layers: 1,
-        //     },
-        //     format,
-        //     first_use_pass: None,
-        //     last_use_pass: None,
-        // });
-        // RenderTextureHandle(self.render_textures.len() - 1)
-    
-    }
-}
-
 pub struct RenderGraphCompiler<'a> {
     pub device: &'a Device,
     pub encoder: &'a mut CommandEncoder,
@@ -255,29 +124,6 @@ impl<'a> RenderGraphCompiler<'a> {
         ];
 
         self.ephermal_buffer_cache.get(self.device, self.encoder, self.staging_belt, wgpu::BufferUsage::VERTEX, vertices)
-        // let (vbo, _) = create_buffer(&self.device, vertices, wgpu::BufferUsage::VERTEX, None);
-        // BufferRange {
-        //     buffer: Arc::new(vbo),
-        //     range: 0..4,
-        // }
-    }
-
-    fn blit_bind_group(&mut self, source_texture: &TextureView) -> Rc<BindGroup> {
-        puffin::profile_function!();
-        Rc::new(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.blitter.bind_group_layout,
-            label: Some("Blit bind group"),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&self.blitter.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(source_texture),
-                },
-            ],
-        }))
     }
 
     pub fn compile(&mut self, render_graph: &RenderGraph, source: GraphNode, target_texture: &RenderTexture) -> Vec<CompiledPass> {
@@ -418,7 +264,7 @@ impl<'a> RenderGraphCompiler<'a> {
                     };
 
                     // We are done using the source texture now
-                    self.render_texture_cache.render_textures.push(source_texture);
+                    self.render_texture_cache.push(source_texture);
 
                     pass
                 }
@@ -467,7 +313,7 @@ impl<'a> RenderGraphCompiler<'a> {
                         render_pass.set_pipeline(&pipeline.pipeline);
                         render_pass.set_bind_group(0, &bind_group, &[]);
                         render_pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);
-                        render_pass.set_vertex_buffer(0, vbo.buffer.slice(vbo.range.clone()));
+                        render_pass.set_vertex_buffer(0, vbo.as_slice());
                         render_pass.draw_indexed(0..6, 0, 0..1);
                     }
                 }
