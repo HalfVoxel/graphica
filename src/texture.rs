@@ -1,3 +1,4 @@
+use by_address::ByAddress;
 use euclid::rect;
 use lazy_init::Lazy;
 use std::{num::NonZeroU32, rc::Rc};
@@ -10,15 +11,37 @@ pub struct Texture {
     mipmap_views: Vec<Lazy<wgpu::TextureView>>,
 }
 
+impl std::fmt::Debug for Texture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Texture({}x{})", self.descriptor.size.width, self.descriptor.size.height)
+    }
+}
+
 pub struct SwapchainImageWrapper {
     descriptor: wgpu::SwapChainDescriptor,
     image: wgpu::SwapChainFrame,
 }
 
-#[derive(Clone)]
+impl std::fmt::Debug for SwapchainImageWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SwapchainImage({}x{})", self.descriptor.width, self.descriptor.height)
+    }
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub enum RenderTexture {
-    Texture(Rc<Texture>),
-    SwapchainImage(Rc<SwapchainImageWrapper>),
+    Texture(ByAddress<Rc<Texture>>),
+    SwapchainImage(ByAddress<Rc<SwapchainImageWrapper>>),
+}
+
+impl std::fmt::Debug for RenderTexture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Get rid of some noisy indirections in the output
+        match self {
+            RenderTexture::Texture(x) => (**x).fmt(f),
+            RenderTexture::SwapchainImage(x) => (**x).fmt(f),
+        }
+    }
 }
 
 pub struct RenderTextureView<'a> {
@@ -43,13 +66,13 @@ impl SwapchainImageWrapper {
 
 impl From<Rc<Texture>> for RenderTexture {
     fn from(tex: Rc<Texture>) -> RenderTexture {
-        RenderTexture::Texture(tex)
+        RenderTexture::Texture(tex.into())
     }
 }
 
 impl From<SwapchainImageWrapper> for RenderTexture {
     fn from(tex: SwapchainImageWrapper) -> RenderTexture {
-        RenderTexture::SwapchainImage(Rc::new(tex))
+        RenderTexture::SwapchainImage(Rc::new(tex).into())
     }
 }
 
@@ -88,7 +111,7 @@ impl RenderTexture {
             RenderTexture::Texture(tex) => tex.descriptor.size,
             RenderTexture::SwapchainImage(tex) => Extent3d {
                 width: tex.descriptor.width,
-                height: tex.descriptor.width,
+                height: tex.descriptor.height,
                 depth_or_array_layers: 1,
             },
         }

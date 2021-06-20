@@ -37,9 +37,13 @@ use crate::geometry_utilities::types::*;
 use crate::geometry_utilities::ParamCurveDistanceEval;
 use crate::gui;
 use crate::input::{InputManager, KeyCombination};
+use crate::material_cache::MaterialCache;
 use crate::path::*;
 use crate::path_collection::{PathCollection, VertexReference};
 use crate::path_editor::*;
+use crate::render_graph::EphermalBufferCache;
+use crate::render_graph::RenderTextureCache;
+use crate::render_pipeline_cache::RenderPipelineCache;
 use crate::shader::load_shader;
 use crate::toolbar::GUIRoot;
 use crate::{
@@ -1380,6 +1384,10 @@ pub fn main() {
     let start_time = Instant::now();
 
     let mut egui_wrapper = EguiWrapper::new(&device, size, window.scale_factor());
+    let mut render_pipeline_cache = RenderPipelineCache::default();
+    let mut ephermal_buffer_cache = EphermalBufferCache::default();
+    let mut render_texture_cache = RenderTextureCache::default();
+    let mut material_cache = MaterialCache::default();
 
     event_loop.run(move |event, _, control_flow| {
         let scene = &mut editor.scene;
@@ -1625,25 +1633,44 @@ pub fn main() {
                 msaa_render_target.as_ref().unwrap_or(&frame),
             );
 
-            {
-                // Clear pass
-                let mut pass = hl_encoder.begin_msaa_render_pass(
-                    Some(wgpu::Color {
-                        r: 120.0 / 255.0,
-                        g: 41.0 / 255.0,
-                        b: 41.0 / 255.0,
-                        a: 1.0,
-                    }),
-                    Some("clear pass"),
-                );
+            // {
+            //     // Clear pass
+            //     let mut pass = hl_encoder.begin_msaa_render_pass(
+            //         Some(wgpu::Color {
+            //             r: 120.0 / 255.0,
+            //             g: 41.0 / 255.0,
+            //             b: 41.0 / 255.0,
+            //             a: 1.0,
+            //         }),
+            //         Some("clear pass"),
+            //     );
 
-                blitop.render(&mut pass);
-            }
+            //     blitop.render(&mut pass);
+            // }
 
-            document_renderer2
-                .as_ref()
-                .unwrap()
-                .render(&mut hl_encoder, &scene.view);
+            // document_renderer2
+            //     .as_ref()
+            //     .unwrap()
+            //     .render(&mut hl_encoder, &scene.view);
+
+            ephermal_buffer_cache.reset();
+
+            let mut render_graph = crate::render_graph::RenderGraph::default();
+            let mut t = render_graph.clear(Size2D::new(frame.size().width, frame.size().height), wgpu::Color::GREEN);
+            let blue = render_graph.clear(Size2D::new(128, 128), wgpu::Color::BLUE);
+            t = render_graph.blit(blue, t, rect(0.0, 0.0, 128.0, 128.0), rect(10.0, 10.0, 512.0, 512.0));
+            let mut render_graph_compiler  = crate::render_graph::RenderGraphCompiler {
+                device: &device,
+                encoder: &mut encoder,
+                blitter: &blitter,
+                render_pipeline_cache: &mut render_pipeline_cache,
+                ephermal_buffer_cache: &mut ephermal_buffer_cache,
+                render_texture_cache: &mut render_texture_cache,
+                material_cache: &mut material_cache,
+                staging_belt: &mut staging_belt,
+            };
+            let passes = render_graph_compiler.compile(&render_graph, t, &frame);
+            render_graph_compiler.render(&passes);
 
             // // // blur.render(&mut hl_encoder);
 
