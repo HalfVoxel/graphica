@@ -55,10 +55,12 @@ impl Mipmapper {
             push_constant_ranges: &[],
         }));
 
-        let material = Arc::new(Material::from_consecutive_entries(device, "mipmap", bind_group_layout.clone(), vec![
-            BindingResourceArc::texture(None),
-            BindingResourceArc::texture(None),
-        ]));
+        let material = Arc::new(Material::from_consecutive_entries(
+            device,
+            "mipmap",
+            bind_group_layout.clone(),
+            vec![BindingResourceArc::texture(None), BindingResourceArc::texture(None)],
+        ));
 
         let pipeline = Arc::new(device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: None,

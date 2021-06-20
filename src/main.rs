@@ -1334,15 +1334,25 @@ pub fn main() {
         "Canvas Globals UBO",
     );
 
-    let bg_material_base = Arc::new(Material::from_consecutive_entries(&device, "background", bind_group_layout.clone(), vec![
-        BindingResourceArc::buffer(Some(canvas_globals_ubo.clone())),
-        BindingResourceArc::buffer(Some(bg_ubo.clone())),
-    ]));
+    let bg_material_base = Arc::new(Material::from_consecutive_entries(
+        &device,
+        "background",
+        bind_group_layout.clone(),
+        vec![
+            BindingResourceArc::buffer(Some(canvas_globals_ubo.clone())),
+            BindingResourceArc::buffer(Some(bg_ubo.clone())),
+        ],
+    ));
 
-    let screen_bg_material_base = Arc::new(Material::from_consecutive_entries(&device, "background", bind_group_layout.clone(), vec![
-        BindingResourceArc::buffer(Some(globals_ubo.clone())),
-        BindingResourceArc::buffer(Some(bg_ubo.clone())),
-    ]));
+    let screen_bg_material_base = Arc::new(Material::from_consecutive_entries(
+        &device,
+        "background",
+        bind_group_layout.clone(),
+        vec![
+            BindingResourceArc::buffer(Some(globals_ubo.clone())),
+            BindingResourceArc::buffer(Some(bg_ubo.clone())),
+        ],
+    ));
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: &bind_group_layout,
@@ -1695,21 +1705,36 @@ pub fn main() {
             ephermal_buffer_cache.reset();
 
             let canvas_in_screen_space =
-            scene
-                .view
-                .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
-        let canvas_in_screen_uv_space =
-            canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
+                scene
+                    .view
+                    .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
+            let canvas_in_screen_uv_space =
+                canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
 
             let mut render_graph = crate::render_graph::RenderGraph::default();
             let mut t = render_graph.clear(Size2D::new(frame.size().width, frame.size().height), wgpu::Color::GREEN);
             let mut canvas = render_graph.clear(doc_size.to_untyped(), wgpu::Color::BLUE);
-            canvas = render_graph.quad(canvas, CanvasRect::from_size(doc_size.cast()), bg_pipeline_base.clone(), bg_material_base.clone());
+            canvas = render_graph.quad(
+                canvas,
+                CanvasRect::from_size(doc_size.cast()),
+                bg_pipeline_base.clone(),
+                bg_material_base.clone(),
+            );
             canvas = render_graph.generate_mipmaps(canvas);
 
-            t = render_graph.quad(t, CanvasRect::from_size(Size2D::new(frame.size().width as f32, frame.size().height as f32)), bg_pipeline_base.clone(), screen_bg_material_base.clone());
+            t = render_graph.quad(
+                t,
+                CanvasRect::from_size(Size2D::new(frame.size().width as f32, frame.size().height as f32)),
+                bg_pipeline_base.clone(),
+                screen_bg_material_base.clone(),
+            );
 
-            t = render_graph.blit(canvas, t, CanvasRect::from_size(doc_size.cast()), canvas_in_screen_space.cast_unit());
+            t = render_graph.blit(
+                canvas,
+                t,
+                CanvasRect::from_size(doc_size.cast()),
+                canvas_in_screen_space.cast_unit(),
+            );
             let mut render_graph_compiler = crate::render_graph::RenderGraphCompiler {
                 device: &device,
                 encoder: &mut encoder,

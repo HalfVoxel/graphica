@@ -1,10 +1,26 @@
 use std::{rc::Rc, sync::Arc};
 
 use euclid::default::Size2D;
-use lyon::math::{Rect, point, size};
-use wgpu::{BindGroup, BlendState, BufferUsage, Color, CommandEncoder, ComputePipeline, Device, Extent3d, LoadOp, TextureFormat, TextureUsage, util::StagingBelt};
+use lyon::math::{point, size, Rect};
+use wgpu::{
+    util::StagingBelt, BindGroup, BlendState, BufferUsage, Color, CommandEncoder, ComputePipeline, Device, Extent3d,
+    LoadOp, TextureFormat, TextureUsage,
+};
 
-use crate::{blitter::{BlitGpuVertex, Blitter}, cache::ephermal_buffer_cache::{BufferRange, EphermalBufferCache}, cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache}, cache::{material_cache::Material, render_pipeline_cache::{CachedRenderPipeline, RenderPipelineBase, RenderPipelineCache, RenderPipelineKey}}, cache::render_texture_cache::RenderTextureCache, geometry_utilities::types::{CanvasRect, UVRect}, mipmap::Mipmapper, texture::RenderTexture, vertex::GPUVertex};
+use crate::{
+    blitter::{BlitGpuVertex, Blitter},
+    cache::ephermal_buffer_cache::{BufferRange, EphermalBufferCache},
+    cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache},
+    cache::render_texture_cache::RenderTextureCache,
+    cache::{
+        material_cache::Material,
+        render_pipeline_cache::{CachedRenderPipeline, RenderPipelineBase, RenderPipelineCache, RenderPipelineKey},
+    },
+    geometry_utilities::types::{CanvasRect, UVRect},
+    mipmap::Mipmapper,
+    texture::RenderTexture,
+    vertex::GPUVertex,
+};
 
 struct Blit {
     source: GraphNode,
@@ -77,7 +93,13 @@ impl RenderGraph {
         self.push_primitive(RenderingPrimitive::Clear(tex, color))
     }
 
-    pub fn quad(&mut self, target: GraphNode, rect: CanvasRect, pipeline: Arc<RenderPipelineBase>, material: Arc<Material>) -> GraphNode {
+    pub fn quad(
+        &mut self,
+        target: GraphNode,
+        rect: CanvasRect,
+        pipeline: Arc<RenderPipelineBase>,
+        material: Arc<Material>,
+    ) -> GraphNode {
         self.push_primitive(RenderingPrimitive::Quad {
             target,
             rect,
@@ -86,7 +108,13 @@ impl RenderGraph {
         })
     }
 
-    pub fn blit(&mut self, source: GraphNode, target: GraphNode, source_rect: CanvasRect, target_rect: CanvasRect) -> GraphNode {
+    pub fn blit(
+        &mut self,
+        source: GraphNode,
+        target: GraphNode,
+        source_rect: CanvasRect,
+        target_rect: CanvasRect,
+    ) -> GraphNode {
         self.push_primitive(RenderingPrimitive::Blit(Blit {
             source,
             target,
@@ -96,9 +124,7 @@ impl RenderGraph {
     }
 
     pub fn generate_mipmaps(&mut self, target: GraphNode) -> GraphNode {
-        self.push_primitive(RenderingPrimitive::GenerateMipmaps {
-            target,
-        })
+        self.push_primitive(RenderingPrimitive::GenerateMipmaps { target })
     }
 
     fn render(self, _source: GraphNode) {}
@@ -133,7 +159,7 @@ pub enum CompiledPass {
     },
     ComputePass {
         ops: Vec<CompiledComputePrimitive>,
-    }
+    },
 }
 
 type PassIndex = usize;
@@ -186,27 +212,30 @@ impl<'a> RenderGraphCompiler<'a> {
         target_texture: &RenderTexture,
     ) -> Vec<CompiledPass> {
         puffin::profile_scope!("compile render graph");
-        let mut usages = vec![Usage {
-            size: Size2D::new(0, 0),
-            requires_mipmaps: false,
-            usages: TextureUsage::empty(),
-        }; render_graph.nodes.len()];
+        let mut usages = vec![
+            Usage {
+                size: Size2D::new(0, 0),
+                requires_mipmaps: false,
+                usages: TextureUsage::empty(),
+            };
+            render_graph.nodes.len()
+        ];
 
         let nodes = &render_graph.nodes;
         // Propagate backwards
         for i in (0..render_graph.nodes.len()).rev() {
             let mut usage = usages[i].clone();
             match &nodes[i] {
-                RenderingPrimitive::UninitializedTexture(_) => {},
+                RenderingPrimitive::UninitializedTexture(_) => {}
                 RenderingPrimitive::Clear(_, _) => {
                     usage.usages |= TextureUsage::RENDER_ATTACHMENT;
-                },
+                }
                 RenderingPrimitive::Blit(_) => {
                     usage.usages |= TextureUsage::RENDER_ATTACHMENT;
-                },
+                }
                 RenderingPrimitive::Quad { .. } => {
                     usage.usages |= TextureUsage::RENDER_ATTACHMENT;
-                },
+                }
                 RenderingPrimitive::GenerateMipmaps { .. } => {
                     usage.usages |= TextureUsage::STORAGE;
                     usage.requires_mipmaps = true;
@@ -214,7 +243,7 @@ impl<'a> RenderGraphCompiler<'a> {
             }
 
             match &nodes[i] {
-                RenderingPrimitive::UninitializedTexture(_size) => {},
+                RenderingPrimitive::UninitializedTexture(_size) => {}
                 RenderingPrimitive::Clear(target, _) => {
                     usages[target.index].requires_mipmaps |= usage.requires_mipmaps;
                     usages[target.index].usages |= usage.usages;
@@ -223,13 +252,12 @@ impl<'a> RenderGraphCompiler<'a> {
                     usages[target.index].requires_mipmaps |= usage.requires_mipmaps;
                     usages[target.index].usages |= usage.usages;
                     usages[source.index].usages |= TextureUsage::SAMPLED;
-
                 }
                 RenderingPrimitive::Quad { target, .. } => {
                     usages[target.index].requires_mipmaps |= usage.requires_mipmaps;
                     usages[target.index].usages |= usage.usages;
-                },
-                RenderingPrimitive::GenerateMipmaps { target} => {
+                }
+                RenderingPrimitive::GenerateMipmaps { target } => {
                     usages[target.index].requires_mipmaps |= usage.requires_mipmaps;
                     usages[target.index].usages |= usage.usages;
                 }
@@ -244,7 +272,7 @@ impl<'a> RenderGraphCompiler<'a> {
             match &nodes[i] {
                 RenderingPrimitive::UninitializedTexture(size) => {
                     usage.size = *size;
-                },
+                }
                 RenderingPrimitive::Clear(target, _) => {
                     usage.size = usages[target.index].size;
                     usage.requires_mipmaps = usages[target.index].requires_mipmaps;
@@ -259,8 +287,8 @@ impl<'a> RenderGraphCompiler<'a> {
                     usage.size = usages[target.index].size;
                     usage.requires_mipmaps = usages[target.index].requires_mipmaps;
                     usage.usages = usages[target.index].usages;
-                },
-                RenderingPrimitive::GenerateMipmaps { target} => {
+                }
+                RenderingPrimitive::GenerateMipmaps { target } => {
                     usage.size = usages[target.index].size;
                     usage.requires_mipmaps = usages[target.index].requires_mipmaps;
                     usage.usages = usages[target.index].usages;
@@ -308,7 +336,11 @@ impl<'a> RenderGraphCompiler<'a> {
         }
 
         if !target_texture.usage().contains(usages[source.index].usages) {
-            panic!("The render target doesn't have sufficient usage flags. The render target has: {:?}, but required {:?}", target_texture.usage(), usages[source.index].usages);
+            panic!(
+                "The render target doesn't have sufficient usage flags. The render target has: {:?}, but required {:?}",
+                target_texture.usage(),
+                usages[source.index].usages
+            );
         }
 
         // let sizes = sizes
@@ -325,22 +357,31 @@ impl<'a> RenderGraphCompiler<'a> {
     }
 
     fn pixel_to_uv_rect(pixel_rect: &CanvasRect, texture_size: &Size2D<u32>) -> UVRect {
-        pixel_rect.scale(1.0 / (texture_size.width as f32), 1.0 / (texture_size.height as f32)).cast_unit()
+        pixel_rect
+            .scale(1.0 / (texture_size.width as f32), 1.0 / (texture_size.height as f32))
+            .cast_unit()
     }
 
-    fn push_compute_op(passes: &mut Vec<CompiledPass>, target_pass: PassIndex, op: CompiledComputePrimitive) -> PassIndex {
+    fn push_compute_op(
+        passes: &mut Vec<CompiledPass>,
+        target_pass: PassIndex,
+        op: CompiledComputePrimitive,
+    ) -> PassIndex {
         if let CompiledPass::ComputePass { ops, .. } = &mut passes[target_pass] {
             ops.push(op);
             target_pass
         } else {
-            passes.push(CompiledPass::ComputePass {
-                ops: vec![op],
-            });
+            passes.push(CompiledPass::ComputePass { ops: vec![op] });
             passes.len() - 1
         }
     }
 
-    fn push_render_op(passes: &mut Vec<CompiledPass>, target_texture: &RenderTexture, target_pass: PassIndex, op: CompiledRenderingPrimitive) -> PassIndex {
+    fn push_render_op(
+        passes: &mut Vec<CompiledPass>,
+        target_texture: &RenderTexture,
+        target_pass: PassIndex,
+        op: CompiledRenderingPrimitive,
+    ) -> PassIndex {
         if let CompiledPass::RenderPass { ops, .. } = &mut passes[target_pass] {
             ops.push(op);
             target_pass
@@ -459,79 +500,110 @@ impl<'a> RenderGraphCompiler<'a> {
                     pass
                 }
             }
-            RenderingPrimitive::Quad { target, rect, pipeline, material } => {
+            RenderingPrimitive::Quad {
+                target,
+                rect,
+                pipeline,
+                material,
+            } => {
                 let target_pass = self.build(nodes, usages, passes, target, target_texture);
                 let target_size = usages[target.index].size;
 
                 let uv_rect = Self::pixel_to_uv_rect(rect, &target_size);
-                let vbo = self.ephermal_buffer_cache.get(self.device, self.encoder, self.staging_belt, BufferUsage::VERTEX, &[
-                    point(uv_rect.min_x(), uv_rect.min_y()),
-                    point(uv_rect.max_x(), uv_rect.min_y()),
-                    point(uv_rect.max_x(), uv_rect.max_y()),
-                    point(uv_rect.min_x(), uv_rect.max_y()),
-                ]);
+                let vbo = self.ephermal_buffer_cache.get(
+                    self.device,
+                    self.encoder,
+                    self.staging_belt,
+                    BufferUsage::VERTEX,
+                    &[
+                        point(uv_rect.min_x(), uv_rect.min_y()),
+                        point(uv_rect.max_x(), uv_rect.min_y()),
+                        point(uv_rect.max_x(), uv_rect.max_y()),
+                        point(uv_rect.min_x(), uv_rect.max_y()),
+                    ],
+                );
 
-                let ibo = self.ephermal_buffer_cache.get(self.device, self.encoder, self.staging_belt, BufferUsage::INDEX, &[
-                    0, 1, 2, 3, 2, 0
-                ]);
+                let ibo = self.ephermal_buffer_cache.get(
+                    self.device,
+                    self.encoder,
+                    self.staging_belt,
+                    BufferUsage::INDEX,
+                    &[0, 1, 2, 3, 2, 0],
+                );
 
                 let op = CompiledRenderingPrimitive::Render {
                     vbo,
                     ibo,
-                    pipeline: self.render_pipeline_cache.get(self.device, RenderPipelineKey {
-                        base: pipeline.to_owned().into(),
-                        sample_count: target_texture.sample_count(),
-                        depth_format: None,
-                        target_format: target_texture.format(),
-                        blend_state: BlendState::REPLACE,
-                    }).to_owned(),
+                    pipeline: self
+                        .render_pipeline_cache
+                        .get(
+                            self.device,
+                            RenderPipelineKey {
+                                base: pipeline.to_owned().into(),
+                                sample_count: target_texture.sample_count(),
+                                depth_format: None,
+                                target_format: target_texture.format(),
+                                blend_state: BlendState::REPLACE,
+                            },
+                        )
+                        .to_owned(),
                     bind_group: material.bind_group().to_owned(),
                 };
 
                 Self::push_render_op(passes, target_texture, target_pass, op)
-            },
+            }
             RenderingPrimitive::GenerateMipmaps { target } => {
                 let target_pass = self.build(nodes, usages, passes, target, target_texture);
 
-                let bind_groups = (1..target_texture.mip_level_count()).map(|mip_level| {
-                    puffin::profile_scope!("create bind group");
-                    let mat = self.material_cache.override_material(self.device, &self.mipmapper.material, &[
-                        BindGroupEntryArc {
-                            binding: 0,
-                            resource: BindingResourceArc::Mipmap(Some((target_texture.clone(), mip_level - 1))),
-                        },
-                        BindGroupEntryArc {
-                            binding: 1,
-                            resource: BindingResourceArc::Mipmap(Some((target_texture.clone(), mip_level))),
-                        }
-                    ]);
+                let bind_groups = (1..target_texture.mip_level_count())
+                    .map(|mip_level| {
+                        puffin::profile_scope!("create bind group");
+                        let mat = self.material_cache.override_material(
+                            self.device,
+                            &self.mipmapper.material,
+                            &[
+                                BindGroupEntryArc {
+                                    binding: 0,
+                                    resource: BindingResourceArc::Mipmap(Some((target_texture.clone(), mip_level - 1))),
+                                },
+                                BindGroupEntryArc {
+                                    binding: 1,
+                                    resource: BindingResourceArc::Mipmap(Some((target_texture.clone(), mip_level))),
+                                },
+                            ],
+                        );
 
-                    mat.bind_group().to_owned()
+                        mat.bind_group().to_owned()
 
-                    // let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    //     layout: &self.bind_group_layout,
-                    //     entries: &[
-                    //         wgpu::BindGroupEntry {
-                    //             binding: 0,
-                    //             resource: wgpu::BindingResource::TextureView(prev_level),
-                    //         },
-                    //         wgpu::BindGroupEntry {
-                    //             binding: 1,
-                    //             resource: wgpu::BindingResource::TextureView(current_level),
-                    //         },
-                    //     ],
-                    //     label: None,
-                    // });
-                    // bind_groups.push(bind_group);
-                    // prev_level = current_level;
-                }).collect::<Vec<_>>();
+                        // let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        //     layout: &self.bind_group_layout,
+                        //     entries: &[
+                        //         wgpu::BindGroupEntry {
+                        //             binding: 0,
+                        //             resource: wgpu::BindingResource::TextureView(prev_level),
+                        //         },
+                        //         wgpu::BindGroupEntry {
+                        //             binding: 1,
+                        //             resource: wgpu::BindingResource::TextureView(current_level),
+                        //         },
+                        //     ],
+                        //     label: None,
+                        // });
+                        // bind_groups.push(bind_group);
+                        // prev_level = current_level;
+                    })
+                    .collect::<Vec<_>>();
 
-                Self::push_compute_op(passes, target_pass, CompiledComputePrimitive::GenerateMipmaps {
-                    target: target_texture.to_owned(),
-                    pipeline: self.mipmapper.pipeline.clone(),
-                    bind_groups,
-                })
-            },
+                Self::push_compute_op(
+                    passes,
+                    target_pass,
+                    CompiledComputePrimitive::GenerateMipmaps {
+                        target: target_texture.to_owned(),
+                        pipeline: self.mipmapper.pipeline.clone(),
+                        bind_groups,
+                    },
+                )
+            }
         }
     }
 
@@ -548,7 +620,7 @@ impl<'a> RenderGraphCompiler<'a> {
                         },
                         resolve_target: None,
                     };
-        
+
                     let mut render_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("pass"),
                         color_attachments: &[color_attachment],
@@ -565,7 +637,7 @@ impl<'a> RenderGraphCompiler<'a> {
                         //     }),
                         // }),
                     });
-        
+
                     for op in ops {
                         match op {
                             CompiledRenderingPrimitive::Blit {
@@ -596,29 +668,33 @@ impl<'a> RenderGraphCompiler<'a> {
                             }
                         }
                     }
-        
+
                     {
                         puffin::profile_scope!("drop render pass");
                         drop(render_pass);
                     }
-                },
+                }
                 CompiledPass::ComputePass { ops } => {
-                    let mut cpass = self.encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("cpass"),
-                    });
+                    let mut cpass = self
+                        .encoder
+                        .begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("cpass") });
 
                     for op in ops {
                         match op {
-                            CompiledComputePrimitive::GenerateMipmaps { target, pipeline, bind_groups } => {
+                            CompiledComputePrimitive::GenerateMipmaps {
+                                target,
+                                pipeline,
+                                bind_groups,
+                            } => {
                                 assert!(target.mip_level_count() > 1);
                                 // assert!((texture.descriptor.size.width & (texture.descriptor.size.width - 1)) == 0, "Texture width must be a power of two. Found {}", texture.descriptor.size.width);
                                 // assert!((texture.descriptor.size.height & (texture.descriptor.size.height - 1)) == 0, "Texture height must be a power of two. Found {}", texture.descriptor.size.height);
-        
+
                                 let mut width = target.size().width;
                                 let mut height = target.size().height;
-        
+
                                 cpass.set_pipeline(pipeline);
-        
+
                                 for bind_group in bind_groups {
                                     width = (width / 2).max(1);
                                     height = (height / 2).max(1);
@@ -632,8 +708,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                         );
                                     }
                                 }
-    
-                            },
+                            }
                         }
                     }
 
@@ -641,9 +716,8 @@ impl<'a> RenderGraphCompiler<'a> {
                         puffin::profile_scope!("drop cpass");
                         drop(cpass);
                     }
-                },
+                }
             }
-            
         }
     }
 }

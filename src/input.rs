@@ -185,11 +185,11 @@ impl InputManager {
 
     fn event_key(&mut self, state: ElementState, key: ExtendedKey) {
         self.states.entry(key).or_insert(KeyState {
-                    last_down_time: None,
-                    down_frame: -1,
-                    up_frame: -1,
-                    captured: false,
-                });
+            last_down_time: None,
+            down_frame: -1,
+            up_frame: -1,
+            captured: false,
+        });
 
         let mut btn_state = self.states.get_mut(&key).unwrap();
         if state == ElementState::Released && btn_state.is_pressed() {

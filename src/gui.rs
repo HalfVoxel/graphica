@@ -13,10 +13,7 @@ pub struct WidgetWrapper<T: WidgetTrait + 'static> {
 }
 
 impl<T: WidgetTrait + 'static> WidgetWrapper<T> {
-    pub fn listen_closure<
-        U: WidgetTrait + 'static,
-        C: Fn(&mut U, &mut WidgetContext<U>, &T::EventType) + 'static,
-    >(
+    pub fn listen_closure<U: WidgetTrait + 'static, C: Fn(&mut U, &mut WidgetContext<U>, &T::EventType) + 'static>(
         &mut self,
         reference: &TypedWidgetReference<U>,
         callback: C,

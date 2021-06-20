@@ -2,7 +2,7 @@ use by_address::ByAddress;
 use euclid::rect;
 use lazy_init::Lazy;
 use std::{num::NonZeroU32, rc::Rc};
-use wgpu::{CommandEncoder, Device, Extent3d, TextureFormat, TextureUsage, TextureView, util::DeviceExt};
+use wgpu::{util::DeviceExt, CommandEncoder, Device, Extent3d, TextureFormat, TextureUsage, TextureView};
 
 pub struct Texture {
     pub descriptor: wgpu::TextureDescriptor<'static>,

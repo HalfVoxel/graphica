@@ -24,7 +24,9 @@ impl BufferRange {
         wgpu::BufferBinding {
             buffer: &self.buffer,
             offset: self.range.start,
-            size: Some(NonZeroU64::new(self.range.end - self.range.start).expect("tried to bind zero size buffer range")),
+            size: Some(
+                NonZeroU64::new(self.range.end - self.range.start).expect("tried to bind zero size buffer range"),
+            ),
         }
     }
 
