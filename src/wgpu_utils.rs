@@ -1,7 +1,11 @@
+use std::sync::Arc;
+
 use wgpu::{
     util::{DeviceExt, StagingBelt},
     Buffer, BufferSize, CommandEncoder, Device,
 };
+
+use crate::cache::ephermal_buffer_cache::BufferRange;
 
 pub fn as_u8_slice<T>(v: &[T]) -> &[u8] {
     assert!(
@@ -12,6 +16,19 @@ pub fn as_u8_slice<T>(v: &[T]) -> &[u8] {
     assert!(head.is_empty());
     assert!(tail.is_empty());
     body
+}
+
+pub fn create_buffer_range<'a, T>(
+    device: &Device,
+    data: &[T],
+    usage: wgpu::BufferUsage,
+    label: impl Into<Option<&'a str>>,
+) -> BufferRange {
+    let (buffer, size) = create_buffer(device, data, usage, label);
+    BufferRange {
+        buffer: Arc::new(buffer),
+        range: 0..size,
+    }
 }
 
 pub fn create_buffer<'a, T>(

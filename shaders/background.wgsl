@@ -22,8 +22,9 @@ fn vs_main(
     ) -> VertexOutput {
 
     var out: VertexOutput;
-    out.position = vec4<f32>(a_position, 0.0000001, 1.0);
-    out.v_position = a_position;
+    let view_pos = a_position * 2.0 - 1.0;
+    out.position = vec4<f32>(view_pos, 0.0000001, 1.0);
+    out.v_position = view_pos;
     out.v_resolution = globals.u_resolution;
     out.v_scroll_offset = globals.u_scroll_offset;
     out.v_zoom = globals.u_zoom;
@@ -32,6 +33,7 @@ fn vs_main(
 
 [[stage(fragment)]]
 fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
+    // Multiplication by 0.5 because v_position goes from -1 to +1.
     let px_position: vec2<f32> = in.v_position * in.v_resolution * 0.5;
 
     // #005fa4

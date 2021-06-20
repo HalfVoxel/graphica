@@ -10,6 +10,8 @@ use wgpu::{BindGroup, BindGroupDescriptor, BindGroupLayout, Device, Sampler};
 
 use crate::texture::{RenderTexture, Texture};
 
+use super::ephermal_buffer_cache::BufferRange;
+
 pub struct Material {
     bind_group_layout: ByAddress<Arc<BindGroupLayout>>,
     label: String,
@@ -93,7 +95,7 @@ impl Material {
     }
 }
 
-#[derive(Hash, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct BindGroupEntryArc {
     pub binding: u32,
     pub resource: BindingResourceArc,
@@ -108,12 +110,13 @@ impl BindGroupEntryArc {
     }
 }
 
-#[derive(Hash, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum BindingResourceArc {
     // TODO: This box is completely unnecessary.
     // It is there to work around a rustc ICE
     Sampler(Option<ByAddress<Arc<Sampler>>>),
     Texture(Option<RenderTexture>),
+    Buffer(Option<BufferRange>),
 }
 
 impl BindingResourceArc {
@@ -121,8 +124,13 @@ impl BindingResourceArc {
         match self {
             BindingResourceArc::Sampler(Some(sampler)) => Some(wgpu::BindingResource::Sampler(sampler)),
             BindingResourceArc::Texture(Some(tex)) => Some(wgpu::BindingResource::TextureView(tex.default_view().view)),
+            BindingResourceArc::Buffer(Some(buffer)) => Some(wgpu::BindingResource::Buffer(buffer.as_binding())),
             _ => None,
         }
+    }
+
+    pub fn buffer(buffer: Option<BufferRange>) -> Self {
+        Self::Buffer(buffer)
     }
 
     pub fn sampler(sampler: Option<Arc<Sampler>>) -> Self {
@@ -138,11 +146,14 @@ impl BindingResourceArc {
         Self::Texture(texture)
     }
 
-    pub fn hashcode(&self) -> usize {
+    pub fn hashcode(&self) -> u64 {
         match self {
-            BindingResourceArc::Sampler(Some(o)) => Arc::as_ptr(&o.0) as usize,
-            BindingResourceArc::Texture(Some(RenderTexture::Texture(t))) => Rc::as_ptr(&t.0) as usize,
-            BindingResourceArc::Texture(Some(RenderTexture::SwapchainImage(t))) => Rc::as_ptr(&t.0) as usize,
+            BindingResourceArc::Sampler(Some(o)) => Arc::as_ptr(&o.0) as u64,
+            BindingResourceArc::Texture(Some(RenderTexture::Texture(t))) => Rc::as_ptr(&t.0) as u64,
+            BindingResourceArc::Texture(Some(RenderTexture::SwapchainImage(t))) => Rc::as_ptr(&t.0) as u64,
+            BindingResourceArc::Buffer(Some(b)) => {
+                Arc::as_ptr(&b.buffer) as u64 ^ (31 * (b.range.start ^ (31 * b.range.end)))
+            },
             _ => 0,
         }
     }
@@ -159,20 +170,20 @@ impl MaterialCache {
         let mut hasher = std::collections::hash_map::DefaultHasher::default();
         // Manual hashing to work around rustc ICE
         // https://github.com/rust-lang/rust/issues/86469
-        hasher.write_usize(Arc::as_ptr(&material.bind_group_layout.0) as usize);
+        hasher.write_u64(Arc::as_ptr(&material.bind_group_layout.0) as u64);
         let mut j = 0;
         for i in 0..material.bindings.len() {
             if j < changes.len() && changes[j].binding as usize == i {
                 // changes[j].hash(&mut hasher);
                 // Manual hashing to work around rustc ICE
                 hasher.write_u32(changes[j].binding);
-                hasher.write_usize(changes[j].resource.hashcode());
+                hasher.write_u64(changes[j].resource.hashcode());
                 j += 1;
             } else {
                 // material.bindings[i].hash(&mut hasher);
                 // Manual hashing to work around rustc ICE
                 hasher.write_u32(material.bindings[i].binding);
-                hasher.write_usize(material.bindings[i].resource.hashcode());
+                hasher.write_u64(material.bindings[i].resource.hashcode());
             }
         }
         assert_eq!(j, changes.len());

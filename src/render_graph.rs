@@ -1,10 +1,10 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use euclid::default::Size2D;
 use lyon::math::{point, Rect};
-use wgpu::{util::StagingBelt, BindGroup, BlendState, Color, CommandEncoder, Device, Extent3d, LoadOp, TextureFormat};
+use wgpu::{BindGroup, BlendState, BufferUsage, Color, CommandEncoder, Device, Extent3d, LoadOp, TextureFormat, util::StagingBelt};
 
-use crate::{blitter::{BlitGpuVertex, Blitter}, cache::ephermal_buffer_cache::{BufferRange, EphermalBufferCache}, cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache}, cache::render_pipeline_cache::{CachedRenderPipeline, RenderPipelineCache, RenderPipelineKey}, cache::render_texture_cache::RenderTextureCache, geometry_utilities::types::{CanvasRect, UVRect}, texture::RenderTexture};
+use crate::{blitter::{BlitGpuVertex, Blitter}, cache::ephermal_buffer_cache::{BufferRange, EphermalBufferCache}, cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache}, cache::{material_cache::Material, render_pipeline_cache::{CachedRenderPipeline, RenderPipelineBase, RenderPipelineCache, RenderPipelineKey}}, cache::render_texture_cache::RenderTextureCache, geometry_utilities::types::{CanvasRect, UVRect}, texture::RenderTexture, vertex::GPUVertex};
 
 struct Blit {
     source: GraphNode,
@@ -22,6 +22,12 @@ enum RenderingPrimitive {
     UninitializedTexture(Size2D<u32>),
     Clear(GraphNode, Color),
     Blit(Blit),
+    Quad {
+        target: GraphNode,
+        rect: CanvasRect,
+        pipeline: Arc<RenderPipelineBase>,
+        material: Arc<Material>,
+    }
 }
 
 pub struct GraphNode {
@@ -35,6 +41,12 @@ enum CompiledRenderingPrimitive {
         source: RenderTexture,
         // target: RenderTexture,
         vbo: BufferRange,
+        pipeline: CachedRenderPipeline,
+        bind_group: Rc<BindGroup>,
+    },
+    Render {
+        vbo: BufferRange,
+        ibo: BufferRange,
         pipeline: CachedRenderPipeline,
         bind_group: Rc<BindGroup>,
     },
@@ -53,9 +65,14 @@ impl RenderGraph {
         self.push_primitive(RenderingPrimitive::Clear(tex, color))
     }
 
-    // fn quad(&mut self, source: GraphNode, rect: Rect) -> GraphNode {
-
-    // }
+    pub fn quad(&mut self, target: GraphNode, rect: CanvasRect, pipeline: Arc<RenderPipelineBase>, material: Arc<Material>) -> GraphNode {
+        self.push_primitive(RenderingPrimitive::Quad {
+            target,
+            rect,
+            pipeline,
+            material,
+        })
+    }
 
     pub fn blit(&mut self, source: GraphNode, target: GraphNode, source_rect: CanvasRect, target_rect: CanvasRect) -> GraphNode {
         self.push_primitive(RenderingPrimitive::Blit(Blit {
@@ -160,6 +177,7 @@ impl<'a> RenderGraphCompiler<'a> {
                         trace(nodes, sizes, usages, source);
                         trace(nodes, sizes, usages, target)
                     }
+                    RenderingPrimitive::Quad { target: source, .. } => trace(nodes, sizes, usages, source),
                 };
                 sizes[node.index] = Some(size);
                 size
@@ -296,6 +314,37 @@ impl<'a> RenderGraphCompiler<'a> {
                     pass
                 }
             }
+            RenderingPrimitive::Quad { target, rect, pipeline, material } => {
+                let target_pass = self.build(nodes, sizes, passes, target, target_texture);
+                let target_size = sizes[target.index];
+
+                let uv_rect = Self::pixel_to_uv_rect(rect, &target_size);
+                let vbo = self.ephermal_buffer_cache.get(self.device, self.encoder, self.staging_belt, BufferUsage::VERTEX, &[
+                    point(uv_rect.min_x(), uv_rect.min_y()),
+                    point(uv_rect.max_x(), uv_rect.min_y()),
+                    point(uv_rect.max_x(), uv_rect.max_y()),
+                    point(uv_rect.min_x(), uv_rect.max_y()),
+                ]);
+
+                let ibo = self.ephermal_buffer_cache.get(self.device, self.encoder, self.staging_belt, BufferUsage::INDEX, &[
+                    0, 1, 2, 3, 2, 0
+                ]);
+
+                passes[target_pass].ops.push(CompiledRenderingPrimitive::Render {
+                    vbo,
+                    ibo,
+                    pipeline: self.render_pipeline_cache.get(self.device, RenderPipelineKey {
+                        base: pipeline.to_owned().into(),
+                        sample_count: target_texture.sample_count(),
+                        depth_format: None,
+                        target_format: target_texture.format(),
+                        blend_state: BlendState::REPLACE,
+                    }).to_owned(),
+                    bind_group: material.bind_group().to_owned(),
+                });
+
+                target_pass
+            },
         }
     }
 
@@ -336,10 +385,23 @@ impl<'a> RenderGraphCompiler<'a> {
                         pipeline,
                         bind_group,
                     } => {
-                        puffin::profile_scope!("blit");
+                        puffin::profile_scope!("op:blit");
                         render_pass.set_pipeline(&pipeline.pipeline);
                         render_pass.set_bind_group(0, bind_group, &[]);
                         render_pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);
+                        render_pass.set_vertex_buffer(0, vbo.as_slice());
+                        render_pass.draw_indexed(0..6, 0, 0..1);
+                    }
+                    CompiledRenderingPrimitive::Render {
+                        vbo,
+                        ibo,
+                        pipeline,
+                        bind_group,
+                    } => {
+                        puffin::profile_scope!("op:render");
+                        render_pass.set_pipeline(&pipeline.pipeline);
+                        render_pass.set_bind_group(0, bind_group, &[]);
+                        render_pass.set_index_buffer(ibo.as_slice(), wgpu::IndexFormat::Uint32);
                         render_pass.set_vertex_buffer(0, vbo.as_slice());
                         render_pass.draw_indexed(0..6, 0, 0..1);
                     }

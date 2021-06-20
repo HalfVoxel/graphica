@@ -15,6 +15,7 @@ use wgpu::Extent3d;
 use wgpu::TextureView;
 use wgpu_glyph::{ab_glyph::FontArc, GlyphBrushBuilder};
 
+use std::iter::ExactSizeIterator;
 use std::rc::Rc;
 use std::time::Instant;
 use wgpu::{
@@ -29,7 +30,10 @@ use winit::window::Window;
 use crate::blitter::BlitOp;
 use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex};
 use crate::cache::ephermal_buffer_cache::EphermalBufferCache;
+use crate::cache::material_cache::BindingResourceArc;
+use crate::cache::material_cache::Material;
 use crate::cache::material_cache::MaterialCache;
+use crate::cache::render_pipeline_cache::RenderPipelineBase;
 use crate::cache::render_pipeline_cache::RenderPipelineCache;
 use crate::cache::render_texture_cache::RenderTextureCache;
 use crate::canvas::CanvasView;
@@ -1099,13 +1103,13 @@ pub fn main() {
     let mut staging_belt = wgpu::util::StagingBelt::new(1024);
 
     let vs_module = crate::shader::load_wgsl_shader(&device, "shaders/geometry.wgsl");
-    let bg_module = crate::shader::load_wgsl_shader(&device, "shaders/background.wgsl");
+    let bg_module = Arc::new(crate::shader::load_wgsl_shader(&device, "shaders/background.wgsl"));
     // let vs_module = load_shader(&device, "shaders/geometry.vert.spv");
     // let fs_module = load_shader(&device, "shaders/geometry.frag.spv");
     // let bg_vs_module = load_shader(&device, "shaders/background.vert.spv");
     // let bg_fs_module = load_shader(&device, "shaders/background.frag.spv");
 
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    let bind_group_layout = Arc::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Geometry Bind Group Layout"),
         entries: &[
             wgpu::BindGroupLayoutEntry {
@@ -1129,13 +1133,13 @@ pub fn main() {
                 count: None,
             },
         ],
-    });
+    }));
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    let pipeline_layout = Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
         push_constant_ranges: &[],
         bind_group_layouts: &[&bind_group_layout],
-    });
+    }));
 
     let depth_stencil_state = Some(wgpu::DepthStencilState {
         format: wgpu::TextureFormat::Depth32Float,
@@ -1182,6 +1186,25 @@ pub fn main() {
     let render_pipeline = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor));
     render_pipeline_descriptor.primitive.polygon_mode = wgpu::PolygonMode::Line;
     let wireframe_render_pipeline = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor));
+
+    let bg_pipeline_base = Arc::new(RenderPipelineBase {
+        label: "Background pipeline".to_string(),
+        layout: pipeline_layout.clone(),
+        module: bg_module.clone(),
+        vertex_buffer_layout: Point::desc(),
+        vertex_entry: "vs_main".to_string(),
+        fragment_entry: "fs_main".to_string(),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            clamp_depth: false,
+            conservative: false,
+        },
+        target_count: 1,
+    });
 
     let bg_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Background pipeline"),
@@ -1295,14 +1318,26 @@ pub fn main() {
         mvp_matrix: Matrix4::from_translation([0.0, 0.0, 100.0].into()),
         width: 0.0,
     }];
-    let (bg_ubo, bg_ubo_size) = create_buffer(&device, bg_ubo_data, wgpu::BufferUsage::UNIFORM, "BG UBO");
+    let bg_ubo = create_buffer_range(&device, bg_ubo_data, wgpu::BufferUsage::UNIFORM, "BG UBO");
 
-    let (globals_ubo, globals_ubo_size) = create_buffer(
+    let globals_ubo = create_buffer_range(
         &device,
         &[Globals { ..Default::default() }],
         wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         "Globals UBO",
     );
+
+    let canvas_globals_ubo = create_buffer_range(
+        &device,
+        &[Globals { ..Default::default() }],
+        wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+        "Canvas Globals UBO",
+    );
+
+    let bg_material_base = Arc::new(Material::from_consecutive_entries(&device, "background", bind_group_layout.clone(), vec![
+        BindingResourceArc::buffer(Some(canvas_globals_ubo.clone())),
+        BindingResourceArc::buffer(Some(bg_ubo.clone())),
+    ]));
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: &bind_group_layout,
@@ -1310,19 +1345,11 @@ pub fn main() {
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &globals_ubo,
-                    offset: 0,
-                    size: Some(NonZeroU64::new(globals_ubo_size).unwrap()),
-                }),
+                resource: wgpu::BindingResource::Buffer(canvas_globals_ubo.as_binding()),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &bg_ubo,
-                    offset: 0,
-                    size: Some(NonZeroU64::new(bg_ubo_size).unwrap()),
-                }),
+                resource: wgpu::BindingResource::Buffer(bg_ubo.as_binding()),
             },
         ],
     });
@@ -1503,7 +1530,18 @@ pub fn main() {
             resolution: PhysicalSize::new(doc_size.width, doc_size.height),
         };
 
-        scene.update_uniform_globals(&device, &mut encoder, &mut staging_belt, &globals_ubo);
+        scene.update_uniform_globals(&device, &mut encoder, &mut staging_belt, &globals_ubo.buffer);
+        update_buffer_via_transfer(
+            &device,
+            &mut encoder,
+            &mut staging_belt,
+            &[Globals {
+                resolution: [doc_size.width as f32, doc_size.height as f32],
+                zoom: 1.0,
+                scroll_offset: [0.0, 0.0],
+            }],
+            &canvas_globals_ubo.buffer,
+        );
 
         let hash = editor.document.hash() ^ scene.view.hash();
         if hash != last_hash1 || document_renderer1.is_none() {
@@ -1661,8 +1699,10 @@ pub fn main() {
 
             let mut render_graph = crate::render_graph::RenderGraph::default();
             let mut t = render_graph.clear(Size2D::new(frame.size().width, frame.size().height), wgpu::Color::GREEN);
-            let blue = render_graph.clear(Size2D::new(128, 128), wgpu::Color::BLUE);
-            t = render_graph.blit(blue, t, rect(0.0, 0.0, 128.0, 128.0), canvas_in_screen_space.cast_unit());
+            let mut canvas = render_graph.clear(doc_size.to_untyped(), wgpu::Color::BLUE);
+            canvas = render_graph.quad(canvas, CanvasRect::from_size(doc_size.cast()), bg_pipeline_base.clone(), bg_material_base.clone());
+
+            t = render_graph.blit(canvas, t, CanvasRect::from_size(doc_size.cast()), canvas_in_screen_space.cast_unit());
             let mut render_graph_compiler = crate::render_graph::RenderGraphCompiler {
                 device: &device,
                 encoder: &mut encoder,

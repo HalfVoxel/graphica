@@ -9,15 +9,28 @@ pub struct EphermalBufferCache {
     chunks: HashMap<BufferUsage, Vec<Chunk>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BufferRange {
-    buffer: Arc<Buffer>,
-    range: Range<BufferAddress>,
+    pub buffer: Arc<Buffer>,
+    pub range: Range<BufferAddress>,
 }
 
 impl BufferRange {
     pub fn as_slice(&self) -> wgpu::BufferSlice {
         self.buffer.slice(self.range.clone())
+    }
+
+    pub fn as_binding(&self) -> wgpu::BufferBinding {
+        wgpu::BufferBinding {
+            buffer: &self.buffer,
+            offset: self.range.start,
+            size: Some(NonZeroU64::new(self.range.end - self.range.start).expect("tried to bind zero size buffer range")),
+        }
+    }
+
+    pub fn size(&self) -> u64 {
+        // Range<u64> has no len() implementation
+        self.range.end - self.range.start
     }
 }
 

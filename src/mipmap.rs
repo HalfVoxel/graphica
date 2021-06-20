@@ -65,6 +65,7 @@ impl Mipmapper {
     }
 
     pub fn generate_mipmaps(&self, device: &Device, encoder: &mut CommandEncoder, texture: &Texture) {
+        puffin::profile_function!();
         // assert_eq!(texture.descriptor.dimension, wgpu::TextureViewDimension::D2);
         // assert_eq!(texture.descriptor.array_layer_count, 1);
         assert!(texture.descriptor.mip_level_count > 1);
@@ -82,6 +83,7 @@ impl Mipmapper {
         cpass.set_pipeline(&self.pipeline);
 
         for mip_level in 1..texture.descriptor.mip_level_count {
+            puffin::profile_scope!("create bind group");
             let current_level = texture.get_mip_level_view(mip_level);
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -114,6 +116,11 @@ impl Mipmapper {
                     1,
                 );
             }
+        }
+
+        {
+            puffin::profile_scope!("drop cpass");
+            drop(cpass);
         }
     }
 }
