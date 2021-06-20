@@ -23,7 +23,7 @@ impl RenderTextureCache {
             }
             let tsize = t.size();
             tsize.width >= size.width && tsize.height >= size.height && tsize.width*tsize.height <= size.area()*4
-        }).min_by_key(|(i,t)| t.size().width*t.size().height).map(|(i,t)| i);
+        }).min_by_key(|(_i,t)| t.size().width*t.size().height).map(|(i,_t)| i);
 
         if let Some(index) = best_tex {
             self.render_textures.swap_remove(index)

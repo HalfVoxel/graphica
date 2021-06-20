@@ -79,8 +79,8 @@ fn bench3() {
     black_box(k);
 }
 
-fn sqr_distance_bezier_point_bench_simd(points: &Vec<Point>) {
-    for i in 0..100 {
+fn sqr_distance_bezier_point_bench_simd(_points: &Vec<Point>) {
+    for _i in 0..100 {
         // let k = sqr_distance_bezier_point_simd(points[i], points[i + 1], points[i + 2], points[i + 3], points[i + 4]);
         // black_box(k);
     }

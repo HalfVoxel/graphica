@@ -9,11 +9,11 @@ use lyon::tessellation::geometry_builder::*;
 use lyon::tessellation::FillOptions;
 use lyon::tessellation::{StrokeOptions, StrokeTessellator};
 use std::num::NonZeroU64;
-use wgpu::BufferView;
+
 use wgpu::Extent3d;
-use wgpu::RenderPass;
+
 use wgpu::TextureView;
-use wgpu_glyph::{ab_glyph::FontArc, GlyphBrushBuilder, Section, Text};
+use wgpu_glyph::{ab_glyph::FontArc, GlyphBrushBuilder};
 
 use std::rc::Rc;
 use std::time::Instant;
@@ -44,10 +44,9 @@ use crate::path_collection::{PathCollection, VertexReference};
 use crate::path_editor::*;
 use crate::cache::render_pipeline_cache::RenderPipelineCache;
 use crate::cache::render_texture_cache::RenderTextureCache;
-use crate::shader::load_shader;
+
 use crate::toolbar::GUIRoot;
 use crate::{
-    blend_modes,
     brush_editor::{BrushData, BrushEditor},
 };
 use crate::{blitter::Blitter, vertex::GPUVertex};
@@ -1344,7 +1343,7 @@ pub fn main() {
 
     let font: Vec<u8> = std::fs::read("fonts/Bitter-Regular.ttf").expect("Could not find font");
     let font = FontArc::try_from_vec(font).unwrap();
-    let mut glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, crate::config::TEXTURE_FORMAT);
+    let glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, crate::config::TEXTURE_FORMAT);
 
     let document_extent = wgpu::Extent3d {
         width: editor.document.size.unwrap().width,

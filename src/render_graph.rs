@@ -66,7 +66,7 @@ impl RenderGraph {
         }))
     }
 
-    fn render(self, source: GraphNode) {}
+    fn render(self, _source: GraphNode) {}
 }
 
 pub struct RenderGraphCompiler<'a> {
@@ -245,7 +245,7 @@ impl<'a> RenderGraphCompiler<'a> {
                         ),
                     };
 
-                    let source_pass = self.build(nodes, sizes, passes, source, &source_texture);
+                    let _source_pass = self.build(nodes, sizes, passes, source, &source_texture);
 
                     let pass = if target_rect.contains_rect(&target_texture_rect) {
                         // Blit covers the whole target, this means we can discard whatever was inside the target before.
@@ -304,7 +304,7 @@ impl<'a> RenderGraphCompiler<'a> {
             for op in &pass.ops {
                 match op {
                     CompiledRenderingPrimitive::Blit {
-                        source,
+                        source: _,
                         vbo,
                         pipeline,
                         bind_group,

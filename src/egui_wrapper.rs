@@ -1,6 +1,6 @@
 use egui::{ClippedMesh, CtxRef};
 use wgpu::Device;
-use winit::{dpi::PhysicalSize, event::Event};
+use winit::{dpi::PhysicalSize};
 
 pub struct EguiWrapper {
     pub platform: egui_winit_platform::Platform,

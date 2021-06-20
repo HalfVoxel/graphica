@@ -95,7 +95,7 @@ impl RenderTexture {
         match self {
             RenderTexture::Texture(tex) => tex.descriptor.sample_count,
             // Swapchain images are never multi-sampled
-            RenderTexture::SwapchainImage(tex) => 1,
+            RenderTexture::SwapchainImage(_tex) => 1,
         }
     }
 
