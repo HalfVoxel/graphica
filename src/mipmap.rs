@@ -89,11 +89,11 @@ impl Mipmapper {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&prev_level),
+                        resource: wgpu::BindingResource::TextureView(prev_level),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&current_level),
+                        resource: wgpu::BindingResource::TextureView(current_level),
                     },
                 ],
                 label: None,

@@ -19,7 +19,7 @@ impl EguiWrapper {
         });
 
         // We use the egui_wgpu_backend crate as the render backend.
-        let egui_render_pass = egui_wgpu_backend::RenderPass::new(&device, crate::config::TEXTURE_FORMAT);
+        let egui_render_pass = egui_wgpu_backend::RenderPass::new(device, crate::config::TEXTURE_FORMAT);
 
         Self {
             platform,
@@ -49,10 +49,10 @@ impl EguiWrapper {
     ) {
         puffin::profile_function!();
         self.egui_render_pass
-            .update_texture(&device, &queue, &self.platform.context().texture());
-        self.egui_render_pass.update_user_textures(&device, &queue);
+            .update_texture(device, queue, &self.platform.context().texture());
+        self.egui_render_pass.update_user_textures(device, queue);
         self.egui_render_pass
-            .update_buffers(&device, &queue, &paint_jobs, &screen_descriptor);
+            .update_buffers(device, queue, paint_jobs, screen_descriptor);
 
         // Record all render passes.
         self.egui_render_pass

@@ -61,7 +61,7 @@ pub struct Blitter {
 
 impl Blitter {
     pub fn new(device: &Device, _encoder: &mut CommandEncoder) -> Blitter {
-        let blit_module = Arc::new(load_wgsl_shader(&device, "shaders/blit.wgsl"));
+        let blit_module = Arc::new(load_wgsl_shader(device, "shaders/blit.wgsl"));
 
         let sampler = Arc::new(device.create_sampler(&SamplerDescriptor {
             label: Some("Blitter sampler"),
@@ -183,7 +183,7 @@ impl Blitter {
             ],
         );
 
-        let blend_over_module = load_shader(&device, "shaders/blend_over.comp.spv");
+        let blend_over_module = load_shader(device, "shaders/blend_over.comp.spv");
 
         let bind_group_layout_compute_in_place = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Bind group layout in place"),
@@ -238,7 +238,7 @@ impl Blitter {
             entry_point: "main",
         });
 
-        let blend_rgb_to_srgb = load_shader(&device, "shaders/rgb_to_srgb.comp.spv");
+        let blend_rgb_to_srgb = load_shader(device, "shaders/rgb_to_srgb.comp.spv");
 
         let pipeline_layout_compute_in_place = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: None,
@@ -421,7 +421,7 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
             },
         ];
 
-        let (vbo, _) = create_buffer(&device, vertices, wgpu::BufferUsage::VERTEX, None);
+        let (vbo, _) = create_buffer(device, vertices, wgpu::BufferUsage::VERTEX, None);
         let pipeline = self.blitter.blit_pipeline(sample_count);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -470,7 +470,7 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
             },
         ];
 
-        let (vbo, _) = create_buffer(&device, vertices, wgpu::BufferUsage::VERTEX, None);
+        let (vbo, _) = create_buffer(device, vertices, wgpu::BufferUsage::VERTEX, None);
 
         let pipeline: &'a RenderPipeline = match sample_count {
             1 => &self.blitter.render_pipelines[0],

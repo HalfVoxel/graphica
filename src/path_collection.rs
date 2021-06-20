@@ -64,6 +64,10 @@ impl PathCollection {
         self.paths.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn push(&mut self, mut item: PathData) -> PathReference {
         item.path_index = self.len() as u32;
         self.paths.push(item);

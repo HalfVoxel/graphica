@@ -24,7 +24,7 @@ pub fn create_buffer<'a, T>(
     let data = as_u8_slice(data);
     let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: label.into(),
-        contents: &data,
+        contents: data,
         usage,
     });
 
@@ -47,7 +47,7 @@ pub fn update_buffer_via_transfer<T>(
                 target_buffer,
                 0,
                 BufferSize::new(data.len() as u64).expect("buffer was empty"),
-                &device,
+                device,
             )
             .copy_from_slice(data);
     }

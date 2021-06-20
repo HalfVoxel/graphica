@@ -40,7 +40,7 @@ impl BrushEditor {
         let data = &mut document.brushes;
         let mouse_pos_canvas = view.screen_to_canvas_point(input.mouse_position);
         if self.debug_path.is_none() {
-            self.debug_path = Some(document.paths.push(PathData::new()));
+            self.debug_path = Some(document.paths.push(PathData::default()));
         }
 
         let p = document.paths.resolve_path_mut(&self.debug_path.unwrap());
@@ -109,7 +109,7 @@ impl BrushData {
     #[allow(clippy::new_without_default)]
     pub fn new() -> BrushData {
         BrushData {
-            path: PathData::new(),
+            path: PathData::default(),
             colors: vec![],
             brush: Brush {
                 tip_texture: TextureReference { id: 0 },

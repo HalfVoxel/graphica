@@ -149,8 +149,8 @@ impl BrushManager {
             ],
         });
 
-        let brush_module = load_wgsl_shader(&device, "shaders/brush.wgsl");
-        let clone_brush_module = load_wgsl_shader(&device, "shaders/clone_brush.wgsl");
+        let brush_module = load_wgsl_shader(device, "shaders/brush.wgsl");
+        let clone_brush_module = load_wgsl_shader(device, "shaders/clone_brush.wgsl");
 
         let pipeline_layout_brush = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
@@ -330,7 +330,7 @@ impl BrushManager {
             push_constant_ranges: &[],
         });
 
-        let clone_brush_batched_cs_module = load_shader(&device, "shaders/clone_brush_batch.comp.spv");
+        let clone_brush_batched_cs_module = load_shader(device, "shaders/clone_brush_batch.comp.spv");
 
         let render_pipeline_descriptor_clone_brush_batched = wgpu::ComputePipelineDescriptor {
             label: None,

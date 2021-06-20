@@ -292,7 +292,7 @@ impl<'a> RenderGraphCompiler<'a> {
                     } else {
                         // Common path
                         // Blit does not cover the whole target
-                        let target_pass = self.build(nodes, sizes, passes, target, &target_texture);
+                        let target_pass = self.build(nodes, sizes, passes, target, target_texture);
                         passes[target_pass].ops.push(op);
                         target_pass
                     };
@@ -310,7 +310,7 @@ impl<'a> RenderGraphCompiler<'a> {
         puffin::profile_function!();
         for pass in passes {
             let color_attachment = wgpu::RenderPassColorAttachment {
-                view: &pass.target.default_view().view,
+                view: pass.target.default_view().view,
                 ops: wgpu::Operations {
                     load: pass.clear.unwrap_or(LoadOp::Load),
                     store: true,
@@ -345,7 +345,7 @@ impl<'a> RenderGraphCompiler<'a> {
                     } => {
                         puffin::profile_scope!("blit");
                         render_pass.set_pipeline(&pipeline.pipeline);
-                        render_pass.set_bind_group(0, &bind_group, &[]);
+                        render_pass.set_bind_group(0, bind_group, &[]);
                         render_pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);
                         render_pass.set_vertex_buffer(0, vbo.as_slice());
                         render_pass.draw_indexed(0..6, 0, 0..1);

@@ -1,7 +1,7 @@
 use crate::{geometry_utilities::types::CanvasPoint, path::PathData};
 
 pub fn catmull_rom_smooth(points: &[CanvasPoint]) -> PathData {
-    let mut result = PathData::new();
+    let mut result = PathData::default();
     match points.len() {
         0 | 1 => {
             // emit nothing

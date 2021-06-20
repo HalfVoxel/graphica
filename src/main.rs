@@ -282,13 +282,13 @@ impl BrushRendererWithReadback {
             })
             .collect();
 
-        let (vbo, _) = create_buffer(&device, &vertices, wgpu::BufferUsage::VERTEX, None);
+        let (vbo, _) = create_buffer(device, &vertices, wgpu::BufferUsage::VERTEX, None);
 
         #[allow(clippy::identity_op)]
         let indices: Vec<u32> = (0..points.len() as u32)
             .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
             .collect();
-        let (ibo, _) = create_buffer(&device, &indices, wgpu::BufferUsage::INDEX, None);
+        let (ibo, _) = create_buffer(device, &indices, wgpu::BufferUsage::INDEX, None);
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -405,7 +405,7 @@ impl BrushRendererWithReadback {
                 let r = rect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y);
                 // let uv = vertices[(i*4)..(i+1)*4].iter().map(|x| x.uv_background_target).collect::<ArrayVec<[Point;4]>>();
                 // let r = Rect::from_points(uv);
-                temp_to_frame_blitter.blit(&encoder.device, encoder.encoder, rect(0.0, 0.0, 1.0, 1.0), r, 1, None);
+                temp_to_frame_blitter.blit(encoder.device, encoder.encoder, rect(0.0, 0.0, 1.0, 1.0), r, 1, None);
             }
         }
 
@@ -476,7 +476,7 @@ impl BrushRendererWithReadbackBatched {
             })
             .collect();
 
-        let (ubo, ubo_size) = create_buffer(&device, &primitives, wgpu::BufferUsage::STORAGE, None);
+        let (ubo, ubo_size) = create_buffer(device, &primitives, wgpu::BufferUsage::STORAGE, None);
 
         const LOCAL_SIZE: u32 = 32;
         let width_per_group = (size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
@@ -540,7 +540,7 @@ impl BrushRendererWithReadbackBatched {
         let height_per_group = (self.size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
 
         let (settings_ubo, settings_ubo_size) = create_buffer(
-            &encoder.device,
+            encoder.device,
             &[ReadbackUniforms {
                 width_per_group: width_per_group as i32,
                 height_per_group: height_per_group as i32,
@@ -556,7 +556,7 @@ impl BrushRendererWithReadbackBatched {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&encoder.target_texture.view),
+                    resource: wgpu::BindingResource::TextureView(encoder.target_texture.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -707,7 +707,7 @@ impl BrushRenderer {
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &scene_ubo,
+                        buffer: scene_ubo,
                         offset: 0,
                         size: Some(NonZeroU64::new(scene_ubo_size).unwrap()),
                     }),
@@ -856,7 +856,7 @@ impl DocumentRenderer {
         );
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &bind_group_layout,
+            layout: bind_group_layout,
             label: Some("Document bind group"),
             entries: &[
                 wgpu::BindGroupEntry {
@@ -952,8 +952,8 @@ fn render_background(
 ) {
     puffin::profile_function!();
     let mut pass = encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background render pass"));
-    pass.set_pipeline(&bg_pipeline);
-    pass.set_bind_group(0, &bind_group, &[]);
+    pass.set_pipeline(bg_pipeline);
+    pass.set_bind_group(0, bind_group, &[]);
     pass.set_index_buffer(bg_ibo.slice(..), wgpu::IndexFormat::Uint16);
     pass.set_vertex_buffer(0, bg_vbo.slice(..));
 
@@ -978,10 +978,10 @@ fn blit_document_to_window<'a>(
 
     let blittex = hl_encoder
         .blitter
-        .with_textures(&hl_encoder.device, source, &target.default_view().view);
+        .with_textures(hl_encoder.device, source, target.default_view().view);
 
     blittex.blit_regions(
-        &hl_encoder.device,
+        hl_encoder.device,
         rect(0.0, 0.0, 1.0, 1.0),
         canvas_in_screen_uv_space.to_untyped(),
         target.sample_count(),
@@ -1006,7 +1006,7 @@ pub fn main() {
     println!("  a/z: increase/decrease the stroke width");
     puffin::set_scopes_on(true);
 
-    let mut data = PathData::new();
+    let mut data = PathData::default();
     data.line_to(point(0.0, 0.0));
     data.line_to(point(10.0, 0.0));
     data.line_to(point(10.0, 10.0));
@@ -1050,7 +1050,7 @@ pub fn main() {
         textures: vec![],
     };
 
-    let mut gui = gui::Root::new();
+    let mut gui = gui::Root::default();
     let gui_root = gui.add(GUIRoot::new());
 
     let mut editor = Editor {
@@ -1076,7 +1076,7 @@ pub fn main() {
             cursor_position: (0.0, 0.0),
             size_changed: true,
         },
-        input: InputManager::new(),
+        input: InputManager::default(),
     };
 
     let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
@@ -1275,7 +1275,7 @@ pub fn main() {
 
     let mut frame_count: f32 = 0.0;
     let mut last_time = Instant::now();
-    let mut fps_limiter = FPSLimiter::new();
+    let mut fps_limiter = FPSLimiter::default();
     let mut last_hash1 = 0u64;
     let mut last_hash2 = 0u64;
     let mut document_renderer1: Option<DocumentRenderer> = None;
@@ -1623,7 +1623,7 @@ pub fn main() {
 
             let blitop = blit_document_to_window(
                 &mut hl_encoder,
-                &scene,
+                scene,
                 doc_size,
                 window_extent,
                 &temp_document_frame.view,

@@ -14,7 +14,6 @@ pub struct WidgetWrapper<T: WidgetTrait + 'static> {
 
 impl<T: WidgetTrait + 'static> WidgetWrapper<T> {
     pub fn listen_closure<
-        'a,
         U: WidgetTrait + 'static,
         C: Fn(&mut U, &mut WidgetContext<U>, &T::EventType) + 'static,
     >(
@@ -22,7 +21,7 @@ impl<T: WidgetTrait + 'static> WidgetWrapper<T> {
         reference: &TypedWidgetReference<U>,
         callback: C,
     ) {
-        self.listeners.listen_closure(&reference, callback);
+        self.listeners.listen_closure(reference, callback);
     }
 }
 
@@ -174,7 +173,7 @@ pub struct Listeners<U: Sized + 'static> {
 }
 
 impl<U> Listeners<U> {
-    pub fn listen<'a, T: WidgetTrait>(
+    pub fn listen<T: WidgetTrait>(
         &mut self,
         reference: &TypedWidgetReference<T>,
         callback: fn(&mut T, &mut WidgetContext<T>, &U),
@@ -193,7 +192,7 @@ impl<U> Listeners<U> {
         self.listeners.push((reference.reference, Box::new(c)));
     }
 
-    pub fn listen_closure<'a, T: WidgetTrait, C: Fn(&mut T, &mut WidgetContext<T>, &U) + 'static>(
+    pub fn listen_closure<T: WidgetTrait, C: Fn(&mut T, &mut WidgetContext<T>, &U) + 'static>(
         &mut self,
         reference: &TypedWidgetReference<T>,
         callback: C,
@@ -272,15 +271,12 @@ impl<'a> RootWrapper<'a> {
     }
 }
 
+#[derive(Default)]
 pub struct Root {
     widgets: Vec<Option<Box<RefCell<dyn WidgetTypeTrait>>>>,
 }
 
 impl<'a> Root {
-    pub fn new() -> Root {
-        Root { widgets: vec![] }
-    }
-
     pub fn resolve_mut(&'a self, reference: &WidgetReference) -> RefMut<dyn Any> {
         RefMut::map(
             self.widgets[reference.index as usize].as_ref().unwrap().borrow_mut(),
@@ -329,7 +325,7 @@ impl<'a> Root {
         for r in to_remove {
             self.remove(r);
         }
-        if to_add.len() > 0 {
+        if !to_add.is_empty() {
             let i0 = self.widgets.len();
             for w in to_add {
                 self.widgets.push(Some(w));
@@ -347,10 +343,8 @@ impl<'a> Root {
     pub fn update(&mut self) {
         puffin::profile_function!();
         let mut mods = RootWrapper::new(self);
-        for widget in &self.widgets {
-            if let Some(widget) = widget {
-                widget.borrow_mut().update(&mut mods);
-            }
+        for widget in self.widgets.iter().flatten() {
+            widget.borrow_mut().update(&mut mods);
         }
 
         let RootWrapper { to_add, to_remove, .. } = mods;
@@ -360,10 +354,8 @@ impl<'a> Root {
     pub fn render(&mut self, ui_document: &mut Document, view: &CanvasView) {
         puffin::profile_function!();
         let mut mods = RootWrapper::new(self);
-        for widget in &self.widgets {
-            if let Some(widget) = widget {
-                widget.borrow_mut().render(&mut mods, ui_document, view);
-            }
+        for widget in self.widgets.iter().flatten() {
+            widget.borrow_mut().render(&mut mods, ui_document, view);
         }
 
         let RootWrapper { to_add, to_remove, .. } = mods;
@@ -373,10 +365,8 @@ impl<'a> Root {
     pub fn input(&mut self, _ui_document: &mut Document, input: &mut InputManager) {
         puffin::profile_function!();
         let mut mods = RootWrapper::new(self);
-        for widget in &self.widgets {
-            if let Some(widget) = widget {
-                widget.borrow_mut().input(&mut mods, input);
-            }
+        for widget in self.widgets.iter().flatten() {
+            widget.borrow_mut().input(&mut mods, input);
         }
 
         let RootWrapper { to_add, to_remove, .. } = mods;

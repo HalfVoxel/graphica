@@ -33,11 +33,11 @@ impl Encoder<'_> {
                     },
                     store: true,
                 },
-                resolve_target: Some(&self.target_texture.view),
+                resolve_target: Some(self.target_texture.view),
             }
         } else {
             wgpu::RenderPassColorAttachment {
-                view: &self.target_texture.view,
+                view: self.target_texture.view,
                 ops: wgpu::Operations {
                     load: if let Some(color) = clear {
                         wgpu::LoadOp::Clear(color)
@@ -67,9 +67,9 @@ impl Encoder<'_> {
         })
     }
 
-    pub fn begin_render_pass<'a>(&'a mut self, depth: bool) -> wgpu::RenderPass<'a> {
+    pub fn begin_render_pass(&mut self, depth: bool) -> wgpu::RenderPass {
         let color_attachment = wgpu::RenderPassColorAttachment {
-            view: &self.target_texture.view,
+            view: self.target_texture.view,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Load,
                 store: true,

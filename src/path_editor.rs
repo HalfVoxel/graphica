@@ -176,11 +176,7 @@ impl Selection {
             }
         }
 
-        if let Some(closest_point) = closest_point {
-            Some((closest_ref.unwrap(), closest_point, CanvasLength::new(min_dist.sqrt())))
-        } else {
-            None
-        }
+        closest_point.map(|closest_point| (closest_ref.unwrap(), closest_point, CanvasLength::new(min_dist.sqrt())))
     }
 }
 
@@ -227,7 +223,7 @@ fn drag_at_point(
 
     let distance_to_controls = selected_vertices
         .iter()
-        .flat_map(|v| vec![v.control_before(&paths), v.control_after(&paths)])
+        .flat_map(|v| vec![v.control_before(paths), v.control_after(paths)])
         .map(|v| (v, (paths.resolve(&v).position() - point).length()))
         .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
@@ -236,7 +232,7 @@ fn drag_at_point(
         .iter()
         .map(|v| (v, (paths.resolve(v).position() - point).length()))
         .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-    let distance_to_curve = selection.distance_to_curve(&paths, point);
+    let distance_to_curve = selection.distance_to_curve(paths, point);
 
     // Figure out which item is the best to drag
     let mut best_score = CanvasLength::new(std::f32::INFINITY);
@@ -314,7 +310,7 @@ pub struct PathEditor {
 impl PathEditor {
     pub fn new(document: &mut Document) -> PathEditor {
         PathEditor {
-            ui_path: document.paths.push(PathData::new()),
+            ui_path: document.paths.push(PathData::default()),
             selected: None,
             select_state: None,
             vector_field: VectorField {
@@ -457,12 +453,12 @@ impl PathEditor {
         //     ui_path.end();
         // }
 
-        if document.paths.len() == 0 {
-            document.paths.push(PathData::new());
+        if document.paths.is_empty() {
+            document.paths.push(PathData::default());
         }
 
         let path = &mut document.paths.paths[0];
-        if path.len() == 0 {
+        if path.is_empty() {
             path.clear();
             for p in &self.vector_field.primitives {
                 match *p {
@@ -531,11 +527,10 @@ impl PathEditor {
                                 items: vec![best.into()],
                             },
                         ))
-                    } else if let Some(capture) = input.capture_click(winit::event::MouseButton::Left) {
-                        // Start with empty selection
-                        Some(SelectState::Down(capture, Selection { items: vec![] }))
                     } else {
-                        None
+                        input
+                            .capture_click(winit::event::MouseButton::Left)
+                            .map(|capture| SelectState::Down(capture, Selection { items: vec![] }))
                     }
                 } else {
                     None
@@ -679,8 +674,8 @@ impl PathEditor {
             }
             ToolType::Pencil => {
                 if input.capture_click(winit::event::MouseButton::Left).is_some() {
-                    if document.paths.len() == 0 {
-                        document.paths.push(PathData::new());
+                    if document.paths.is_empty() {
+                        document.paths.push(PathData::default());
                     }
                     let path = document.paths.last_mut().unwrap();
                     path.line_to(canvas_mouse_pos);

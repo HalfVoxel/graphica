@@ -285,7 +285,7 @@ impl<'a, 'b: 'a> SubPath<'b> {
         let index = self.index;
         self.iter_point_indices().map(move |i| ImmutablePathPoint {
             index: i,
-            data: data,
+            data,
             sub_path: index,
         })
     }
@@ -300,7 +300,7 @@ impl<'a, 'b: 'a> SubPath<'b> {
 
         range.step_by(3).map(move |i| ImmutablePathPoint {
             index: i,
-            data: data,
+            data,
             sub_path: index,
         })
     }
@@ -348,17 +348,6 @@ impl BorderRadii {
 }
 
 impl PathData {
-    pub fn new() -> PathData {
-        PathData {
-            points: vec![],
-            sub_paths: vec![],
-            in_path: false,
-            path_index: 0,
-            version: 0,
-            last_hash: std::cell::Cell::new((0, 0)),
-        }
-    }
-
     pub fn copy_from(&mut self, other: &PathData) {
         self.points = other.points.clone();
         self.sub_paths = other.sub_paths.clone();
@@ -385,13 +374,13 @@ impl PathData {
         self.version += 1;
     }
 
-    pub fn remove<'a>(&'a mut self, _index: usize) {}
+    pub fn remove(&mut self, _index: usize) {}
 
-    pub fn iter_sub_paths<'a>(&'a self) -> impl Iterator<Item = SubPath<'a>> {
+    pub fn iter_sub_paths(&self) -> impl Iterator<Item = SubPath> {
         (0..self.sub_paths.len()).map(move |i| SubPath { data: self, index: i })
     }
 
-    pub fn iter_points<'a>(&'a self) -> impl Iterator<Item = ImmutablePathPoint<'a>> {
+    pub fn iter_points(&self) -> impl Iterator<Item = ImmutablePathPoint<'_>> {
         self.iter_sub_paths().flat_map(|sp| sp.iter_points())
     }
 
@@ -411,7 +400,7 @@ impl PathData {
         }
     }
 
-    pub fn point<'a>(&'a self, index: i32) -> ImmutablePathPoint<'a> {
+    pub fn point(&self, index: i32) -> ImmutablePathPoint {
         ImmutablePathPoint {
             data: self,
             sub_path: self.find_sub_path(index),
@@ -419,7 +408,7 @@ impl PathData {
         }
     }
 
-    pub fn point_mut<'a>(&'a mut self, index: i32) -> MutablePathPoint<'a> {
+    pub fn point_mut(&mut self, index: i32) -> MutablePathPoint {
         let sub_path = self.find_sub_path(index);
         MutablePathPoint {
             data: self,
@@ -428,7 +417,7 @@ impl PathData {
         }
     }
 
-    pub fn control_point<'a>(&'a self, index: i32) -> ImmutableControlPoint<'a> {
+    pub fn control_point(&self, index: i32) -> ImmutableControlPoint {
         ImmutableControlPoint {
             data: self,
             sub_path: self.find_sub_path(index),
@@ -436,7 +425,7 @@ impl PathData {
         }
     }
 
-    pub fn control_point_mut<'a>(&'a mut self, index: i32) -> MutableControlPoint<'a> {
+    pub fn control_point_mut(&mut self, index: i32) -> MutableControlPoint {
         let sub_path = self.find_sub_path(index);
         MutableControlPoint {
             data: self,
@@ -476,6 +465,10 @@ impl PathData {
         self.points.len() as i32 / 3
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+
     pub fn clear(&mut self) {
         self.points.clear();
         self.sub_paths.clear();
@@ -483,7 +476,7 @@ impl PathData {
     }
 
     pub fn current(&self) -> Option<ImmutablePathPoint> {
-        if self.points.len() > 0 && self.in_path {
+        if !self.points.is_empty() && self.in_path {
             Some(self.point(self.points.len() as i32 - 3))
         } else {
             None
@@ -573,7 +566,7 @@ impl PathData {
             lyon::geom::Arc {
                 center: corner + offset * radius,
                 radii: vector(radius, radius),
-                start_angle: start_angle,
+                start_angle,
                 sweep_angle: Angle::frac_pi_2(),
                 x_rotation: Angle::zero(),
             }
@@ -623,7 +616,7 @@ impl PathData {
     }
 
     pub fn build(&self, builder: &mut lyon::path::path::Builder) {
-        if self.len() == 0 {
+        if self.is_empty() {
             return;
         }
 
@@ -656,6 +649,19 @@ impl PathData {
     }
 }
 
+impl Default for PathData {
+    fn default() -> Self {
+        Self {
+            points: vec![],
+            sub_paths: vec![],
+            in_path: false,
+            path_index: 0,
+            version: 0,
+            last_hash: std::cell::Cell::new((0, 0)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // Note this useful idiom: importing names from outer (for mod tests) scope.
@@ -663,14 +669,14 @@ mod tests {
 
     #[test]
     fn test_sanity() {
-        let mut data = PathData::new();
+        let mut data = PathData::default();
         data.line_to(point(1.0, 2.0));
         assert_eq!(data.point(0).position(), point(1.0, 2.0));
     }
 
     #[test]
     fn test_iter() {
-        let mut data = PathData::new();
+        let mut data = PathData::default();
         for _ in 0..1000 {
             data.add_circle(point(0.0, 0.0), 5.0);
         }

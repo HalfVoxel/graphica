@@ -54,7 +54,7 @@ impl WidgetTrait for Toolbar {
 
     fn render(&mut self, ui_document: &mut Document, view: &CanvasView) {
         if self.ui.is_none() {
-            self.ui = Some(ui_document.paths.push(PathData::new()));
+            self.ui = Some(ui_document.paths.push(PathData::default()));
         }
 
         let path = ui_document.paths.resolve_path_mut(&self.ui.unwrap());
@@ -117,7 +117,7 @@ impl WidgetTrait for Button {
 
     fn render(&mut self, ui_document: &mut Document, _view: &CanvasView) {
         if self.path.is_none() {
-            self.path = Some(ui_document.paths.push(PathData::new()));
+            self.path = Some(ui_document.paths.push(PathData::default()));
         }
         let path = ui_document.paths.resolve_path_mut(&self.path.unwrap());
         path.clear();
@@ -192,7 +192,7 @@ struct Widget {}
 
 #[test]
 fn test_gui() {
-    let mut root = Root::new();
+    let mut root = Root::default();
     let r1 = root.add(Widget {});
     root.remove(r1);
     root.update();

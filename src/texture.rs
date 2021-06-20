@@ -87,7 +87,7 @@ impl From<SwapchainImageWrapper> for RenderTexture {
 impl RenderTexture {
     pub fn get_mip_level_view(&self, miplevel: u32) -> Result<RenderTextureView, &str> {
         match self {
-            RenderTexture::Texture(tex) => Ok(RenderTextureView::new(self, &tex.get_mip_level_view(miplevel))),
+            RenderTexture::Texture(tex) => Ok(RenderTextureView::new(self, tex.get_mip_level_view(miplevel))),
             RenderTexture::SwapchainImage(_tex) => Err("Cannot get mip levels from a swapchain image"),
         }
     }

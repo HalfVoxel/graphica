@@ -80,11 +80,7 @@ impl<T> BatchedMouseCapture<T> {
 
     pub fn capture(self, input: &mut InputManager) -> Option<(CapturedClick, T)> {
         if let Some(best) = self.best {
-            if let Some(capture) = input.capture_click(self.mouse_btn) {
-                Some((capture, best))
-            } else {
-                None
-            }
+            input.capture_click(self.mouse_btn).map(|capture| (capture, best))
         } else {
             None
         }
@@ -111,6 +107,7 @@ impl Shape for CircleShape {
     }
 }
 
+#[derive(Default)]
 pub struct InputManager {
     states: HashMap<ExtendedKey, KeyState>,
     pub mouse_position: ScreenPoint,
@@ -118,6 +115,7 @@ pub struct InputManager {
     pub scroll_delta: Vector2D<f32>,
 }
 
+#[derive(Default)]
 pub struct KeyCombination {
     keys: Vec<ExtendedKey>,
 }
@@ -134,15 +132,6 @@ impl KeyCombination {
 }
 
 impl InputManager {
-    pub fn new() -> InputManager {
-        InputManager {
-            states: HashMap::new(),
-            mouse_position: point(0.0, 0.0),
-            frame_count: 0,
-            scroll_delta: vector(0.0, 0.0),
-        }
-    }
-
     pub fn tick_frame(&mut self) {
         self.frame_count += 1;
         self.scroll_delta = vector(0.0, 0.0);
@@ -296,7 +285,7 @@ impl InputManager {
                     point: self.mouse_position,
                     best: None,
                     best_score: 0.0,
-                    mouse_btn: mouse_btn,
+                    mouse_btn,
                 });
             }
         }
