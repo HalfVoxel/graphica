@@ -3,7 +3,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use graphica::geometry_utilities::sqr_distance_bezier_point;
 use graphica::geometry_utilities::sqr_distance_bezier_point2;
 use graphica::geometry_utilities::sqr_distance_bezier_point_binary;
-use graphica::geometry_utilities::sqr_distance_bezier_point_simd;
+// use graphica::geometry_utilities::sqr_distance_bezier_point_simd;
 use lyon::math::*;
 use rand::prelude::*;
 use rand::{Rng, SeedableRng};
@@ -81,8 +81,8 @@ fn bench3() {
 
 fn sqr_distance_bezier_point_bench_simd(points: &Vec<Point>) {
     for i in 0..100 {
-        let k = sqr_distance_bezier_point_simd(points[i], points[i + 1], points[i + 2], points[i + 3], points[i + 4]);
-        black_box(k);
+        // let k = sqr_distance_bezier_point_simd(points[i], points[i + 1], points[i + 2], points[i + 3], points[i + 4]);
+        // black_box(k);
     }
 }
 
