@@ -58,21 +58,7 @@ impl RenderTextureCache {
                     usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT,
                 },
             );
-            let rt = RenderTexture::from(Rc::new(tex));
-            rt
+            RenderTexture::from(Rc::new(tex))
         }
-
-        // self.render_textures.push(RenderTextureSlot {
-        //     texture: None,
-        //     size: Extent3d {
-        //         width: size.width,
-        //         height: size.height,
-        //         depth_or_array_layers: 1,
-        //     },
-        //     format,
-        //     first_use_pass: None,
-        //     last_use_pass: None,
-        // });
-        // RenderTextureHandle(self.render_textures.len() - 1)
     }
 }
