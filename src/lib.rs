@@ -11,6 +11,7 @@ mod egui_wrapper;
 mod encoder;
 pub mod fps_limiter;
 pub mod geometry_utilities;
+mod gpu_profiler;
 pub mod gui;
 pub mod input;
 pub mod main;

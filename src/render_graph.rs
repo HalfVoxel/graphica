@@ -6,6 +6,7 @@ use wgpu::{
     util::StagingBelt, BindGroup, BlendState, BufferUsage, Color, CommandEncoder, ComputePipeline, Device, Extent3d,
     LoadOp, TextureFormat, TextureUsage,
 };
+use wgpu_profiler::{wgpu_profiler, GpuProfiler};
 
 use crate::{
     blitter::{BlitGpuVertex, Blitter},
@@ -140,6 +141,7 @@ pub struct RenderGraphCompiler<'a> {
     pub render_texture_cache: &'a mut RenderTextureCache,
     pub material_cache: &'a mut MaterialCache,
     pub mipmapper: &'a Mipmapper,
+    pub gpu_profiler: &'a mut GpuProfiler,
 }
 
 struct RenderTextureSlot {
@@ -212,6 +214,7 @@ impl<'a> RenderGraphCompiler<'a> {
         target_texture: &RenderTexture,
     ) -> Vec<CompiledPass> {
         puffin::profile_scope!("compile render graph");
+        self.gpu_profiler.begin_scope("compile", self.encoder, self.device);
         let mut usages = vec![
             Usage {
                 size: Size2D::new(0, 0),
@@ -348,12 +351,14 @@ impl<'a> RenderGraphCompiler<'a> {
         //     .map(|s| s.unwrap_or_else(|| Size2D::new(0, 0)))
         //     .collect::<Vec<_>>();
 
+        let mut passes = vec![];
         {
             puffin::profile_scope!("build");
-            let mut passes = vec![];
             self.build(&render_graph.nodes, &usages, &mut passes, &source, target_texture);
-            passes
         }
+
+        self.gpu_profiler.end_scope(self.encoder);
+        passes
     }
 
     fn pixel_to_uv_rect(pixel_rect: &CanvasRect, texture_size: &Size2D<u32>) -> UVRect {
@@ -647,11 +652,13 @@ impl<'a> RenderGraphCompiler<'a> {
                                 bind_group,
                             } => {
                                 puffin::profile_scope!("op:blit");
-                                render_pass.set_pipeline(&pipeline.pipeline);
-                                render_pass.set_bind_group(0, bind_group, &[]);
-                                render_pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);
-                                render_pass.set_vertex_buffer(0, vbo.as_slice());
-                                render_pass.draw_indexed(0..6, 0, 0..1);
+                                wgpu_profiler!("op:blit", self.gpu_profiler, &mut render_pass, &self.device, {
+                                    render_pass.set_pipeline(&pipeline.pipeline);
+                                    render_pass.set_bind_group(0, bind_group, &[]);
+                                    render_pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);
+                                    render_pass.set_vertex_buffer(0, vbo.as_slice());
+                                    render_pass.draw_indexed(0..6, 0, 0..1);
+                                });
                             }
                             CompiledRenderingPrimitive::Render {
                                 vbo,
@@ -660,11 +667,13 @@ impl<'a> RenderGraphCompiler<'a> {
                                 bind_group,
                             } => {
                                 puffin::profile_scope!("op:render");
-                                render_pass.set_pipeline(&pipeline.pipeline);
-                                render_pass.set_bind_group(0, bind_group, &[]);
-                                render_pass.set_index_buffer(ibo.as_slice(), wgpu::IndexFormat::Uint32);
-                                render_pass.set_vertex_buffer(0, vbo.as_slice());
-                                render_pass.draw_indexed(0..6, 0, 0..1);
+                                wgpu_profiler!("op:render", self.gpu_profiler, &mut render_pass, &self.device, {
+                                    render_pass.set_pipeline(&pipeline.pipeline);
+                                    render_pass.set_bind_group(0, bind_group, &[]);
+                                    render_pass.set_index_buffer(ibo.as_slice(), wgpu::IndexFormat::Uint32);
+                                    render_pass.set_vertex_buffer(0, vbo.as_slice());
+                                    render_pass.draw_indexed(0..6, 0, 0..1);
+                                });
                             }
                         }
                     }
@@ -686,28 +695,30 @@ impl<'a> RenderGraphCompiler<'a> {
                                 pipeline,
                                 bind_groups,
                             } => {
-                                assert!(target.mip_level_count() > 1);
-                                // assert!((texture.descriptor.size.width & (texture.descriptor.size.width - 1)) == 0, "Texture width must be a power of two. Found {}", texture.descriptor.size.width);
-                                // assert!((texture.descriptor.size.height & (texture.descriptor.size.height - 1)) == 0, "Texture height must be a power of two. Found {}", texture.descriptor.size.height);
+                                wgpu_profiler!("op:generate_mipmaps", self.gpu_profiler, &mut cpass, &self.device, {
+                                    assert!(target.mip_level_count() > 1);
+                                    // assert!((texture.descriptor.size.width & (texture.descriptor.size.width - 1)) == 0, "Texture width must be a power of two. Found {}", texture.descriptor.size.width);
+                                    // assert!((texture.descriptor.size.height & (texture.descriptor.size.height - 1)) == 0, "Texture height must be a power of two. Found {}", texture.descriptor.size.height);
 
-                                let mut width = target.size().width;
-                                let mut height = target.size().height;
+                                    let mut width = target.size().width;
+                                    let mut height = target.size().height;
 
-                                cpass.set_pipeline(pipeline);
+                                    cpass.set_pipeline(pipeline);
 
-                                for bind_group in bind_groups {
-                                    width = (width / 2).max(1);
-                                    height = (height / 2).max(1);
-                                    let local_size: u32 = 8;
-                                    {
-                                        cpass.set_bind_group(0, bind_group, &[]);
-                                        cpass.dispatch(
-                                            (width + local_size - 1) / local_size,
-                                            (height + local_size - 1) / local_size,
-                                            1,
-                                        );
+                                    for bind_group in bind_groups {
+                                        width = (width / 2).max(1);
+                                        height = (height / 2).max(1);
+                                        let local_size: u32 = 8;
+                                        wgpu_profiler!("op:dispatch", self.gpu_profiler, &mut cpass, &self.device, {
+                                            cpass.set_bind_group(0, bind_group, &[]);
+                                            cpass.dispatch(
+                                                (width + local_size - 1) / local_size,
+                                                (height + local_size - 1) / local_size,
+                                                1,
+                                            );
+                                        });
                                     }
-                                }
+                                });
                             }
                         }
                     }

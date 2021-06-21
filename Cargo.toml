@@ -28,7 +28,8 @@ image = "0.23"
 kurbo = "0.8"
 async-std = "1.6"
 arrayvec = "0.7"
-wgpu_glyph = "0.12"
+# wgpu_glyph = "0.12"
+wgpu-profiler = "0.4"
 cpuprofiler = { version = "0.0.4", optional = true }
 cgmath = "0.18"
 lazy-init = "0.5"
@@ -49,6 +50,8 @@ shaderc = "0.7"
 
 [patch.crates-io]
 profiling = { path = "../profiling" }
+wgpu-profiler = { path = "../wgpu-profiler" }
+
 # gfx-hal = { path = "../gfx/src/hal"}
 # gfx-backend-vulkan = { path = "../gfx/src/backend/vulkan"}
 # gfx-backend-empty = { path = "../gfx/src/backend/empty"}

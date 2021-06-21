@@ -13,19 +13,7 @@ use std::num::NonZeroU64;
 use wgpu::Extent3d;
 
 use wgpu::TextureView;
-use wgpu_glyph::{ab_glyph::FontArc, GlyphBrushBuilder};
-
-use std::iter::ExactSizeIterator;
-use std::rc::Rc;
-use std::time::Instant;
-use wgpu::{
-    util::StagingBelt, BindGroup, Buffer, CommandEncoder, CommandEncoderDescriptor, Device, RenderPipeline,
-    TextureDescriptor,
-};
-use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
-use winit::event_loop::{ControlFlow, EventLoop};
-use winit::window::Window;
+// use wgpu_glyph::{ab_glyph::FontArc, GlyphBrushBuilder};
 
 use crate::blitter::BlitOp;
 use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex};
@@ -48,6 +36,18 @@ use crate::input::{InputManager, KeyCombination};
 use crate::path::*;
 use crate::path_collection::{PathCollection, VertexReference};
 use crate::path_editor::*;
+use std::iter::ExactSizeIterator;
+use std::rc::Rc;
+use std::time::Instant;
+use wgpu::{
+    util::StagingBelt, BindGroup, Buffer, CommandEncoder, CommandEncoderDescriptor, Device, RenderPipeline,
+    TextureDescriptor,
+};
+use wgpu_profiler::{wgpu_profiler, GpuProfiler, GpuTimerScopeResult};
+use winit::dpi::PhysicalSize;
+use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::Window;
 
 use crate::brush_editor::{BrushData, BrushEditor};
 use crate::toolbar::GUIRoot;
@@ -1093,7 +1093,9 @@ pub fn main() {
     let (device, queue) = task::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: None,
-            features: wgpu::Features::NON_FILL_POLYGON_MODE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+            features: wgpu::Features::NON_FILL_POLYGON_MODE
+                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                | wgpu::Features::TIMESTAMP_QUERY,
             limits: wgpu::Limits::default(),
         },
         None,
@@ -1382,7 +1384,7 @@ pub fn main() {
     let mipmapper = crate::mipmap::Mipmapper::new(&device);
 
     let font: Vec<u8> = std::fs::read("fonts/Bitter-Regular.ttf").expect("Could not find font");
-    let font = FontArc::try_from_vec(font).unwrap();
+    // let font = FontArc::try_from_vec(font).unwrap();
     // let glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, crate::config::TEXTURE_FORMAT);
 
     let document_extent = wgpu::Extent3d {
@@ -1428,244 +1430,185 @@ pub fn main() {
     let mut render_texture_cache = RenderTextureCache::default();
     let mut material_cache = MaterialCache::default();
 
+    let mut gpu_profiler = GpuProfiler::new(4, queue.get_timestamp_period());
+
     event_loop.run(move |event, _, control_flow| {
-        let scene = &mut editor.scene;
         {
-            puffin::profile_scope!("event handling");
-            egui_wrapper.platform.handle_event(&event);
+            let scene = &mut editor.scene;
+            {
+                puffin::profile_scope!("event handling");
+                egui_wrapper.platform.handle_event(&event);
 
-            let new_time = Instant::now();
-            let dt = (new_time.duration_since(last_time)).as_secs_f32();
-            last_time = new_time;
+                let new_time = Instant::now();
+                let dt = (new_time.duration_since(last_time)).as_secs_f32();
+                last_time = new_time;
 
-            if update_inputs(event, control_flow, &mut editor.input, scene, dt) {
-                // keep polling inputs.
+                if update_inputs(event, control_flow, &mut editor.input, scene, dt) {
+                    // keep polling inputs.
+                    return;
+                }
+            }
+
+            puffin::profile_scope!("event loop");
+
+            egui_wrapper.platform.update_time(start_time.elapsed().as_secs_f64());
+
+            editor.gui.update();
+            editor.gui.input(&mut editor.ui_document, &mut editor.input);
+            editor.gui.render(&mut editor.ui_document, &scene.view);
+            // editor.toolbar.update_ui(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
+            editor.path_editor.update(
+                &mut editor.ui_document,
+                &mut editor.document,
+                &scene.view,
+                &mut editor.input,
+                &editor.gui_root.get(&editor.gui).tool,
+            );
+            editor.brush_editor.update(
+                &mut editor.ui_document,
+                &mut editor.document,
+                &scene.view,
+                &mut editor.input,
+                &editor.gui_root.get(&editor.gui).tool,
+            );
+
+            if editor.input.on_combination(
+                &KeyCombination::new()
+                    .and(VirtualKeyCode::LControl)
+                    .and(VirtualKeyCode::W),
+            ) {
+                // Quit
+                *control_flow = ControlFlow::Exit;
+
+                #[cfg(feature = "profile")]
+                PROFILER.lock().unwrap().stop().expect("Couldn't stop");
                 return;
             }
-        }
 
-        puffin::profile_scope!("event loop");
+            // println!("Path editor = {:?}", t0.elapsed());
 
-        egui_wrapper.platform.update_time(start_time.elapsed().as_secs_f64());
-
-        editor.gui.update();
-        editor.gui.input(&mut editor.ui_document, &mut editor.input);
-        editor.gui.render(&mut editor.ui_document, &scene.view);
-        // editor.toolbar.update_ui(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
-        editor.path_editor.update(
-            &mut editor.ui_document,
-            &mut editor.document,
-            &scene.view,
-            &mut editor.input,
-            &editor.gui_root.get(&editor.gui).tool,
-        );
-        editor.brush_editor.update(
-            &mut editor.ui_document,
-            &mut editor.document,
-            &scene.view,
-            &mut editor.input,
-            &editor.gui_root.get(&editor.gui).tool,
-        );
-
-        if editor.input.on_combination(
-            &KeyCombination::new()
-                .and(VirtualKeyCode::LControl)
-                .and(VirtualKeyCode::W),
-        ) {
-            // Quit
-            *control_flow = ControlFlow::Exit;
-
-            #[cfg(feature = "profile")]
-            PROFILER.lock().unwrap().stop().expect("Couldn't stop");
-            return;
-        }
-
-        // println!("Path editor = {:?}", t0.elapsed());
-
-        if scene.size_changed {
-            let physical = scene.view.resolution;
-            swap_chain_desc.width = physical.width;
-            swap_chain_desc.height = physical.height;
-        }
-
-        let window_extent = wgpu::Extent3d {
-            width: swap_chain_desc.width,
-            height: swap_chain_desc.height,
-            depth_or_array_layers: 1,
-        };
-
-        if scene.size_changed {
-            puffin::profile_scope!("rebuild swapchain");
-            println!("Rebuilding swap chain");
-            scene.size_changed = false;
-            swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
-            depth_texture = Some(Rc::new(Texture::new(
-                &device,
-                TextureDescriptor {
-                    label: Some("Framebuffer depth"),
-                    size: window_extent,
-                    // array_layer_count: 1,
-                    mip_level_count: 1,
-                    sample_count,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Depth32Float,
-                    usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
-                },
-            )));
-
-            multisampled_render_target = if sample_count > 1 {
-                Some(Rc::new(create_multisampled_framebuffer(
-                    &device,
-                    &window_extent,
-                    sample_count,
-                    swap_chain_desc.format,
-                )))
-            } else {
-                None
-            };
-        }
-
-        let swapchain_output = {
-            puffin::profile_scope!("aquire swapchain");
-            swap_chain.get_current_frame().unwrap()
-        };
-        let frame = RenderTexture::from(SwapchainImageWrapper::from_swapchain_image(
-            swapchain_output,
-            &swap_chain_desc,
-        ));
-        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("Frame encoder"),
-        });
-
-        let doc_size = editor.document.size.unwrap();
-        let dummy_view = CanvasView {
-            zoom: 1.0,
-            scroll: vector(0.0, 0.0),
-            resolution: PhysicalSize::new(doc_size.width, doc_size.height),
-        };
-
-        scene.update_uniform_globals(&device, &mut encoder, &mut staging_belt, &globals_ubo.buffer);
-        update_buffer_via_transfer(
-            &device,
-            &mut encoder,
-            &mut staging_belt,
-            &[Globals {
-                resolution: [doc_size.width as f32, doc_size.height as f32],
-                zoom: 1.0,
-                scroll_offset: [0.0, 0.0],
-            }],
-            &canvas_globals_ubo.buffer,
-        );
-
-        let hash = editor.document.hash() ^ scene.view.hash();
-        if hash != last_hash1 || document_renderer1.is_none() {
-            last_hash1 = hash;
-            document_renderer1 = Some(DocumentRenderer::new(
-                &editor.document,
-                &dummy_view,
-                &device,
-                &mut encoder,
-                &mut staging_belt,
-                &bind_group_layout,
-                scene.show_wireframe,
-                &render_pipeline,
-                &wireframe_render_pipeline,
-                &brush_manager,
-            ));
-        }
-
-        let ui_view = CanvasView {
-            zoom: 1.0,
-            scroll: vector(0.0, 0.0),
-            resolution: scene.view.resolution,
-        };
-        let hash = editor.ui_document.hash() ^ ui_view.hash();
-        let bypass_hash_check = true;
-        if hash != last_hash2 || document_renderer2.is_none() || bypass_hash_check {
-            last_hash2 = hash;
-            document_renderer2 = Some(DocumentRenderer::new(
-                &editor.ui_document,
-                &ui_view,
-                &device,
-                &mut encoder,
-                &mut staging_belt,
-                &bind_group_layout,
-                scene.show_wireframe,
-                &render_pipeline,
-                &wireframe_render_pipeline,
-                &brush_manager,
-            ));
-        }
-
-        // {
-        let msaa_render_target = RenderTexture::from(multisampled_render_target.as_ref().unwrap().clone());
-        let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
-        let mut hl_encoder = Encoder {
-            device: &device,
-            encoder: &mut encoder,
-            multisampled_render_target: Some(msaa_render_target.default_view()),
-            target_texture: frame.default_view(),
-            depth_texture_view: depth_target.default_view(),
-            blitter: &blitter,
-            resolution: document_extent,
-            scratch_texture: scratch_texture.clone(),
-        };
-
-        render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
-
-        document_renderer1
-            .as_mut()
-            .unwrap()
-            .update(&dummy_view, &device, &mut encoder, &mut staging_belt);
-        document_renderer2
-            .as_mut()
-            .unwrap()
-            .update(&ui_view, &device, &mut encoder, &mut staging_belt);
-
-        {
-            {
-                let msaa_render_target =
-                    RenderTexture::from(multisampled_render_target_document.as_ref().unwrap().clone());
-                let render_target = RenderTexture::from(temp_document_frame.clone());
-                let depth_target = RenderTexture::from(depth_texture_document.as_ref().unwrap().clone());
-                let mut hl_encoder = Encoder {
-                    device: &device,
-                    encoder: &mut encoder,
-                    multisampled_render_target: Some(msaa_render_target.default_view()),
-                    target_texture: render_target.get_mip_level_view(0).unwrap(),
-                    depth_texture_view: depth_target.default_view(),
-                    blitter: &blitter,
-                    resolution: document_extent,
-                    scratch_texture: scratch_texture.clone(),
-                };
-                // render_main_view(&scene);
-
-                if scene.draw_background {
-                    render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
-                } else {
-                    hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background clear pass"));
-                }
-
-                document_renderer1
-                    .as_ref()
-                    .unwrap()
-                    .render(&mut hl_encoder, &dummy_view);
+            if scene.size_changed {
+                let physical = scene.view.resolution;
+                swap_chain_desc.width = physical.width;
+                swap_chain_desc.height = physical.height;
             }
 
-            blitter.rgb_to_srgb(
+            let window_extent = wgpu::Extent3d {
+                width: swap_chain_desc.width,
+                height: swap_chain_desc.height,
+                depth_or_array_layers: 1,
+            };
+
+            if scene.size_changed {
+                puffin::profile_scope!("rebuild swapchain");
+                println!("Rebuilding swap chain");
+                scene.size_changed = false;
+                swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
+                depth_texture = Some(Rc::new(Texture::new(
+                    &device,
+                    TextureDescriptor {
+                        label: Some("Framebuffer depth"),
+                        size: window_extent,
+                        // array_layer_count: 1,
+                        mip_level_count: 1,
+                        sample_count,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Depth32Float,
+                        usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+                    },
+                )));
+
+                multisampled_render_target = if sample_count > 1 {
+                    Some(Rc::new(create_multisampled_framebuffer(
+                        &device,
+                        &window_extent,
+                        sample_count,
+                        swap_chain_desc.format,
+                    )))
+                } else {
+                    None
+                };
+            }
+
+            let swapchain_output = {
+                puffin::profile_scope!("aquire swapchain");
+                swap_chain.get_current_frame().unwrap()
+            };
+            let frame = RenderTexture::from(SwapchainImageWrapper::from_swapchain_image(
+                swapchain_output,
+                &swap_chain_desc,
+            ));
+            let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("Frame encoder"),
+            });
+
+            let doc_size = editor.document.size.unwrap();
+            let dummy_view = CanvasView {
+                zoom: 1.0,
+                scroll: vector(0.0, 0.0),
+                resolution: PhysicalSize::new(doc_size.width, doc_size.height),
+            };
+
+            scene.update_uniform_globals(&device, &mut encoder, &mut staging_belt, &globals_ubo.buffer);
+            update_buffer_via_transfer(
                 &device,
                 &mut encoder,
-                &temp_document_frame.view,
-                (document_extent.width, document_extent.height),
+                &mut staging_belt,
+                &[Globals {
+                    resolution: [doc_size.width as f32, doc_size.height as f32],
+                    zoom: 1.0,
+                    scroll_offset: [0.0, 0.0],
+                }],
+                &canvas_globals_ubo.buffer,
             );
-            mipmapper.generate_mipmaps(&device, &mut encoder, &temp_document_frame);
 
-            let msaa_render_target = multisampled_render_target.clone().map(RenderTexture::from);
+            let hash = editor.document.hash() ^ scene.view.hash();
+            if hash != last_hash1 || document_renderer1.is_none() {
+                last_hash1 = hash;
+                document_renderer1 = Some(DocumentRenderer::new(
+                    &editor.document,
+                    &dummy_view,
+                    &device,
+                    &mut encoder,
+                    &mut staging_belt,
+                    &bind_group_layout,
+                    scene.show_wireframe,
+                    &render_pipeline,
+                    &wireframe_render_pipeline,
+                    &brush_manager,
+                ));
+            }
+
+            let ui_view = CanvasView {
+                zoom: 1.0,
+                scroll: vector(0.0, 0.0),
+                resolution: scene.view.resolution,
+            };
+            let hash = editor.ui_document.hash() ^ ui_view.hash();
+            let bypass_hash_check = true;
+            if hash != last_hash2 || document_renderer2.is_none() || bypass_hash_check {
+                last_hash2 = hash;
+                document_renderer2 = Some(DocumentRenderer::new(
+                    &editor.ui_document,
+                    &ui_view,
+                    &device,
+                    &mut encoder,
+                    &mut staging_belt,
+                    &bind_group_layout,
+                    scene.show_wireframe,
+                    &render_pipeline,
+                    &wireframe_render_pipeline,
+                    &brush_manager,
+                ));
+            }
+
+            // {
+            let msaa_render_target = RenderTexture::from(multisampled_render_target.as_ref().unwrap().clone());
             let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
             let mut hl_encoder = Encoder {
                 device: &device,
                 encoder: &mut encoder,
-                multisampled_render_target: msaa_render_target.as_ref().map(RenderTexture::default_view),
+                multisampled_render_target: Some(msaa_render_target.default_view()),
                 target_texture: frame.default_view(),
                 depth_texture_view: depth_target.default_view(),
                 blitter: &blitter,
@@ -1673,167 +1616,253 @@ pub fn main() {
                 scratch_texture: scratch_texture.clone(),
             };
 
-            let blitop = blit_document_to_window(
-                &mut hl_encoder,
-                scene,
-                doc_size,
-                window_extent,
-                &temp_document_frame.view,
-                msaa_render_target.as_ref().unwrap_or(&frame),
-            );
+            render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
 
-            // {
-            //     // Clear pass
-            //     let mut pass = hl_encoder.begin_msaa_render_pass(
-            //         Some(wgpu::Color {
-            //             r: 120.0 / 255.0,
-            //             g: 41.0 / 255.0,
-            //             b: 41.0 / 255.0,
-            //             a: 1.0,
-            //         }),
-            //         Some("clear pass"),
-            //     );
+            document_renderer1
+                .as_mut()
+                .unwrap()
+                .update(&dummy_view, &device, &mut encoder, &mut staging_belt);
+            document_renderer2
+                .as_mut()
+                .unwrap()
+                .update(&ui_view, &device, &mut encoder, &mut staging_belt);
 
-            //     blitop.render(&mut pass);
-            // }
+            {
+                {
+                    let msaa_render_target =
+                        RenderTexture::from(multisampled_render_target_document.as_ref().unwrap().clone());
+                    let render_target = RenderTexture::from(temp_document_frame.clone());
+                    let depth_target = RenderTexture::from(depth_texture_document.as_ref().unwrap().clone());
+                    let mut hl_encoder = Encoder {
+                        device: &device,
+                        encoder: &mut encoder,
+                        multisampled_render_target: Some(msaa_render_target.default_view()),
+                        target_texture: render_target.get_mip_level_view(0).unwrap(),
+                        depth_texture_view: depth_target.default_view(),
+                        blitter: &blitter,
+                        resolution: document_extent,
+                        scratch_texture: scratch_texture.clone(),
+                    };
+                    // render_main_view(&scene);
 
-            // document_renderer2
-            //     .as_ref()
-            //     .unwrap()
-            //     .render(&mut hl_encoder, &scene.view);
+                    if scene.draw_background {
+                        render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
+                    } else {
+                        hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background clear pass"));
+                    }
 
-            ephermal_buffer_cache.reset();
-
-            let canvas_in_screen_space =
-                scene
-                    .view
-                    .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
-            let canvas_in_screen_uv_space =
-                canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
-
-            let mut render_graph = crate::render_graph::RenderGraph::default();
-            let mut t = render_graph.clear(Size2D::new(frame.size().width, frame.size().height), wgpu::Color::GREEN);
-            let mut canvas = render_graph.clear(doc_size.to_untyped(), wgpu::Color::BLUE);
-            canvas = render_graph.quad(
-                canvas,
-                CanvasRect::from_size(doc_size.cast()),
-                bg_pipeline_base.clone(),
-                bg_material_base.clone(),
-            );
-            canvas = render_graph.generate_mipmaps(canvas);
-
-            t = render_graph.quad(
-                t,
-                CanvasRect::from_size(Size2D::new(frame.size().width as f32, frame.size().height as f32)),
-                bg_pipeline_base.clone(),
-                screen_bg_material_base.clone(),
-            );
-
-            t = render_graph.blit(
-                canvas,
-                t,
-                CanvasRect::from_size(doc_size.cast()),
-                canvas_in_screen_space.cast_unit(),
-            );
-            let mut render_graph_compiler = crate::render_graph::RenderGraphCompiler {
-                device: &device,
-                encoder: &mut encoder,
-                blitter: &blitter,
-                render_pipeline_cache: &mut render_pipeline_cache,
-                ephermal_buffer_cache: &mut ephermal_buffer_cache,
-                render_texture_cache: &mut render_texture_cache,
-                material_cache: &mut material_cache,
-                staging_belt: &mut staging_belt,
-                mipmapper: &mipmapper,
-            };
-            let passes = render_graph_compiler.compile(&render_graph, t, &frame);
-            render_graph_compiler.render(&passes);
-
-            // // // blur.render(&mut hl_encoder);
-
-            // let section = Section {
-            //     screen_position: (10.0, 10.0),
-            //     text: vec![Text::new("Hello wgpu_gfilyphåäöЎaњ").with_scale(36.0)],
-            //     ..Section::default() // color, position, etc
-            // };
-
-            // glyph_brush.queue(section);
-
-            // glyph_brush
-            //     .draw_queued(
-            //         &device,
-            //         &mut staging_belt,
-            //         &mut encoder,
-            //         frame.default_view().view,
-            //         window_extent.width,
-            //         window_extent.height,
-            //     )
-            //     .unwrap();
-        }
-
-        // blitter.blit(
-        //     &device,
-        //     &mut encoder,
-        //     &temp_window_frame_view,
-        //     frame.default_view(),
-        //     rect(0.0, 0.0, 1.0, 1.0),
-        //     rect(0.0, 0.0, 1.0, 1.0),
-        //     1,
-        // );
-
-        staging_belt.finish();
-
-        // Upload all resources for the GPU.
-        let screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
-            physical_width: window_extent.width,
-            physical_height: window_extent.height,
-            scale_factor: window.scale_factor() as f32,
-        };
-
-        let paint_jobs = egui_wrapper.frame(|ctx| {
-            egui::SidePanel::left("side", 300.0).show(&ctx, |ui| {
-                ui.label("Hello");
-                if ui.button("Hello").clicked() {
-                    ui.label("BLAH!");
+                    document_renderer1
+                        .as_ref()
+                        .unwrap()
+                        .render(&mut hl_encoder, &dummy_view);
                 }
+
+                blitter.rgb_to_srgb(
+                    &device,
+                    &mut encoder,
+                    &temp_document_frame.view,
+                    (document_extent.width, document_extent.height),
+                );
+                mipmapper.generate_mipmaps(&device, &mut encoder, &temp_document_frame);
+
+                let msaa_render_target = multisampled_render_target.clone().map(RenderTexture::from);
+                let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
+                let mut hl_encoder = Encoder {
+                    device: &device,
+                    encoder: &mut encoder,
+                    multisampled_render_target: msaa_render_target.as_ref().map(RenderTexture::default_view),
+                    target_texture: frame.default_view(),
+                    depth_texture_view: depth_target.default_view(),
+                    blitter: &blitter,
+                    resolution: document_extent,
+                    scratch_texture: scratch_texture.clone(),
+                };
+
+                let blitop = blit_document_to_window(
+                    &mut hl_encoder,
+                    scene,
+                    doc_size,
+                    window_extent,
+                    &temp_document_frame.view,
+                    msaa_render_target.as_ref().unwrap_or(&frame),
+                );
+
+                // {
+                //     // Clear pass
+                //     let mut pass = hl_encoder.begin_msaa_render_pass(
+                //         Some(wgpu::Color {
+                //             r: 120.0 / 255.0,
+                //             g: 41.0 / 255.0,
+                //             b: 41.0 / 255.0,
+                //             a: 1.0,
+                //         }),
+                //         Some("clear pass"),
+                //     );
+
+                //     blitop.render(&mut pass);
+                // }
+
+                // document_renderer2
+                //     .as_ref()
+                //     .unwrap()
+                //     .render(&mut hl_encoder, &scene.view);
+
+                ephermal_buffer_cache.reset();
+
+                let canvas_in_screen_space =
+                    scene
+                        .view
+                        .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
+                let canvas_in_screen_uv_space =
+                    canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
+
+                wgpu_profiler!("rendering", &mut gpu_profiler, &mut encoder, &device, {
+                    let mut render_graph = crate::render_graph::RenderGraph::default();
+                    let mut t =
+                        render_graph.clear(Size2D::new(frame.size().width, frame.size().height), wgpu::Color::GREEN);
+                    let mut canvas = render_graph.clear(doc_size.to_untyped(), wgpu::Color::BLUE);
+                    canvas = render_graph.quad(
+                        canvas,
+                        CanvasRect::from_size(doc_size.cast()),
+                        bg_pipeline_base.clone(),
+                        bg_material_base.clone(),
+                    );
+                    canvas = render_graph.generate_mipmaps(canvas);
+
+                    t = render_graph.quad(
+                        t,
+                        CanvasRect::from_size(Size2D::new(frame.size().width as f32, frame.size().height as f32)),
+                        bg_pipeline_base.clone(),
+                        screen_bg_material_base.clone(),
+                    );
+
+                    t = render_graph.blit(
+                        canvas,
+                        t,
+                        CanvasRect::from_size(doc_size.cast()),
+                        canvas_in_screen_space.cast_unit(),
+                    );
+                    let mut render_graph_compiler = crate::render_graph::RenderGraphCompiler {
+                        device: &device,
+                        encoder: &mut encoder,
+                        blitter: &blitter,
+                        render_pipeline_cache: &mut render_pipeline_cache,
+                        ephermal_buffer_cache: &mut ephermal_buffer_cache,
+                        render_texture_cache: &mut render_texture_cache,
+                        material_cache: &mut material_cache,
+                        staging_belt: &mut staging_belt,
+                        mipmapper: &mipmapper,
+                        gpu_profiler: &mut gpu_profiler,
+                    };
+                    let passes = render_graph_compiler.compile(&render_graph, t, &frame);
+
+                    render_graph_compiler.render(&passes);
+                });
+
+                // // // blur.render(&mut hl_encoder);
+
+                // let section = Section {
+                //     screen_position: (10.0, 10.0),
+                //     text: vec![Text::new("Hello wgpu_gfilyphåäöЎaњ").with_scale(36.0)],
+                //     ..Section::default() // color, position, etc
+                // };
+
+                // glyph_brush.queue(section);
+
+                // glyph_brush
+                //     .draw_queued(
+                //         &device,
+                //         &mut staging_belt,
+                //         &mut encoder,
+                //         frame.default_view().view,
+                //         window_extent.width,
+                //         window_extent.height,
+                //     )
+                //     .unwrap();
+            }
+
+            // blitter.blit(
+            //     &device,
+            //     &mut encoder,
+            //     &temp_window_frame_view,
+            //     frame.default_view(),
+            //     rect(0.0, 0.0, 1.0, 1.0),
+            //     rect(0.0, 0.0, 1.0, 1.0),
+            //     1,
+            // );
+
+            staging_belt.finish();
+
+            // Upload all resources for the GPU.
+            let screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
+                physical_width: window_extent.width,
+                physical_height: window_extent.height,
+                scale_factor: window.scale_factor() as f32,
+            };
+
+            let paint_jobs = egui_wrapper.frame(|ctx| {
+                egui::SidePanel::left("side", 300.0).show(&ctx, |ui| {
+                    ui.label("Hello");
+                    if ui.button("Hello").clicked() {
+                        ui.label("BLAH!");
+                    }
+                });
+
+                puffin_egui::profiler_window(&ctx);
             });
 
-            puffin_egui::profiler_window(&ctx);
-        });
+            wgpu_profiler!("egui", &mut gpu_profiler, &mut encoder, &device, {
+                egui_wrapper.render(
+                    &paint_jobs,
+                    &device,
+                    frame.default_view().view,
+                    &queue,
+                    &mut encoder,
+                    &screen_descriptor,
+                );
+            });
 
-        egui_wrapper.render(
-            &paint_jobs,
-            &device,
-            frame.default_view().view,
-            &queue,
-            &mut encoder,
-            &screen_descriptor,
-        );
+            let queue_submit_ns = puffin::now_ns();
 
-        {
-            puffin::profile_scope!("queue.submit");
-            queue.submit(std::iter::once(encoder.finish()));
-        }
-        let (sender, mut receiver) = futures::channel::oneshot::channel();
-        let recall = staging_belt.recall();
-        task::spawn(async move {
-            recall.await;
-            let _ = sender.send(());
-        });
-
-        // dbg!(t3.elapsed());
-
-        frame_count += 1.0;
-        editor.input.tick_frame();
-        // println!("Preparing GPU work = {:?}", t1.elapsed());
-        fps_limiter.wait(std::time::Duration::from_secs_f32(1.0 / 60.0));
-        {
-            puffin::profile_scope!("wait for device");
-            while receiver.try_recv().is_err() {
-                device.poll(wgpu::Maintain::Wait);
+            {
+                puffin::profile_scope!("resolve gpu profiler queries");
+                // Resolves any queries that might be in flight.
+                gpu_profiler.resolve_queries(&mut encoder);
             }
-        }
 
+            {
+                puffin::profile_scope!("queue.submit");
+                queue.submit(std::iter::once(encoder.finish()));
+            }
+
+            // Signal to the profiler that the frame is finished.
+            gpu_profiler.end_frame().unwrap();
+
+            let (sender, mut receiver) = futures::channel::oneshot::channel();
+            let recall = staging_belt.recall();
+            task::spawn(async move {
+                recall.await;
+                let _ = sender.send(());
+            });
+
+            // dbg!(t3.elapsed());
+
+            frame_count += 1.0;
+            editor.input.tick_frame();
+            // println!("Preparing GPU work = {:?}", t1.elapsed());
+            fps_limiter.wait(std::time::Duration::from_secs_f32(1.0 / 60.0));
+            {
+                puffin::profile_scope!("wait for device");
+                while receiver.try_recv().is_err() {
+                    device.poll(wgpu::Maintain::Wait);
+                }
+            }
+
+            crate::gpu_profiler::process_finished_frame(&mut gpu_profiler, queue_submit_ns);
+
+            // Make sure we drop the profiling scope before we finish the frame.
+            // Otherwise the profiling data will show up in the next frame.
+        }
         profiling::finish_frame!();
     });
 }
