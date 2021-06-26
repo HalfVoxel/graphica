@@ -88,10 +88,17 @@ impl RenderTexture {
     pub fn get_mip_level_view(&self, miplevel: u32) -> Result<RenderTextureView, &str> {
         match self {
             RenderTexture::Texture(tex) => Ok(RenderTextureView::new(self, tex.get_mip_level_view(miplevel))),
-            RenderTexture::SwapchainImage(_tex) => Err("Cannot get mip levels from a swapchain image"),
+            RenderTexture::SwapchainImage(tex) => {
+                if miplevel == 0 {
+                    Ok(RenderTextureView::new(self, &tex.image.output.view))
+                } else {
+                    Err("Cannot get mip levels other than level 0 from a swapchain image")
+                }
+            }
         }
     }
 
+    /// View which includes all mip levels
     pub fn default_view(&self) -> RenderTextureView {
         match self {
             RenderTexture::Texture(tex) => RenderTextureView::new(self, &tex.view),

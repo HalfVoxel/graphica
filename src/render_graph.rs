@@ -682,7 +682,7 @@ impl<'a> RenderGraphCompiler<'a> {
             match pass {
                 CompiledPass::RenderPass { target, clear, ops } => {
                     let color_attachment = wgpu::RenderPassColorAttachment {
-                        view: target.default_view().view,
+                        view: target.get_mip_level_view(0).unwrap().view,
                         ops: wgpu::Operations {
                             load: clear.unwrap_or(LoadOp::Load),
                             store: true,
