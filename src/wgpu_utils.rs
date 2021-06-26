@@ -69,3 +69,26 @@ pub fn update_buffer_via_transfer<T>(
             .copy_from_slice(data);
     }
 }
+
+pub fn update_buffer_range_via_transfer<T>(
+    device: &Device,
+    encoder: &mut CommandEncoder,
+    staging_belt: &mut StagingBelt,
+    v: &[T],
+    target_buffer: &BufferRange,
+) {
+    puffin::profile_function!();
+    if !v.is_empty() {
+        let data = as_u8_slice(v);
+        assert!(target_buffer.size() >= data.len() as u64, "Buffer is not large enough");
+        staging_belt
+            .write_buffer(
+                encoder,
+                &target_buffer.buffer,
+                target_buffer.range.start,
+                BufferSize::new(data.len() as u64).expect("buffer was empty"),
+                device,
+            )
+            .copy_from_slice(data);
+    }
+}

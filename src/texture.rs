@@ -1,7 +1,7 @@
 use by_address::ByAddress;
 use euclid::rect;
 use lazy_init::Lazy;
-use std::{num::NonZeroU32, rc::Rc};
+use std::{num::NonZeroU32, rc::Rc, sync::Arc};
 use wgpu::{util::DeviceExt, CommandEncoder, Device, Extent3d, TextureFormat, TextureUsage, TextureView};
 
 pub struct Texture {
@@ -38,8 +38,8 @@ impl std::fmt::Debug for SwapchainImageWrapper {
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub enum RenderTexture {
-    Texture(ByAddress<Rc<Texture>>),
-    SwapchainImage(ByAddress<Rc<SwapchainImageWrapper>>),
+    Texture(ByAddress<Arc<Texture>>),
+    SwapchainImage(ByAddress<Arc<SwapchainImageWrapper>>),
 }
 
 impl std::fmt::Debug for RenderTexture {
@@ -72,15 +72,15 @@ impl SwapchainImageWrapper {
     }
 }
 
-impl From<Rc<Texture>> for RenderTexture {
-    fn from(tex: Rc<Texture>) -> RenderTexture {
+impl From<Arc<Texture>> for RenderTexture {
+    fn from(tex: Arc<Texture>) -> RenderTexture {
         RenderTexture::Texture(tex.into())
     }
 }
 
 impl From<SwapchainImageWrapper> for RenderTexture {
     fn from(tex: SwapchainImageWrapper) -> RenderTexture {
-        RenderTexture::SwapchainImage(Rc::new(tex).into())
+        RenderTexture::SwapchainImage(Arc::new(tex).into())
     }
 }
 

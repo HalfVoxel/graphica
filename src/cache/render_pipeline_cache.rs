@@ -53,6 +53,7 @@ pub struct CachedRenderPipelineImpl {
     pub pipeline: RenderPipeline,
 }
 
+#[derive(Clone)]
 pub struct RenderPipelineBase {
     pub label: String,
     pub layout: Arc<PipelineLayout>,

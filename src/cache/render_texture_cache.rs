@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use euclid::default::Size2D;
 use wgpu::{Device, Extent3d, TextureFormat, TextureUsage};
@@ -63,7 +63,7 @@ impl RenderTextureCache {
                 wgpu::TextureDescriptor {
                     label: Some("Temp texture"),
                     size: extent,
-                    mip_level_count: crate::mipmap::max_mipmaps(extent),
+                    mip_level_count: if mipmaps { crate::mipmap::max_mipmaps(extent) } else { 1 },
                     sample_count: 1,
                     // array_layer_count: 1,
                     dimension: wgpu::TextureDimension::D2,
@@ -71,7 +71,16 @@ impl RenderTextureCache {
                     usage,
                 },
             );
-            RenderTexture::from(Rc::new(tex))
+            println!(
+                "Creating new render texture {:?}. {} textures in cache",
+                tex,
+                self.render_textures.len()
+            );
+            println!(
+                "Required: size={:?} format={:?} mipmaps={:?} usage={:?}\nExisting: {:#?}",
+                size, format, mipmaps, usage, self.render_textures
+            );
+            RenderTexture::from(Arc::new(tex))
         }
     }
 }

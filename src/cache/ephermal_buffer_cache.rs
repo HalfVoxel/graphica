@@ -30,6 +30,7 @@ impl BufferRange {
         }
     }
 
+    /// Size of the buffer range in bytes
     pub fn size(&self) -> u64 {
         // Range<u64> has no len() implementation
         self.range.end - self.range.start

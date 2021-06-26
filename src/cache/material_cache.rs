@@ -146,7 +146,7 @@ impl BindingResourceArc {
         Self::Mipmap(texture)
     }
 
-    pub fn texture(texture: Option<Rc<Texture>>) -> Self {
+    pub fn texture(texture: Option<Arc<Texture>>) -> Self {
         Self::render_texture(texture.map(RenderTexture::from))
     }
 
@@ -157,16 +157,16 @@ impl BindingResourceArc {
     pub fn hashcode(&self) -> u64 {
         match self {
             BindingResourceArc::Sampler(Some(o)) => Arc::as_ptr(&o.0) as u64,
-            BindingResourceArc::Texture(Some(RenderTexture::Texture(t))) => Rc::as_ptr(&t.0) as u64,
-            BindingResourceArc::Texture(Some(RenderTexture::SwapchainImage(t))) => Rc::as_ptr(&t.0) as u64,
+            BindingResourceArc::Texture(Some(RenderTexture::Texture(t))) => Arc::as_ptr(&t.0) as u64,
+            BindingResourceArc::Texture(Some(RenderTexture::SwapchainImage(t))) => Arc::as_ptr(&t.0) as u64,
             BindingResourceArc::Buffer(Some(b)) => {
                 Arc::as_ptr(&b.buffer) as u64 ^ (31 * (b.range.start ^ (31 * b.range.end)))
             }
             BindingResourceArc::Mipmap(Some((RenderTexture::Texture(t), index))) => {
-                Rc::as_ptr(&t.0) as u64 ^ (31 * (*index as u64))
+                Arc::as_ptr(&t.0) as u64 ^ (31 * (*index as u64))
             }
             BindingResourceArc::Mipmap(Some((RenderTexture::SwapchainImage(t), index))) => {
-                Rc::as_ptr(&t.0) as u64 ^ (31 * (*index as u64))
+                Arc::as_ptr(&t.0) as u64 ^ (31 * (*index as u64))
             }
             _ => 0,
         }

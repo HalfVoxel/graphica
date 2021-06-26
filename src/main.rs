@@ -17,6 +17,7 @@ use wgpu::TextureView;
 
 use crate::blitter::BlitOp;
 use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex};
+use crate::cache::ephermal_buffer_cache::BufferRange;
 use crate::cache::ephermal_buffer_cache::EphermalBufferCache;
 use crate::cache::material_cache::BindingResourceArc;
 use crate::cache::material_cache::Material;
@@ -36,6 +37,8 @@ use crate::input::{InputManager, KeyCombination};
 use crate::path::*;
 use crate::path_collection::{PathCollection, VertexReference};
 use crate::path_editor::*;
+use crate::render_graph::GraphNode;
+use crate::render_graph::RenderGraph;
 use std::iter::ExactSizeIterator;
 use std::rc::Rc;
 use std::time::Instant;
@@ -149,23 +152,21 @@ fn create_multisampled_framebuffer(
 }
 
 struct DocumentRenderer {
-    vbo: Buffer,
-    ibo: Buffer,
-    scene_ubo: Buffer,
+    vbo: BufferRange,
+    ibo: BufferRange,
+    scene_ubo: BufferRange,
     #[allow(dead_code)]
-    primitive_ubo: Buffer,
-    bind_group: BindGroup,
-    index_buffer_length: usize,
-    render_pipeline: Rc<RenderPipeline>,
+    primitive_ubo: BufferRange,
+    vector_material: Arc<Material>,
+    // index_buffer_length: usize,
+    render_pipeline: Arc<RenderPipelineBase>,
     brush_renderer: BrushRenderer,
 }
 
 pub struct BrushRenderer {
-    vbo: Buffer,
-    ibo: Buffer,
-    // ubo: Buffer,
-    index_buffer_length: usize,
-    bind_group: BindGroup,
+    vbo: BufferRange,
+    ibo: BufferRange,
+    material: Arc<Material>,
     brush_manager: Rc<BrushManager>,
     stroke_ranges: Vec<std::ops::Range<u32>>,
 }
@@ -343,86 +344,86 @@ impl BrushRendererWithReadback {
     }
 
     pub fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
-        if self.points.len() <= 1 {
-            return;
-        }
+        // if self.points.len() <= 1 {
+        //     return;
+        // }
 
-        let temp_to_frame_blitter =
-            encoder
-                .blitter
-                .with_textures(encoder.device, &self.temp_texture_view, encoder.target_texture.view);
+        // let temp_to_frame_blitter =
+        //     encoder
+        //         .blitter
+        //         .with_textures(encoder.device, &self.temp_texture_view, encoder.target_texture.view);
 
-        let bind_group = encoder.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.brush_manager.splat_with_readback.bind_group_layout,
-            label: Some("Clone brush Bind Group"),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(encoder.target_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.brush_texture.view),
-                },
-            ],
-        });
+        // let bind_group = encoder.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     layout: &self.brush_manager.splat_with_readback.bind_group_layout,
+        //     label: Some("Clone brush Bind Group"),
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: wgpu::BindingResource::Sampler(&self.sampler),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: wgpu::BindingResource::TextureView(encoder.target_texture.view),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 2,
+        //             resource: wgpu::BindingResource::TextureView(&self.brush_texture.view),
+        //         },
+        //     ],
+        // });
 
-        let to_normalized_pos = |v: CanvasPoint| view.screen_to_normalized(view.canvas_to_screen_point(v));
+        // let to_normalized_pos = |v: CanvasPoint| view.screen_to_normalized(view.canvas_to_screen_point(v));
 
-        for (mut i, (_, p)) in self.points.iter().enumerate() {
-            // First point is a noop
-            if i == 0 {
-                continue;
-            }
-            i -= 1;
+        // for (mut i, (_, p)) in self.points.iter().enumerate() {
+        //     // First point is a noop
+        //     if i == 0 {
+        //         continue;
+        //     }
+        //     i -= 1;
 
-            // First pass
-            {
-                let mut pass = encoder.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Brush with readback. First pass."),
-                    color_attachments: &[wgpu::RenderPassColorAttachment {
-                        view: &self.temp_texture_view,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::RED),
-                            store: true,
-                        },
-                        resolve_target: None,
-                    }],
-                    depth_stencil_attachment: None,
-                });
+        //     // First pass
+        //     {
+        //         let mut pass = encoder.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        //             label: Some("Brush with readback. First pass."),
+        //             color_attachments: &[wgpu::RenderPassColorAttachment {
+        //                 view: &self.temp_texture_view,
+        //                 ops: wgpu::Operations {
+        //                     load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+        //                     store: true,
+        //                 },
+        //                 resolve_target: None,
+        //             }],
+        //             depth_stencil_attachment: None,
+        //         });
 
-                pass.set_pipeline(&self.brush_manager.splat_with_readback.pipeline);
-                pass.set_bind_group(0, &bind_group, &[]);
-                pass.set_index_buffer(self.ibo.slice(..), wgpu::IndexFormat::Uint32);
-                pass.set_vertex_buffer(0, self.vbo.slice(..));
-                pass.draw_indexed((i * 6) as u32..((i + 1) * 6) as u32, 0, 0..1);
-            }
+        //         pass.set_pipeline(&self.brush_manager.splat_with_readback.pipeline);
+        //         pass.set_bind_group(0, &bind_group, &[]);
+        //         pass.set_index_buffer(self.ibo.slice(..), wgpu::IndexFormat::Uint32);
+        //         pass.set_vertex_buffer(0, self.vbo.slice(..));
+        //         pass.draw_indexed((i * 6) as u32..((i + 1) * 6) as u32, 0, 0..1);
+        //     }
 
-            // Second pass, copy back
-            {
-                let mn = to_normalized_pos(*p - vector(self.size, self.size));
-                let mx = to_normalized_pos(*p + vector(self.size, self.size));
-                let r = rect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y);
-                // let uv = vertices[(i*4)..(i+1)*4].iter().map(|x| x.uv_background_target).collect::<ArrayVec<[Point;4]>>();
-                // let r = Rect::from_points(uv);
-                temp_to_frame_blitter.blit(encoder.device, encoder.encoder, rect(0.0, 0.0, 1.0, 1.0), r, 1, None);
-            }
-        }
+        //     // Second pass, copy back
+        //     {
+        //         let mn = to_normalized_pos(*p - vector(self.size, self.size));
+        //         let mx = to_normalized_pos(*p + vector(self.size, self.size));
+        //         let r = rect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y);
+        //         // let uv = vertices[(i*4)..(i+1)*4].iter().map(|x| x.uv_background_target).collect::<ArrayVec<[Point;4]>>();
+        //         // let r = Rect::from_points(uv);
+        //         temp_to_frame_blitter.blit(encoder.device, encoder.encoder, rect(0.0, 0.0, 1.0, 1.0), r, 1, None);
+        //     }
+        // }
 
-        encoder.blitter.blit(
-            encoder.device,
-            encoder.encoder,
-            encoder.target_texture.view,
-            encoder.multisampled_render_target.as_ref().unwrap().view,
-            rect(0.0, 0.0, 1.0, 1.0),
-            rect(0.0, 0.0, 1.0, 1.0),
-            8,
-            None,
-        );
+        // encoder.blitter.blit(
+        //     encoder.device,
+        //     encoder.encoder,
+        //     encoder.target_texture.view,
+        //     encoder.multisampled_render_target.as_ref().unwrap().view,
+        //     rect(0.0, 0.0, 1.0, 1.0),
+        //     rect(0.0, 0.0, 1.0, 1.0),
+        //     8,
+        //     None,
+        // );
     }
 }
 
@@ -610,8 +611,7 @@ impl BrushRenderer {
         view: &CanvasView,
         device: &Device,
         _encoder: &mut CommandEncoder,
-        scene_ubo: &Buffer,
-        scene_ubo_size: u64,
+        scene_ubo: &BufferRange,
         brush_manager: &Rc<BrushManager>,
         texture: &Arc<Texture>,
     ) -> BrushRenderer {
@@ -662,17 +662,17 @@ impl BrushRenderer {
             stroke_ranges.push(start_triangle..end_triangle);
         }
 
-        let (vbo, _) = create_buffer(device, &vertices, wgpu::BufferUsage::VERTEX, None);
+        let vbo = create_buffer_range(device, &vertices, wgpu::BufferUsage::VERTEX, None);
 
         #[allow(clippy::identity_op)]
         let indices: Vec<u32> = (0..(vertices.len() / 4) as u32)
             .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
             .collect();
-        let (ibo, _) = create_buffer(device, &indices, wgpu::BufferUsage::INDEX, None);
+        let ibo = create_buffer_range(device, &indices, wgpu::BufferUsage::INDEX, None);
 
         let view_matrix = view.canvas_to_view_matrix();
 
-        let (primitive_ubo, primitive_ubo_size) = create_buffer(
+        let primitive_ubo = create_buffer_range(
             device,
             &[BrushUniforms {
                 mvp_matrix: view_matrix * Matrix4::from_translation([0.0, 0.0, 0.1].into()),
@@ -689,7 +689,7 @@ impl BrushRenderer {
         // });
         // encoder.copy_buffer_to_buffer(&primitive_ubo_transfer, 0, &primitive_ubo, 0, primitive_ubo_size);
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = Arc::new(device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Brush sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -702,45 +702,26 @@ impl BrushRenderer {
             compare: None,
             anisotropy_clamp: None,
             border_color: None,
-        });
+        }));
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &brush_manager.splat.bind_group_layout,
-            label: Some("Brush bind group"),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: scene_ubo,
-                        offset: 0,
-                        size: Some(NonZeroU64::new(scene_ubo_size).unwrap()),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &primitive_ubo,
-                        offset: 0,
-                        size: Some(NonZeroU64::new(primitive_ubo_size).unwrap()),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&texture.view),
-                },
+        let material = Arc::new(Material::from_consecutive_entries(
+            device,
+            "brush",
+            brush_manager.splat.bind_group_layout.clone(),
+            vec![
+                BindingResourceArc::buffer(Some(scene_ubo.clone())),
+                BindingResourceArc::buffer(Some(primitive_ubo.clone())),
+                BindingResourceArc::sampler(Some(sampler.clone())),
+                BindingResourceArc::texture(Some(texture.clone())),
             ],
-        });
+        ));
 
         BrushRenderer {
             vbo,
             ibo,
             // ubo,
-            index_buffer_length: indices.len(),
-            bind_group,
+            // index_buffer_length: indices.len(),
+            material,
             brush_manager: brush_manager.clone(),
             stroke_ranges,
         }
@@ -759,42 +740,72 @@ impl BrushRenderer {
         // encoder.copy_buffer_to_buffer(&scene_ubo_transfer, 0, &self.scene_ubo, 0, scene_ubo_size);
     }
 
-    pub fn render(&self, encoder: &mut Encoder, _view: &CanvasView) {
-        if self.index_buffer_length == 0 {
-            return;
-        }
-
-        // let blitter = encoder.blitter.with_textures(encoder.device, &encoder.scratch_texture.view, encoder.target_texture);
-        for stroke_range in &self.stroke_ranges {
-            {
-                let mut pass = encoder.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("brush"),
-                    color_attachments: &[wgpu::RenderPassColorAttachment {
-                        view: &encoder.scratch_texture.view,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: true,
-                        },
-                        resolve_target: None,
-                    }],
-                    depth_stencil_attachment: None,
-                });
-
-                pass.set_pipeline(&self.brush_manager.splat.pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[]);
-                pass.set_index_buffer(self.ibo.slice(..), wgpu::IndexFormat::Uint32);
-                pass.set_vertex_buffer(0, self.vbo.slice(..));
-                pass.draw_indexed(stroke_range.clone(), 0, 0..1);
+    pub fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
+        for stroke_path in &self.stroke_ranges {
+            if stroke_path.is_empty() {
+                continue;
             }
 
-            encoder.blitter.blend(
-                encoder.device,
-                encoder.encoder,
-                &encoder.scratch_texture.view,
-                encoder.target_texture.view,
-                (encoder.resolution.width, encoder.resolution.height),
+            let scratch = render_graph.clear(size(512, 512), wgpu::Color::TRANSPARENT);
+
+            let mut ibo = self.ibo.clone();
+            ibo.range.start += stroke_path.start as u64 * std::mem::size_of::<u32>() as u64;
+            ibo.range.end = self.ibo.range.start + stroke_path.end as u64 * std::mem::size_of::<u32>() as u64;
+            assert!(self.ibo.range.contains(&ibo.range.start));
+            assert!(self.ibo.range.contains(&(ibo.range.end - 1)));
+            let rendered_strokes = render_graph.mesh(
+                scratch,
+                self.vbo.clone(),
+                ibo,
+                self.brush_manager.splat.pipeline.clone(),
+                self.material.clone(),
+            );
+            target = render_graph.blit(
+                rendered_strokes,
+                target,
+                rect(0.0, 0.0, 512.0, 512.0),
+                rect(0.0, 0.0, 512.0, 512.0),
             );
         }
+        target
+    }
+
+    pub fn render(&self, encoder: &mut Encoder, _view: &CanvasView) {
+        // if self.index_buffer_length == 0 {
+        //     return;
+        // }
+
+        // // let blitter = encoder.blitter.with_textures(encoder.device, &encoder.scratch_texture.view, encoder.target_texture);
+        // for stroke_range in &self.stroke_ranges {
+        //     {
+        //         let mut pass = encoder.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        //             label: Some("brush"),
+        //             color_attachments: &[wgpu::RenderPassColorAttachment {
+        //                 view: &encoder.scratch_texture.view,
+        //                 ops: wgpu::Operations {
+        //                     load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+        //                     store: true,
+        //                 },
+        //                 resolve_target: None,
+        //             }],
+        //             depth_stencil_attachment: None,
+        //         });
+
+        //         pass.set_pipeline(&self.brush_manager.splat.pipeline);
+        //         pass.set_bind_group(0, &self.bind_group, &[]);
+        //         pass.set_index_buffer(self.ibo.slice(..), wgpu::IndexFormat::Uint32);
+        //         pass.set_vertex_buffer(0, self.vbo.slice(..));
+        //         pass.draw_indexed(stroke_range.clone(), 0, 0..1);
+        //     }
+
+        //     encoder.blitter.blend(
+        //         encoder.device,
+        //         encoder.encoder,
+        //         &encoder.scratch_texture.view,
+        //         encoder.target_texture.view,
+        //         (encoder.resolution.width, encoder.resolution.height),
+        //     );
+        // }
     }
 }
 
@@ -806,10 +817,10 @@ impl DocumentRenderer {
         device: &Device,
         encoder: &mut CommandEncoder,
         staging_belt: &mut StagingBelt,
-        bind_group_layout: &wgpu::BindGroupLayout,
+        bind_group_layout: &Arc<wgpu::BindGroupLayout>,
         wireframe: bool,
-        render_pipeline: &Rc<RenderPipeline>,
-        wireframe_render_pipeline: &Rc<RenderPipeline>,
+        render_pipeline: &Arc<RenderPipelineBase>,
+        wireframe_render_pipeline: &Arc<RenderPipelineBase>,
         brush_manager: &Rc<BrushManager>,
     ) -> DocumentRenderer {
         puffin::profile_function!();
@@ -832,10 +843,10 @@ impl DocumentRenderer {
             )
             .unwrap();
 
-        let (vbo, _) = create_buffer(device, &geometry.vertices, wgpu::BufferUsage::VERTEX, "Document VBO");
-        let (ibo, _) = create_buffer(device, &geometry.indices, wgpu::BufferUsage::INDEX, "Document IBO");
+        let vbo = create_buffer_range(device, &geometry.vertices, wgpu::BufferUsage::VERTEX, "Document VBO");
+        let ibo = create_buffer_range(device, &geometry.indices, wgpu::BufferUsage::INDEX, "Document IBO");
 
-        let (scene_ubo, scene_ubo_size) = create_buffer(
+        let scene_ubo = create_buffer_range(
             device,
             &[Globals {
                 resolution: [view.resolution.width as f32, view.resolution.height as f32],
@@ -848,7 +859,7 @@ impl DocumentRenderer {
 
         let view_matrix = view.canvas_to_view_matrix();
 
-        let (primitive_ubo, primitive_ubo_size) = create_buffer(
+        let primitive_ubo = create_buffer_range(
             device,
             &[Primitive {
                 color: [1.0, 1.0, 1.0, 1.0],
@@ -859,28 +870,15 @@ impl DocumentRenderer {
             "Document Primitive UBO",
         );
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: bind_group_layout,
-            label: Some("Document bind group"),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &scene_ubo,
-                        offset: 0,
-                        size: Some(NonZeroU64::new(scene_ubo_size).unwrap()),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &primitive_ubo,
-                        offset: 0,
-                        size: Some(NonZeroU64::new(primitive_ubo_size).unwrap()),
-                    }),
-                },
+        let vector_material = Arc::new(Material::from_consecutive_entries(
+            device,
+            "Vector",
+            bind_group_layout.to_owned(),
+            vec![
+                crate::cache::material_cache::BindingResourceArc::buffer(Some(scene_ubo.clone())),
+                crate::cache::material_cache::BindingResourceArc::buffer(Some(primitive_ubo.clone())),
             ],
-        });
+        ));
 
         let brush_renderer = BrushRenderer::new(
             &document.brushes,
@@ -888,7 +886,6 @@ impl DocumentRenderer {
             device,
             encoder,
             &scene_ubo,
-            scene_ubo_size,
             brush_manager,
             &document.textures[0],
         );
@@ -898,13 +895,12 @@ impl DocumentRenderer {
             ibo,
             scene_ubo,
             primitive_ubo,
-            bind_group,
-            index_buffer_length: geometry.indices.len(),
+            vector_material,
             brush_renderer,
             render_pipeline: if !wireframe {
-                render_pipeline.clone()
+                render_pipeline.to_owned()
             } else {
-                wireframe_render_pipeline.clone()
+                wireframe_render_pipeline.to_owned()
             },
         };
         res.update(view, device, encoder, staging_belt);
@@ -919,7 +915,7 @@ impl DocumentRenderer {
         staging_belt: &mut StagingBelt,
     ) {
         // TODO: Verify expected size?
-        update_buffer_via_transfer(
+        update_buffer_range_via_transfer(
             device,
             encoder,
             staging_belt,
@@ -932,64 +928,31 @@ impl DocumentRenderer {
         );
     }
 
-    fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
-        puffin::profile_function!();
-        {
-            let mut pass = encoder.begin_msaa_render_pass(None, Some("document render pass"));
-            pass.set_pipeline(&self.render_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_index_buffer(self.ibo.slice(..), wgpu::IndexFormat::Uint32);
-            pass.set_vertex_buffer(0, self.vbo.slice(..));
-            pass.draw_indexed(0..(self.index_buffer_length as u32), 0, 0..1);
-        }
+    fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode, view: &CanvasView) -> GraphNode {
+        target = render_graph.mesh(
+            target,
+            self.vbo.clone(),
+            self.ibo.clone(),
+            self.render_pipeline.clone(),
+            self.vector_material.clone(),
+        );
 
-        self.brush_renderer.render(encoder, view);
+        self.brush_renderer.render_node(render_graph, target)
     }
-}
 
-fn render_background(
-    encoder: &mut Encoder,
-    bg_pipeline: &RenderPipeline,
-    bind_group: &BindGroup,
-    bg_ibo: &Buffer,
-    bg_vbo: &Buffer,
-) {
-    puffin::profile_function!();
-    let mut pass = encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background render pass"));
-    pass.set_pipeline(bg_pipeline);
-    pass.set_bind_group(0, bind_group, &[]);
-    pass.set_index_buffer(bg_ibo.slice(..), wgpu::IndexFormat::Uint16);
-    pass.set_vertex_buffer(0, bg_vbo.slice(..));
+    fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
+        // puffin::profile_function!();
+        // {
+        //     let mut pass = encoder.begin_msaa_render_pass(None, Some("document render pass"));
+        //     pass.set_pipeline(&self.render_pipeline);
+        //     pass.set_bind_group(0, &self.bind_group, &[]);
+        //     pass.set_index_buffer(self.ibo.slice(..), wgpu::IndexFormat::Uint32);
+        //     pass.set_vertex_buffer(0, self.vbo.slice(..));
+        //     pass.draw_indexed(0..(self.index_buffer_length as u32), 0, 0..1);
+        // }
 
-    pass.draw_indexed(0..6, 0, 0..1);
-}
-
-fn blit_document_to_window<'a>(
-    hl_encoder: &mut Encoder<'a>,
-    scene: &SceneParams,
-    doc_size: Size2D<u32, CanvasSpace>,
-    window_extent: Extent3d,
-    source: &TextureView,
-    target: &RenderTexture,
-) -> BlitOp<'a> {
-    puffin::profile_function!();
-    let canvas_in_screen_space =
-        scene
-            .view
-            .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
-    let canvas_in_screen_uv_space =
-        canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
-
-    let blittex = hl_encoder
-        .blitter
-        .with_textures(hl_encoder.device, source, target.default_view().view);
-
-    blittex.blit_regions(
-        hl_encoder.device,
-        rect(0.0, 0.0, 1.0, 1.0),
-        canvas_in_screen_uv_space.to_untyped(),
-        target.sample_count(),
-    )
+        // self.brush_renderer.render(encoder, view);
+    }
 }
 
 #[allow(unused_variables)]
@@ -1104,7 +1067,7 @@ pub fn main() {
 
     let mut staging_belt = wgpu::util::StagingBelt::new(1024);
 
-    let vs_module = crate::shader::load_wgsl_shader(&device, "shaders/geometry.wgsl");
+    let vs_module = Arc::new(crate::shader::load_wgsl_shader(&device, "shaders/geometry.wgsl"));
     let bg_module = Arc::new(crate::shader::load_wgsl_shader(&device, "shaders/background.wgsl"));
     // let vs_module = load_shader(&device, "shaders/geometry.vert.spv");
     // let fs_module = load_shader(&device, "shaders/geometry.frag.spv");
@@ -1151,23 +1114,9 @@ pub fn main() {
         bias: wgpu::DepthBiasState::default(),
     });
 
-    let mut render_pipeline_descriptor = wgpu::RenderPipelineDescriptor {
-        label: Some("Main Render Pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &vs_module,
-            entry_point: "vs_main",
-            buffers: &[PosNormVertex::desc()],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &vs_module,
-            entry_point: "fs_main",
-            targets: &[wgpu::ColorTargetState {
-                format: crate::config::TEXTURE_FORMAT,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrite::ALL,
-            }],
-        }),
+    let render_pipeline = Arc::new(RenderPipelineBase {
+        label: "Main Render Pipeline".to_string(),
+        layout: pipeline_layout.clone(),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
@@ -1177,17 +1126,16 @@ pub fn main() {
             clamp_depth: false,
             conservative: false,
         },
-        depth_stencil: depth_stencil_state.clone(),
-        multisample: wgpu::MultisampleState {
-            count: sample_count,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-    };
+        module: vs_module,
+        vertex_buffer_layout: PosNormVertex::desc(),
+        vertex_entry: "vs_main".to_string(),
+        fragment_entry: "fs_main".to_string(),
+        target_count: 1,
+    });
 
-    let render_pipeline = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor));
-    render_pipeline_descriptor.primitive.polygon_mode = wgpu::PolygonMode::Line;
-    let wireframe_render_pipeline = Rc::new(device.create_render_pipeline(&render_pipeline_descriptor));
+    let mut wireframe_render_pipeline = (*render_pipeline).clone();
+    wireframe_render_pipeline.primitive.polygon_mode = wgpu::PolygonMode::Line;
+    let wireframe_render_pipeline = Arc::new(wireframe_render_pipeline);
 
     let bg_pipeline_base = Arc::new(RenderPipelineBase {
         label: "Background pipeline".to_string(),
@@ -1272,7 +1220,7 @@ pub fn main() {
             height: editor.document.size.unwrap().height,
             depth_or_array_layers: 1,
         };
-        depth_texture_document = Some(Rc::new(Texture::new(
+        depth_texture_document = Some(Arc::new(Texture::new(
             &device,
             wgpu::TextureDescriptor {
                 label: Some("Framebuffer depth"),
@@ -1287,7 +1235,7 @@ pub fn main() {
         )));
 
         multisampled_render_target_document = if sample_count > 1 {
-            Some(Rc::new(create_multisampled_framebuffer(
+            Some(Arc::new(create_multisampled_framebuffer(
                 &device,
                 &document_extent,
                 sample_count,
@@ -1394,7 +1342,7 @@ pub fn main() {
     };
 
     // Render into this texture
-    let temp_document_frame = Rc::new(Texture::new(
+    let temp_document_frame = Arc::new(Texture::new(
         &device,
         wgpu::TextureDescriptor {
             label: Some("Temp frame texture"),
@@ -1504,7 +1452,7 @@ pub fn main() {
                 println!("Rebuilding swap chain");
                 scene.size_changed = false;
                 swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
-                depth_texture = Some(Rc::new(Texture::new(
+                depth_texture = Some(Arc::new(Texture::new(
                     &device,
                     TextureDescriptor {
                         label: Some("Framebuffer depth"),
@@ -1519,7 +1467,7 @@ pub fn main() {
                 )));
 
                 multisampled_render_target = if sample_count > 1 {
-                    Some(Rc::new(create_multisampled_framebuffer(
+                    Some(Arc::new(create_multisampled_framebuffer(
                         &device,
                         &window_extent,
                         sample_count,
@@ -1616,7 +1564,7 @@ pub fn main() {
                 scratch_texture: scratch_texture.clone(),
             };
 
-            render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
+            // render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
 
             document_renderer1
                 .as_mut()
@@ -1646,7 +1594,7 @@ pub fn main() {
                     // render_main_view(&scene);
 
                     if scene.draw_background {
-                        render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
+                        // render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
                     } else {
                         hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background clear pass"));
                     }
@@ -1657,35 +1605,35 @@ pub fn main() {
                         .render(&mut hl_encoder, &dummy_view);
                 }
 
-                blitter.rgb_to_srgb(
-                    &device,
-                    &mut encoder,
-                    &temp_document_frame.view,
-                    (document_extent.width, document_extent.height),
-                );
-                mipmapper.generate_mipmaps(&device, &mut encoder, &temp_document_frame);
+                // blitter.rgb_to_srgb(
+                //     &device,
+                //     &mut encoder,
+                //     &temp_document_frame.view,
+                //     (document_extent.width, document_extent.height),
+                // );
+                // mipmapper.generate_mipmaps(&device, &mut encoder, &temp_document_frame);
 
                 let msaa_render_target = multisampled_render_target.clone().map(RenderTexture::from);
                 let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
-                let mut hl_encoder = Encoder {
-                    device: &device,
-                    encoder: &mut encoder,
-                    multisampled_render_target: msaa_render_target.as_ref().map(RenderTexture::default_view),
-                    target_texture: frame.default_view(),
-                    depth_texture_view: depth_target.default_view(),
-                    blitter: &blitter,
-                    resolution: document_extent,
-                    scratch_texture: scratch_texture.clone(),
-                };
+                // let mut hl_encoder = Encoder {
+                //     device: &device,
+                //     encoder: &mut encoder,
+                //     multisampled_render_target: msaa_render_target.as_ref().map(RenderTexture::default_view),
+                //     target_texture: frame.default_view(),
+                //     depth_texture_view: depth_target.default_view(),
+                //     blitter: &blitter,
+                //     resolution: document_extent,
+                //     scratch_texture: scratch_texture.clone(),
+                // };
 
-                let blitop = blit_document_to_window(
-                    &mut hl_encoder,
-                    scene,
-                    doc_size,
-                    window_extent,
-                    &temp_document_frame.view,
-                    msaa_render_target.as_ref().unwrap_or(&frame),
-                );
+                // let blitop = blit_document_to_window(
+                //     &mut hl_encoder,
+                //     scene,
+                //     doc_size,
+                //     window_extent,
+                //     &temp_document_frame.view,
+                //     msaa_render_target.as_ref().unwrap_or(&frame),
+                // );
 
                 // {
                 //     // Clear pass
@@ -1718,7 +1666,7 @@ pub fn main() {
 
                 wgpu_profiler!("rendering", &mut gpu_profiler, &mut encoder, &device, {
                     let mut render_graph = crate::render_graph::RenderGraph::default();
-                    let mut t =
+                    let mut framebuffer =
                         render_graph.clear(Size2D::new(frame.size().width, frame.size().height), wgpu::Color::GREEN);
                     let mut canvas = render_graph.clear(doc_size.to_untyped(), wgpu::Color::BLUE);
                     canvas = render_graph.quad(
@@ -1727,18 +1675,22 @@ pub fn main() {
                         bg_pipeline_base.clone(),
                         bg_material_base.clone(),
                     );
+                    canvas = document_renderer1
+                        .as_ref()
+                        .unwrap()
+                        .render_node(&mut render_graph, canvas, &dummy_view);
                     canvas = render_graph.generate_mipmaps(canvas);
 
-                    t = render_graph.quad(
-                        t,
+                    framebuffer = render_graph.quad(
+                        framebuffer,
                         CanvasRect::from_size(Size2D::new(frame.size().width as f32, frame.size().height as f32)),
                         bg_pipeline_base.clone(),
                         screen_bg_material_base.clone(),
                     );
 
-                    t = render_graph.blit(
+                    framebuffer = render_graph.blit(
                         canvas,
-                        t,
+                        framebuffer,
                         CanvasRect::from_size(doc_size.cast()),
                         canvas_in_screen_space.cast_unit(),
                     );
@@ -1754,7 +1706,7 @@ pub fn main() {
                         mipmapper: &mipmapper,
                         gpu_profiler: &mut gpu_profiler,
                     };
-                    let passes = render_graph_compiler.compile(&render_graph, t, &frame);
+                    let passes = render_graph_compiler.compile(&render_graph, framebuffer, &frame);
 
                     render_graph_compiler.render(&passes);
                 });

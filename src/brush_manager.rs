@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use crate::cache::render_pipeline_cache::RenderPipelineBase;
 use crate::shader::load_shader;
 use crate::shader::load_wgsl_shader;
 use crate::{geometry_utilities::types::*, vertex::GPUVertex};
@@ -87,8 +90,8 @@ impl GPUVertex for CloneBrushGpuVertex {
 }
 
 pub struct ShaderBundle {
-    pub pipeline: RenderPipeline,
-    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub pipeline: Arc<RenderPipelineBase>,
+    pub bind_group_layout: Arc<wgpu::BindGroupLayout>,
 }
 
 pub struct ShaderBundleCompute {
@@ -104,7 +107,7 @@ pub struct BrushManager {
 
 impl BrushManager {
     pub fn load(device: &Device, _sample_count: u32) -> BrushManager {
-        let bind_group_layout_brush = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let bind_group_layout_brush = Arc::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Bind group layout brush"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
@@ -147,34 +150,25 @@ impl BrushManager {
                     count: None,
                 },
             ],
-        });
+        }));
 
-        let brush_module = load_wgsl_shader(device, "shaders/brush.wgsl");
-        let clone_brush_module = load_wgsl_shader(device, "shaders/clone_brush.wgsl");
+        let brush_module = Arc::new(load_wgsl_shader(device, "shaders/brush.wgsl"));
+        let clone_brush_module = Arc::new(load_wgsl_shader(device, "shaders/clone_brush.wgsl"));
 
-        let pipeline_layout_brush = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout_brush = Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&bind_group_layout_brush],
             push_constant_ranges: &[],
-        });
+        }));
 
-        let render_pipeline_descriptor_brush = wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout_brush),
-            vertex: wgpu::VertexState {
-                module: &brush_module,
-                entry_point: "vs_main",
-                buffers: &[BrushGpuVertex::desc()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &brush_module,
-                entry_point: "fs_main",
-                targets: &[wgpu::ColorTargetState {
-                    format: crate::config::TEXTURE_FORMAT,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrite::ALL,
-                }],
-            }),
+        let render_pipeline_brush = Arc::new(RenderPipelineBase {
+            label: "brush".to_string(),
+            layout: pipeline_layout_brush,
+            module: brush_module,
+            vertex_entry: "vs_main".to_string(),
+            fragment_entry: "fs_main".to_string(),
+            vertex_buffer_layout: BrushGpuVertex::desc(),
+            target_count: 1,
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
@@ -184,68 +178,57 @@ impl BrushManager {
                 clamp_depth: false,
                 conservative: false,
             },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-        };
-
-        let bind_group_layout_clone_brush = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Bind group layout clone_brush"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler {
-                        comparison: false,
-                        filtering: true,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
-            ],
         });
 
-        let pipeline_layout_clone_brush = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let bind_group_layout_clone_brush =
+            Arc::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Bind group layout clone_brush"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: true,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                ],
+            }));
+
+        let pipeline_layout_clone_brush = Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&bind_group_layout_clone_brush],
             push_constant_ranges: &[],
-        });
+        }));
 
-        let render_pipeline_descriptor_clone_brush = wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout_clone_brush),
-            vertex: wgpu::VertexState {
-                module: &clone_brush_module,
-                entry_point: "vs_main",
-                buffers: &[CloneBrushGpuVertex::desc()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &clone_brush_module,
-                entry_point: "fs_main",
-                targets: &[wgpu::ColorTargetState {
-                    format: crate::config::TEXTURE_FORMAT,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrite::ALL,
-                }],
-            }),
+        let render_pipeline_clone_brush = Arc::new(RenderPipelineBase {
+            label: "clone brush".to_string(),
+            layout: pipeline_layout_clone_brush,
+            module: clone_brush_module,
+            vertex_entry: "vs_main".to_string(),
+            fragment_entry: "fs_main".to_string(),
+            vertex_buffer_layout: CloneBrushGpuVertex::desc(),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
@@ -255,9 +238,8 @@ impl BrushManager {
                 clamp_depth: false,
                 conservative: false,
             },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-        };
+            target_count: 1,
+        });
 
         let bind_group_layout_clone_brush_batched = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
@@ -324,13 +306,14 @@ impl BrushManager {
             label: None,
         });
 
-        let pipeline_layout_clone_brush_batched = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[&bind_group_layout_clone_brush_batched],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout_clone_brush_batched =
+            Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&bind_group_layout_clone_brush_batched],
+                push_constant_ranges: &[],
+            }));
 
-        let clone_brush_batched_cs_module = load_shader(device, "shaders/clone_brush_batch.comp.spv");
+        let clone_brush_batched_cs_module = Arc::new(load_shader(device, "shaders/clone_brush_batch.comp.spv"));
 
         let render_pipeline_descriptor_clone_brush_batched = wgpu::ComputePipelineDescriptor {
             label: None,
@@ -342,11 +325,11 @@ impl BrushManager {
         BrushManager {
             splat: ShaderBundle {
                 bind_group_layout: bind_group_layout_brush,
-                pipeline: device.create_render_pipeline(&render_pipeline_descriptor_brush),
+                pipeline: render_pipeline_brush,
             },
             splat_with_readback: ShaderBundle {
                 bind_group_layout: bind_group_layout_clone_brush,
-                pipeline: device.create_render_pipeline(&render_pipeline_descriptor_clone_brush),
+                pipeline: render_pipeline_clone_brush,
             },
             splat_with_readback_batched: ShaderBundleCompute {
                 bind_group_layout: bind_group_layout_clone_brush_batched,

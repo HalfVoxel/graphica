@@ -39,6 +39,13 @@ enum RenderingPrimitive {
     UninitializedTexture(Size2D<u32>),
     Clear(GraphNode, Color),
     Blit(Blit),
+    Mesh {
+        target: GraphNode,
+        vbo: BufferRange,
+        ibo: BufferRange,
+        pipeline: Arc<RenderPipelineBase>,
+        material: Arc<Material>,
+    },
     Quad {
         target: GraphNode,
         rect: CanvasRect,
@@ -92,6 +99,23 @@ impl RenderGraph {
     pub fn clear(&mut self, size: Size2D<u32>, color: Color) -> GraphNode {
         let tex = self.push_primitive(RenderingPrimitive::UninitializedTexture(size));
         self.push_primitive(RenderingPrimitive::Clear(tex, color))
+    }
+
+    pub fn mesh(
+        &mut self,
+        target: GraphNode,
+        vbo: BufferRange,
+        ibo: BufferRange,
+        pipeline: Arc<RenderPipelineBase>,
+        material: Arc<Material>,
+    ) -> GraphNode {
+        self.push_primitive(RenderingPrimitive::Mesh {
+            target,
+            vbo,
+            ibo,
+            pipeline,
+            material,
+        })
     }
 
     pub fn quad(
@@ -239,6 +263,9 @@ impl<'a> RenderGraphCompiler<'a> {
                 RenderingPrimitive::Quad { .. } => {
                     usage.usages |= TextureUsage::RENDER_ATTACHMENT;
                 }
+                RenderingPrimitive::Mesh { .. } => {
+                    usage.usages |= TextureUsage::RENDER_ATTACHMENT;
+                }
                 RenderingPrimitive::GenerateMipmaps { .. } => {
                     usage.usages |= TextureUsage::STORAGE;
                     usage.requires_mipmaps = true;
@@ -264,6 +291,10 @@ impl<'a> RenderGraphCompiler<'a> {
                     usages[target.index].requires_mipmaps |= usage.requires_mipmaps;
                     usages[target.index].usages |= usage.usages;
                 }
+                RenderingPrimitive::Mesh { target, .. } => {
+                    usages[target.index].requires_mipmaps |= usage.requires_mipmaps;
+                    usages[target.index].usages |= usage.usages;
+                }
             };
 
             usages[i] = usage;
@@ -281,12 +312,17 @@ impl<'a> RenderGraphCompiler<'a> {
                     usage.requires_mipmaps = usages[target.index].requires_mipmaps;
                     usage.usages = usages[target.index].usages;
                 }
-                RenderingPrimitive::Blit(Blit { source, target, .. }) => {
+                RenderingPrimitive::Blit(Blit { target, .. }) => {
                     usage.size = usages[target.index].size;
                     usage.requires_mipmaps = usages[target.index].requires_mipmaps;
                     usage.usages = usages[target.index].usages;
                 }
                 RenderingPrimitive::Quad { target, .. } => {
+                    usage.size = usages[target.index].size;
+                    usage.requires_mipmaps = usages[target.index].requires_mipmaps;
+                    usage.usages = usages[target.index].usages;
+                }
+                RenderingPrimitive::Mesh { target, .. } => {
                     usage.size = usages[target.index].size;
                     usage.requires_mipmaps = usages[target.index].requires_mipmaps;
                     usage.usages = usages[target.index].usages;
@@ -484,20 +520,20 @@ impl<'a> RenderGraphCompiler<'a> {
 
                     let _source_pass = self.build(nodes, usages, passes, source, &source_texture);
 
-                    let pass = if target_rect.contains_rect(&target_texture_rect) {
+                    let target_pass = if target_rect.contains_rect(&target_texture_rect) {
                         // Blit covers the whole target, this means we can discard whatever was inside the target before.
                         passes.push(CompiledPass::RenderPass {
                             target: target_texture.clone(),
                             clear: None,
-                            ops: vec![op],
+                            ops: vec![],
                         });
                         passes.len() - 1
                     } else {
                         // Common path
                         // Blit does not cover the whole target
-                        let target_pass = self.build(nodes, usages, passes, target, target_texture);
-                        Self::push_render_op(passes, target_texture, target_pass, op)
+                        self.build(nodes, usages, passes, target, target_texture)
                     };
+                    let pass = Self::push_render_op(passes, target_texture, target_pass, op);
 
                     // We are done using the source texture now
                     self.render_texture_cache.push(source_texture);
@@ -555,6 +591,34 @@ impl<'a> RenderGraphCompiler<'a> {
                     bind_group: material.bind_group().to_owned(),
                 };
 
+                Self::push_render_op(passes, target_texture, target_pass, op)
+            }
+            RenderingPrimitive::Mesh {
+                target,
+                vbo,
+                ibo,
+                pipeline,
+                material,
+            } => {
+                let target_pass = self.build(nodes, usages, passes, target, target_texture);
+                let op = CompiledRenderingPrimitive::Render {
+                    vbo: vbo.to_owned(),
+                    ibo: ibo.to_owned(),
+                    pipeline: self
+                        .render_pipeline_cache
+                        .get(
+                            self.device,
+                            RenderPipelineKey {
+                                base: pipeline.to_owned().into(),
+                                sample_count: target_texture.sample_count(),
+                                depth_format: None,
+                                target_format: target_texture.format(),
+                                blend_state: BlendState::ALPHA_BLENDING,
+                            },
+                        )
+                        .to_owned(),
+                    bind_group: material.bind_group().to_owned(),
+                };
                 Self::push_render_op(passes, target_texture, target_pass, op)
             }
             RenderingPrimitive::GenerateMipmaps { target } => {
@@ -667,12 +731,13 @@ impl<'a> RenderGraphCompiler<'a> {
                                 bind_group,
                             } => {
                                 puffin::profile_scope!("op:render");
+                                let index_count = ibo.size() as u32 / std::mem::size_of::<u32>() as u32;
                                 wgpu_profiler!("op:render", self.gpu_profiler, &mut render_pass, &self.device, {
                                     render_pass.set_pipeline(&pipeline.pipeline);
                                     render_pass.set_bind_group(0, bind_group, &[]);
                                     render_pass.set_index_buffer(ibo.as_slice(), wgpu::IndexFormat::Uint32);
                                     render_pass.set_vertex_buffer(0, vbo.as_slice());
-                                    render_pass.draw_indexed(0..6, 0, 0..1);
+                                    render_pass.draw_indexed(0..index_count, 0, 0..1);
                                 });
                             }
                         }
