@@ -46,8 +46,8 @@ impl std::fmt::Debug for RenderTexture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Get rid of some noisy indirections in the output
         match self {
-            RenderTexture::Texture(x) => (**x).fmt(f),
-            RenderTexture::SwapchainImage(x) => (**x).fmt(f),
+            RenderTexture::Texture(x) => write!(f, "RT({:x},{:?})", Arc::as_ptr(x) as u64, **x),
+            RenderTexture::SwapchainImage(x) => write!(f, "RT({:x},{:?})", Arc::as_ptr(x) as u64, **x),
         }
     }
 }

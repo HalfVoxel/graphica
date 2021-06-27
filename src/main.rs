@@ -9,6 +9,7 @@ use lyon::tessellation::geometry_builder::*;
 use lyon::tessellation::FillOptions;
 use lyon::tessellation::{StrokeOptions, StrokeTessellator};
 use std::num::NonZeroU64;
+use wgpu::BlendState;
 
 use wgpu::Extent3d;
 
@@ -707,6 +708,7 @@ impl BrushRenderer {
         let material = Arc::new(Material::from_consecutive_entries(
             device,
             "brush",
+            BlendState::ALPHA_BLENDING,
             brush_manager.splat.bind_group_layout.clone(),
             vec![
                 BindingResourceArc::buffer(Some(scene_ubo.clone())),
@@ -760,11 +762,12 @@ impl BrushRenderer {
                 self.brush_manager.splat.pipeline.clone(),
                 self.material.clone(),
             );
-            target = render_graph.blit(
+            target = render_graph.blend(
                 rendered_strokes,
                 target,
                 rect(0.0, 0.0, 512.0, 512.0),
                 rect(0.0, 0.0, 512.0, 512.0),
+                BlendState::PREMULTIPLIED_ALPHA_BLENDING,
             );
         }
         target
@@ -873,6 +876,7 @@ impl DocumentRenderer {
         let vector_material = Arc::new(Material::from_consecutive_entries(
             device,
             "Vector",
+            BlendState::ALPHA_BLENDING,
             bind_group_layout.to_owned(),
             vec![
                 crate::cache::material_cache::BindingResourceArc::buffer(Some(scene_ubo.clone())),
@@ -981,7 +985,7 @@ pub fn main() {
 
     // Number of samples for anti-aliasing
     // Set to 1 to disable
-    let sample_count = 8;
+    let sample_count = 1;
 
     let t0 = Instant::now();
 
@@ -1287,6 +1291,7 @@ pub fn main() {
     let bg_material_base = Arc::new(Material::from_consecutive_entries(
         &device,
         "background",
+        BlendState::REPLACE,
         bind_group_layout.clone(),
         vec![
             BindingResourceArc::buffer(Some(canvas_globals_ubo.clone())),
@@ -1297,6 +1302,7 @@ pub fn main() {
     let screen_bg_material_base = Arc::new(Material::from_consecutive_entries(
         &device,
         "background",
+        BlendState::REPLACE,
         bind_group_layout.clone(),
         vec![
             BindingResourceArc::buffer(Some(globals_ubo.clone())),
@@ -1342,33 +1348,33 @@ pub fn main() {
     };
 
     // Render into this texture
-    let temp_document_frame = Arc::new(Texture::new(
-        &device,
-        wgpu::TextureDescriptor {
-            label: Some("Temp frame texture"),
-            size: document_extent,
-            mip_level_count: crate::mipmap::max_mipmaps(document_extent),
-            sample_count: 1,
-            // array_layer_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: crate::config::TEXTURE_FORMAT,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::STORAGE,
-        },
-    ));
+    // let temp_document_frame = Arc::new(Texture::new(
+    //     &device,
+    //     wgpu::TextureDescriptor {
+    //         label: Some("Temp frame texture"),
+    //         size: document_extent,
+    //         mip_level_count: crate::mipmap::max_mipmaps(document_extent),
+    //         sample_count: 1,
+    //         // array_layer_count: 1,
+    //         dimension: wgpu::TextureDimension::D2,
+    //         format: crate::config::TEXTURE_FORMAT,
+    //         usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::STORAGE,
+    //     },
+    // ));
 
-    let scratch_texture = Arc::new(Texture::new(
-        &device,
-        wgpu::TextureDescriptor {
-            label: Some("Scratch texture"),
-            size: document_extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            // array_layer_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: crate::config::TEXTURE_FORMAT,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::STORAGE,
-        },
-    ));
+    // let scratch_texture = Arc::new(Texture::new(
+    //     &device,
+    //     wgpu::TextureDescriptor {
+    //         label: Some("Scratch texture"),
+    //         size: document_extent,
+    //         mip_level_count: 1,
+    //         sample_count: 1,
+    //         // array_layer_count: 1,
+    //         dimension: wgpu::TextureDimension::D2,
+    //         format: crate::config::TEXTURE_FORMAT,
+    //         usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::STORAGE,
+    //     },
+    // ));
 
     let start_time = Instant::now();
 
@@ -1551,18 +1557,18 @@ pub fn main() {
             }
 
             // {
-            let msaa_render_target = RenderTexture::from(multisampled_render_target.as_ref().unwrap().clone());
-            let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
-            let mut hl_encoder = Encoder {
-                device: &device,
-                encoder: &mut encoder,
-                multisampled_render_target: Some(msaa_render_target.default_view()),
-                target_texture: frame.default_view(),
-                depth_texture_view: depth_target.default_view(),
-                blitter: &blitter,
-                resolution: document_extent,
-                scratch_texture: scratch_texture.clone(),
-            };
+            // let msaa_render_target = RenderTexture::from(multisampled_render_target.as_ref().unwrap().clone());
+            // let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
+            // let mut hl_encoder = Encoder {
+            //     device: &device,
+            //     encoder: &mut encoder,
+            //     multisampled_render_target: Some(msaa_render_target.default_view()),
+            //     target_texture: frame.default_view(),
+            //     depth_texture_view: depth_target.default_view(),
+            //     blitter: &blitter,
+            //     resolution: document_extent,
+            //     scratch_texture: scratch_texture.clone(),
+            // };
 
             // render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
 
@@ -1576,34 +1582,34 @@ pub fn main() {
                 .update(&ui_view, &device, &mut encoder, &mut staging_belt);
 
             {
-                {
-                    let msaa_render_target =
-                        RenderTexture::from(multisampled_render_target_document.as_ref().unwrap().clone());
-                    let render_target = RenderTexture::from(temp_document_frame.clone());
-                    let depth_target = RenderTexture::from(depth_texture_document.as_ref().unwrap().clone());
-                    let mut hl_encoder = Encoder {
-                        device: &device,
-                        encoder: &mut encoder,
-                        multisampled_render_target: Some(msaa_render_target.default_view()),
-                        target_texture: render_target.get_mip_level_view(0).unwrap(),
-                        depth_texture_view: depth_target.default_view(),
-                        blitter: &blitter,
-                        resolution: document_extent,
-                        scratch_texture: scratch_texture.clone(),
-                    };
-                    // render_main_view(&scene);
+                //     {
+                //         let msaa_render_target =
+                //             RenderTexture::from(multisampled_render_target_document.as_ref().unwrap().clone());
+                //         let render_target = RenderTexture::from(temp_document_frame.clone());
+                //         let depth_target = RenderTexture::from(depth_texture_document.as_ref().unwrap().clone());
+                //         let mut hl_encoder = Encoder {
+                //             device: &device,
+                //             encoder: &mut encoder,
+                //             multisampled_render_target: Some(msaa_render_target.default_view()),
+                //             target_texture: render_target.get_mip_level_view(0).unwrap(),
+                //             depth_texture_view: depth_target.default_view(),
+                //             blitter: &blitter,
+                //             resolution: document_extent,
+                //             scratch_texture: scratch_texture.clone(),
+                //         };
+                //         // render_main_view(&scene);
 
-                    if scene.draw_background {
-                        // render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
-                    } else {
-                        hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background clear pass"));
-                    }
+                //         if scene.draw_background {
+                //             // render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
+                //         } else {
+                //             hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background clear pass"));
+                //         }
 
-                    document_renderer1
-                        .as_ref()
-                        .unwrap()
-                        .render(&mut hl_encoder, &dummy_view);
-                }
+                //         document_renderer1
+                //             .as_ref()
+                //             .unwrap()
+                //             .render(&mut hl_encoder, &dummy_view);
+                //     }
 
                 // blitter.rgb_to_srgb(
                 //     &device,
@@ -1694,6 +1700,13 @@ pub fn main() {
                         CanvasRect::from_size(doc_size.cast()),
                         canvas_in_screen_space.cast_unit(),
                     );
+
+                    framebuffer =
+                        document_renderer2
+                            .as_ref()
+                            .unwrap()
+                            .render_node(&mut render_graph, framebuffer, &scene.view);
+
                     let mut render_graph_compiler = crate::render_graph::RenderGraphCompiler {
                         device: &device,
                         encoder: &mut encoder,

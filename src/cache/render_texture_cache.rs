@@ -15,17 +15,16 @@ impl RenderTextureCache {
         self.render_textures.push(rt);
     }
 
-    pub fn temporary_render_texture(
-        &mut self,
-        device: &Device,
-        size: Size2D<u32>,
-        format: TextureFormat,
-        mipmaps: bool,
-        usage: TextureUsage,
-    ) -> RenderTexture {
-        puffin::profile_function!();
-        let best_tex = self
-            .render_textures
+    pub fn clear(&mut self) {
+        self.render_textures.clear();
+    }
+
+    pub fn has(&self, size: Size2D<u32>, format: TextureFormat, mipmaps: bool, usage: TextureUsage) -> bool {
+        self.try_get(size, format, mipmaps, usage).is_some()
+    }
+
+    fn try_get(&self, size: Size2D<u32>, format: TextureFormat, mipmaps: bool, usage: TextureUsage) -> Option<usize> {
+        self.render_textures
             .iter()
             .enumerate()
             .filter(|(_, t)| {
@@ -48,7 +47,19 @@ impl RenderTextureCache {
                     && tsize.width * tsize.height <= size.area() * 4
             })
             .min_by_key(|(_i, t)| t.size().width * t.size().height)
-            .map(|(i, _t)| i);
+            .map(|(i, _t)| i)
+    }
+
+    pub fn temporary_render_texture(
+        &mut self,
+        device: &Device,
+        size: Size2D<u32>,
+        format: TextureFormat,
+        mipmaps: bool,
+        usage: TextureUsage,
+    ) -> RenderTexture {
+        puffin::profile_function!();
+        let best_tex = self.try_get(size, format, mipmaps, usage);
 
         if let Some(index) = best_tex {
             self.render_textures.swap_remove(index)

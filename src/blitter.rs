@@ -8,9 +8,9 @@ use crate::wgpu_utils::*;
 use crate::{shader::load_shader, vertex::GPUVertex};
 use lyon::math::*;
 use wgpu::{
-    AddressMode, BindGroup, BindGroupLayout, Buffer, CommandEncoder, ComputePipeline, ComputePipelineDescriptor,
-    DepthStencilState, Device, FilterMode, PipelineLayoutDescriptor, RenderPass, RenderPipeline,
-    RenderPipelineDescriptor, Sampler, SamplerDescriptor, TextureView,
+    AddressMode, BindGroup, BindGroupLayout, BlendState, Buffer, CommandEncoder, ComputePipeline,
+    ComputePipelineDescriptor, DepthStencilState, Device, FilterMode, PipelineLayoutDescriptor, RenderPass,
+    RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerDescriptor, TextureView,
 };
 
 #[repr(C)]
@@ -176,6 +176,7 @@ impl Blitter {
         let material = Material::from_consecutive_entries(
             device,
             "blit material",
+            BlendState::REPLACE,
             bind_group_layout.clone(),
             vec![
                 BindingResourceArc::sampler(Some(sampler.clone())),

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::cache::material_cache::{BindingResourceArc, Material};
 use crate::shader::load_shader;
 use crate::texture::Texture;
-use wgpu::{BindGroupLayout, CommandEncoder, ComputePipeline, Device, Extent3d, TextureViewDimension};
+use wgpu::{BindGroupLayout, BlendState, CommandEncoder, ComputePipeline, Device, Extent3d, TextureViewDimension};
 
 pub struct Mipmapper {
     pub pipeline: Arc<ComputePipeline>,
@@ -58,6 +58,7 @@ impl Mipmapper {
         let material = Arc::new(Material::from_consecutive_entries(
             device,
             "mipmap",
+            BlendState::REPLACE,
             bind_group_layout.clone(),
             vec![BindingResourceArc::texture(None), BindingResourceArc::texture(None)],
         ));

@@ -6,7 +6,7 @@ use std::{
 };
 
 use by_address::ByAddress;
-use wgpu::{BindGroup, BindGroupDescriptor, BindGroupLayout, Device, Sampler};
+use wgpu::{BindGroup, BindGroupDescriptor, BindGroupLayout, BlendState, Device, Sampler};
 
 use crate::texture::{RenderTexture, Texture};
 
@@ -17,6 +17,13 @@ pub struct Material {
     label: String,
     bindings: Vec<BindGroupEntryArc>,
     bind_group: Option<Rc<BindGroup>>,
+    pub blend: BlendState,
+}
+
+impl std::fmt::Debug for Material {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Material({})", self.label)
+    }
 }
 
 impl Material {
@@ -31,6 +38,7 @@ impl Material {
     pub fn new(
         device: &Device,
         label: String,
+        blend: BlendState,
         bind_group_layout: Arc<BindGroupLayout>,
         bindings: Vec<BindGroupEntryArc>,
     ) -> Material {
@@ -40,12 +48,14 @@ impl Material {
             label,
             bindings,
             bind_group,
+            blend,
         }
     }
 
     pub fn from_consecutive_entries(
         device: &Device,
         label: &str,
+        blend: BlendState,
         bind_group_layout: Arc<BindGroupLayout>,
         bindings: Vec<BindingResourceArc>,
     ) -> Material {
@@ -57,7 +67,7 @@ impl Material {
                 resource,
             })
             .collect::<Vec<_>>();
-        Self::new(device, label.to_string(), bind_group_layout, entries)
+        Self::new(device, label.to_string(), blend, bind_group_layout, entries)
     }
 
     fn bind_group_from_entries(
@@ -91,6 +101,7 @@ impl Material {
             label: self.label.clone(),
             bindings: new_bindings,
             bind_group,
+            blend: self.blend,
         }
     }
 }

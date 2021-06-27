@@ -9,10 +9,21 @@ pub struct EphermalBufferCache {
     chunks: HashMap<BufferUsage, Vec<Chunk>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BufferRange {
     pub buffer: Arc<Buffer>,
     pub range: Range<BufferAddress>,
+}
+
+impl std::fmt::Debug for BufferRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "BufferRange({:x}, {:?})",
+            Arc::as_ptr(&self.buffer) as u64,
+            self.range
+        )
+    }
 }
 
 impl BufferRange {

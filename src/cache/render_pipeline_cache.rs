@@ -65,6 +65,12 @@ pub struct RenderPipelineBase {
     pub target_count: usize,
 }
 
+impl std::fmt::Debug for RenderPipelineBase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RenderPipelineBase({})", self.label)
+    }
+}
+
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct RenderPipelineKey {
     pub base: ByAddress<Arc<RenderPipelineBase>>,
