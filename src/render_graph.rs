@@ -435,39 +435,6 @@ impl<'a> RenderGraphCompiler<'a> {
             .cast_unit()
     }
 
-    fn push_compute_op(
-        passes: &mut Vec<CompiledPass>,
-        target_pass: PassIndex,
-        op: CompiledComputePrimitive,
-    ) -> PassIndex {
-        if let CompiledPass::ComputePass { ops, .. } = &mut passes[target_pass] {
-            ops.push(op);
-            target_pass
-        } else {
-            passes.push(CompiledPass::ComputePass { ops: vec![op] });
-            passes.len() - 1
-        }
-    }
-
-    fn push_render_op(
-        passes: &mut Vec<CompiledPass>,
-        target_texture: &RenderTexture,
-        target_pass: PassIndex,
-        op: CompiledRenderingPrimitive,
-    ) -> PassIndex {
-        if let CompiledPass::RenderPass { ops, .. } = &mut passes[target_pass] {
-            ops.push(op);
-            target_pass
-        } else {
-            passes.push(CompiledPass::RenderPass {
-                target: target_texture.to_owned(),
-                clear: Some(LoadOp::Load),
-                ops: vec![op],
-            });
-            passes.len() - 1
-        }
-    }
-
     fn push_render_op_top(
         passes: &mut Vec<CompiledPass>,
         target_texture: &RenderTexture,
