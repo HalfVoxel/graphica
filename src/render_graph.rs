@@ -15,7 +15,7 @@ use crate::{
     cache::material_cache::{BindGroupEntryArc, BindingResourceArc, MaterialCache},
     cache::render_texture_cache::RenderTextureCache,
     cache::{
-        material_cache::Material,
+        material_cache::{DynamicMaterial, Material},
         render_pipeline_cache::{CachedRenderPipeline, RenderPipelineBase, RenderPipelineCache, RenderPipelineKey},
     },
     geometry_utilities::types::{CanvasRect, UVRect},
@@ -33,6 +33,24 @@ struct Blit {
     blend: BlendState,
 }
 
+#[derive(Clone, Debug)]
+pub enum RenderGraphMaterial {
+    Material(Arc<Material>),
+    DynamicMaterial(DynamicMaterial),
+}
+
+impl From<Arc<Material>> for RenderGraphMaterial {
+    fn from(material: Arc<Material>) -> Self {
+        Self::Material(material)
+    }
+}
+
+impl From<DynamicMaterial> for RenderGraphMaterial {
+    fn from(material: DynamicMaterial) -> Self {
+        Self::DynamicMaterial(material)
+    }
+}
+
 #[derive(Default)]
 pub struct RenderGraph {
     nodes: Vec<RenderingPrimitive>,
@@ -48,16 +66,22 @@ enum RenderingPrimitive {
         vbo: BufferRange,
         ibo: BufferRange,
         pipeline: Arc<RenderPipelineBase>,
-        material: Arc<Material>,
+        material: RenderGraphMaterial,
     },
     Quad {
         target: GraphNode,
         rect: CanvasRect,
         pipeline: Arc<RenderPipelineBase>,
-        material: Arc<Material>,
+        material: RenderGraphMaterial,
     },
     GenerateMipmaps {
         target: GraphNode,
+    },
+    Compute {
+        target: GraphNode,
+        pipeline: Arc<ComputePipeline>,
+        material: RenderGraphMaterial,
+        dispatch_size: (u32, u32, u32),
     },
 }
 
@@ -65,6 +89,18 @@ impl RenderingPrimitive {
     fn reads(&self) -> impl Iterator<Item = GraphNode> {
         match self {
             RenderingPrimitive::Blit(Blit { source, .. }) => vec![source.clone()].into_iter(),
+            RenderingPrimitive::Quad { material, .. } | RenderingPrimitive::Mesh { material, .. } => match material {
+                RenderGraphMaterial::Material(_) => vec![].into_iter(),
+                RenderGraphMaterial::DynamicMaterial(m) => m
+                    .overrides
+                    .iter()
+                    .filter_map(|e| match &e.resource {
+                        BindingResourceArc::GraphNode(node) => Some(node.to_owned()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            },
             _ => vec![].into_iter(),
         }
     }
@@ -77,11 +113,30 @@ impl RenderingPrimitive {
             RenderingPrimitive::Mesh { target, .. } => Some(target.clone()),
             RenderingPrimitive::Quad { target, .. } => Some(target.clone()),
             RenderingPrimitive::GenerateMipmaps { target } => Some(target.clone()),
+            RenderingPrimitive::Compute { target, .. } => Some(target.clone()),
         }
     }
 
     fn writes(&self) -> impl Iterator<Item = GraphNode> {
-        self.target().into_iter()
+        if let RenderingPrimitive::Compute {
+            material: RenderGraphMaterial::DynamicMaterial(m),
+            ..
+        } = self
+        {
+            // Assume all compute resources are read/write
+            // TODO: Not necessarily true
+            return m
+                .overrides
+                .iter()
+                .filter_map(|e| match &e.resource {
+                    BindingResourceArc::GraphNode(node) => Some(node.to_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .into_iter();
+        }
+
+        self.target().into_iter().collect::<Vec<_>>().into_iter()
     }
 }
 
@@ -96,6 +151,11 @@ pub enum CompiledComputePrimitive {
         target: RenderTexture,
         pipeline: Arc<ComputePipeline>,
         bind_groups: Vec<Rc<BindGroup>>,
+    },
+    Compute {
+        bind_group: Rc<BindGroup>,
+        pipeline: Arc<ComputePipeline>,
+        dispatch_size: (u32, u32, u32),
     },
 }
 
@@ -136,14 +196,14 @@ impl RenderGraph {
         vbo: BufferRange,
         ibo: BufferRange,
         pipeline: Arc<RenderPipelineBase>,
-        material: Arc<Material>,
+        material: impl Into<RenderGraphMaterial>,
     ) -> GraphNode {
         self.push_primitive(RenderingPrimitive::Mesh {
             target,
             vbo,
             ibo,
             pipeline,
-            material,
+            material: material.into(),
         })
     }
 
@@ -152,13 +212,13 @@ impl RenderGraph {
         target: GraphNode,
         rect: CanvasRect,
         pipeline: Arc<RenderPipelineBase>,
-        material: Arc<Material>,
+        material: impl Into<RenderGraphMaterial>,
     ) -> GraphNode {
         self.push_primitive(RenderingPrimitive::Quad {
             target,
             rect,
             pipeline,
-            material,
+            material: material.into(),
         })
     }
 
@@ -193,6 +253,21 @@ impl RenderGraph {
             target_rect,
             blend,
         }))
+    }
+
+    pub fn compute(
+        &mut self,
+        target: GraphNode,
+        pipeline: Arc<ComputePipeline>,
+        material: impl Into<RenderGraphMaterial>,
+        dispatch_size: (u32, u32, u32),
+    ) -> GraphNode {
+        self.push_primitive(RenderingPrimitive::Compute {
+            target,
+            pipeline,
+            material: material.into(),
+            dispatch_size,
+        })
     }
 
     pub fn generate_mipmaps(&mut self, target: GraphNode) -> GraphNode {
@@ -324,6 +399,9 @@ impl<'a> RenderGraphCompiler<'a> {
                     usage.usages |= TextureUsage::STORAGE;
                     usage.requires_mipmaps = true;
                 }
+                RenderingPrimitive::Compute { .. } => {
+                    usage.usages |= TextureUsage::STORAGE;
+                }
             }
 
             if let Some(target) = nodes[i].target() {
@@ -331,9 +409,24 @@ impl<'a> RenderGraphCompiler<'a> {
                 usages[target.index].usages |= usage.usages;
             }
 
+            if let RenderingPrimitive::Compute { .. } = &nodes[i] {
+                for write in nodes[i].writes() {
+                    // Assume compute writes are storage textures. TODO: Not necessarily true.
+                    usages[write.index].usages |= TextureUsage::STORAGE;
+                }
+            }
+
             for source in nodes[i].reads() {
-                // Assume reads are sampled with texture samplers. TODO: Not necessarily true.
-                usages[source.index].usages |= TextureUsage::SAMPLED;
+                match &nodes[i] {
+                    RenderingPrimitive::Compute { .. } => {
+                        // Assume compute reads are storage textures. TODO: Not necessarily true.
+                        usages[source.index].usages |= TextureUsage::STORAGE;
+                    }
+                    _ => {
+                        // Assume reads are sampled with texture samplers. TODO: Not necessarily true.
+                        usages[source.index].usages |= TextureUsage::SAMPLED;
+                    }
+                }
             }
 
             usages[i] = usage;
@@ -462,6 +555,34 @@ impl<'a> RenderGraphCompiler<'a> {
         }
     }
 
+    fn resolve_dynamic_material<'b>(
+        device: &Device,
+        material_cache: &'b mut MaterialCache,
+        material: &'b RenderGraphMaterial,
+        usages: &[Usage],
+        logical_to_physical_render_targets: &[RenderTexture],
+    ) -> &'b Arc<Material> {
+        match material {
+            RenderGraphMaterial::Material(material) => material,
+            RenderGraphMaterial::DynamicMaterial(material) => {
+                let overrides = material
+                    .overrides
+                    .iter()
+                    .map(|e| BindGroupEntryArc {
+                        binding: e.binding,
+                        resource: match &e.resource {
+                            BindingResourceArc::GraphNode(node) => BindingResourceArc::render_texture(Some(
+                                logical_to_physical_render_targets[usages[node.index].logical_render_target].clone(),
+                            )),
+                            x => x.clone(),
+                        },
+                    })
+                    .collect::<Vec<_>>();
+                material_cache.override_material(device, &material.material, &overrides)
+            }
+        }
+    }
+
     fn topological_sort(
         &mut self,
         nodes: &[RenderingPrimitive],
@@ -471,7 +592,7 @@ impl<'a> RenderGraphCompiler<'a> {
         // May contain duplicates due to aliasing.
         mut logical_to_physical_render_targets: Vec<Option<RenderTexture>>,
     ) -> (Vec<GraphNode>, Vec<RenderTexture>) {
-        #[derive(Default, Clone)]
+        #[derive(Default, Clone, Debug)]
         struct TopSortNode {
             remaining_dependencies: u32,
             remaining_reads_from_self: Vec<GraphNode>,
@@ -493,6 +614,7 @@ impl<'a> RenderGraphCompiler<'a> {
             .iter()
             .map(|x| x.is_some() as usize)
             .collect::<Vec<_>>();
+        let original_refcounts = logical_render_target_refcount.clone();
         let mut logical_render_target_pressure = vec![0; logical_to_physical_render_targets.len()];
 
         que.push_front(start_node.clone());
@@ -658,10 +780,32 @@ impl<'a> RenderGraphCompiler<'a> {
             }
         }
 
+        if sorted.len() < nodes.len() {
+            dbg!(topgraph
+                .iter()
+                .enumerate()
+                .zip(nodes.iter())
+                .filter(|((i, _), _)| !sorted.contains(&GraphNode { index: *i }))
+                .collect::<Vec<_>>());
+            panic!(
+                "Topological sort couldn't sort all nodes. Sorted {} out of {}",
+                sorted.len(),
+                nodes.len()
+            );
+        }
+
         let logical_to_physical_render_targets = logical_to_physical_render_targets
             .into_iter()
             .map(Option::unwrap)
             .collect::<Vec<_>>();
+
+        if original_refcounts != logical_render_target_refcount {
+            panic!(
+                "Leaking render targets.\nExpected refcounts: {:?}, but found: {:?}.\nRender target allocation: {:?}",
+                original_refcounts, logical_render_target_refcount, logical_to_physical_render_targets
+            );
+        }
+
         (sorted, logical_to_physical_render_targets)
 
         // 1. Define graph
@@ -773,6 +917,14 @@ impl<'a> RenderGraphCompiler<'a> {
                         &[0, 1, 2, 3, 2, 0],
                     );
 
+                    let material = Self::resolve_dynamic_material(
+                        self.device,
+                        self.material_cache,
+                        material,
+                        &usages,
+                        &logical_to_physical_render_targets,
+                    );
+
                     let op = CompiledRenderingPrimitive::Render {
                         vbo,
                         ibo,
@@ -801,6 +953,13 @@ impl<'a> RenderGraphCompiler<'a> {
                     pipeline,
                     material,
                 } => {
+                    let material = Self::resolve_dynamic_material(
+                        self.device,
+                        self.material_cache,
+                        material,
+                        &usages,
+                        &logical_to_physical_render_targets,
+                    );
                     let op = CompiledRenderingPrimitive::Render {
                         vbo: vbo.to_owned(),
                         ibo: ibo.to_owned(),
@@ -821,7 +980,7 @@ impl<'a> RenderGraphCompiler<'a> {
                     };
                     Self::push_render_op_top(passes, target_texture, op);
                 }
-                RenderingPrimitive::GenerateMipmaps { target } => {
+                RenderingPrimitive::GenerateMipmaps { .. } => {
                     let bind_groups = (1..target_texture.mip_level_count())
                         .map(|mip_level| {
                             puffin::profile_scope!("create bind group");
@@ -853,6 +1012,28 @@ impl<'a> RenderGraphCompiler<'a> {
                             target: target_texture.to_owned(),
                             pipeline: self.mipmapper.pipeline.clone(),
                             bind_groups,
+                        },
+                    )
+                }
+                RenderingPrimitive::Compute {
+                    pipeline,
+                    material,
+                    dispatch_size,
+                    ..
+                } => {
+                    let material = Self::resolve_dynamic_material(
+                        self.device,
+                        self.material_cache,
+                        material,
+                        &usages,
+                        &logical_to_physical_render_targets,
+                    );
+                    Self::push_compute_op_top(
+                        passes,
+                        CompiledComputePrimitive::Compute {
+                            bind_group: material.bind_group().clone(),
+                            pipeline: pipeline.to_owned(),
+                            dispatch_size: *dispatch_size,
                         },
                     )
                 }
@@ -956,6 +1137,17 @@ impl<'a> RenderGraphCompiler<'a> {
                                             );
                                         });
                                     }
+                                });
+                            }
+                            CompiledComputePrimitive::Compute {
+                                bind_group,
+                                pipeline,
+                                dispatch_size,
+                            } => {
+                                wgpu_profiler!("op:compute", self.gpu_profiler, &mut cpass, &self.device, {
+                                    cpass.set_pipeline(pipeline);
+                                    cpass.set_bind_group(0, bind_group, &[]);
+                                    cpass.dispatch(dispatch_size.0, dispatch_size.1, dispatch_size.2);
                                 });
                             }
                         }

@@ -8,7 +8,10 @@ use std::{
 use by_address::ByAddress;
 use wgpu::{BindGroup, BindGroupDescriptor, BindGroupLayout, BlendState, Device, Sampler};
 
-use crate::texture::{RenderTexture, Texture};
+use crate::{
+    render_graph::GraphNode,
+    texture::{RenderTexture, Texture},
+};
 
 use super::ephermal_buffer_cache::BufferRange;
 
@@ -107,6 +110,18 @@ impl Material {
 }
 
 #[derive(Clone, Debug)]
+pub struct DynamicMaterial {
+    pub material: Arc<Material>,
+    pub overrides: Vec<BindGroupEntryArc>,
+}
+
+impl DynamicMaterial {
+    pub fn new(material: Arc<Material>, overrides: Vec<BindGroupEntryArc>) -> Self {
+        Self { material, overrides }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct BindGroupEntryArc {
     pub binding: u32,
     pub resource: BindingResourceArc,
@@ -127,6 +142,8 @@ pub enum BindingResourceArc {
     // It is there to work around a rustc ICE
     Sampler(Option<ByAddress<Arc<Sampler>>>),
     Texture(Option<RenderTexture>),
+    // Will be resolved to a `Texture`.
+    GraphNode(GraphNode),
     Mipmap(Option<(RenderTexture, u32)>),
     Buffer(Option<BufferRange>),
 }
@@ -163,6 +180,10 @@ impl BindingResourceArc {
 
     pub fn render_texture(texture: Option<RenderTexture>) -> Self {
         Self::Texture(texture)
+    }
+
+    pub fn graph_node(texture: GraphNode) -> Self {
+        Self::GraphNode(texture)
     }
 
     pub fn hashcode(&self) -> u64 {

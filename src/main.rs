@@ -20,7 +20,9 @@ use crate::blitter::BlitOp;
 use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex};
 use crate::cache::ephermal_buffer_cache::BufferRange;
 use crate::cache::ephermal_buffer_cache::EphermalBufferCache;
+use crate::cache::material_cache::BindGroupEntryArc;
 use crate::cache::material_cache::BindingResourceArc;
+use crate::cache::material_cache::DynamicMaterial;
 use crate::cache::material_cache::Material;
 use crate::cache::material_cache::MaterialCache;
 use crate::cache::render_pipeline_cache::RenderPipelineBase;
@@ -161,7 +163,7 @@ struct DocumentRenderer {
     vector_material: Arc<Material>,
     // index_buffer_length: usize,
     render_pipeline: Arc<RenderPipelineBase>,
-    brush_renderer: BrushRenderer,
+    brush_renderer: BrushRendererWithReadbackBatched,
 }
 
 pub struct BrushRenderer {
@@ -221,14 +223,14 @@ struct BrushUniforms {
 }
 
 pub struct BrushRendererWithReadback {
-    ibo: Buffer,
-    vbo: Buffer,
+    ibo: BufferRange,
+    vbo: BufferRange,
     brush_manager: Rc<BrushManager>,
-    temp_texture_view: wgpu::TextureView,
-    sampler: wgpu::Sampler,
+    material: Arc<Material>,
     points: Vec<(usize, CanvasPoint)>,
     size: f32,
-    brush_texture: Arc<Texture>,
+    width_in_pixels: u32,
+    view: CanvasView,
 }
 
 impl BrushRendererWithReadback {
@@ -238,8 +240,7 @@ impl BrushRendererWithReadback {
         view: &CanvasView,
         device: &Device,
         _encoder: &mut CommandEncoder,
-        _scene_ubo: &Buffer,
-        _scene_ubo_size: u64,
+        _scene_ubo: &BufferRange,
         brush_manager: &Rc<BrushManager>,
         texture: &Arc<Texture>,
     ) -> BrushRendererWithReadback {
@@ -288,15 +289,15 @@ impl BrushRendererWithReadback {
             })
             .collect();
 
-        let (vbo, _) = create_buffer(device, &vertices, wgpu::BufferUsage::VERTEX, None);
+        let vbo = create_buffer_range(device, &vertices, wgpu::BufferUsage::VERTEX, None);
 
         #[allow(clippy::identity_op)]
         let indices: Vec<u32> = (0..points.len() as u32)
             .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
             .collect();
-        let (ibo, _) = create_buffer(device, &indices, wgpu::BufferUsage::INDEX, None);
+        let ibo = create_buffer_range(device, &indices, wgpu::BufferUsage::INDEX, None);
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = Arc::new(device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -309,39 +310,87 @@ impl BrushRendererWithReadback {
             anisotropy_clamp: None,
             border_color: None,
             label: None,
-        });
+        }));
 
         let width_in_pixels = (2.0 * (CanvasLength::new(size) * view.canvas_to_screen_scale()).get()).round() as u32;
 
-        let texture_extent = wgpu::Extent3d {
-            width: width_in_pixels,
-            height: width_in_pixels,
-            depth_or_array_layers: 1,
-        };
-
-        let temp_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Temp texture"),
-            size: texture_extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            // array_layer_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: crate::config::TEXTURE_FORMAT,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT,
-        });
-
-        let temp_texture_view = temp_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let material = Arc::new(Material::from_consecutive_entries(
+            device,
+            "clone brush",
+            BlendState::REPLACE,
+            brush_manager.splat_with_readback.bind_group_layout.clone(),
+            vec![
+                BindingResourceArc::sampler(Some(sampler)),
+                BindingResourceArc::render_texture(None),
+                BindingResourceArc::texture(Some(texture.clone())),
+            ],
+        ));
 
         Self {
             brush_manager: brush_manager.clone(),
-            temp_texture_view,
             vbo,
             ibo,
-            sampler,
             points,
             size,
-            brush_texture: texture.clone(),
+            width_in_pixels,
+            material,
+            view: *view,
         }
+    }
+
+    pub fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
+        if self.points.len() <= 1 {
+            return target;
+        }
+
+        let to_screen_pos = |v: CanvasPoint| self.view.canvas_to_screen_point(v);
+
+        for (mut i, (_, p)) in self.points.iter().enumerate() {
+            // First point is a noop
+            if i == 0 {
+                continue;
+            }
+            i -= 1;
+
+            // First pass
+            let mut scratch = render_graph.clear(
+                size(self.width_in_pixels, self.width_in_pixels),
+                wgpu::Color::TRANSPARENT,
+            );
+            let mut ibo = self.ibo.clone();
+            ibo.range.start += ((i * 6) * std::mem::size_of::<u32>()) as u64;
+            ibo.range.end = self.ibo.range.start + (((i + 1) * 6) * std::mem::size_of::<u32>()) as u64;
+            let material = DynamicMaterial::new(
+                self.material.clone(),
+                vec![BindGroupEntryArc {
+                    binding: 1,
+                    resource: BindingResourceArc::graph_node(target.clone()),
+                }],
+            );
+            scratch = render_graph.mesh(
+                scratch,
+                self.vbo.clone(),
+                ibo,
+                self.brush_manager.splat_with_readback.pipeline.clone(),
+                material,
+            );
+
+            // Second pass: copy back
+            let mn = to_screen_pos(*p - vector(self.size, self.size));
+            let mx = to_screen_pos(*p + vector(self.size, self.size));
+            let r = CanvasRect::new(mn.cast_unit(), size(mx.x - mn.x, mx.y - mn.y));
+            target = render_graph.blit(
+                scratch,
+                target,
+                CanvasRect::new(
+                    point(0.0, 0.0),
+                    size(self.width_in_pixels as f32, self.width_in_pixels as f32),
+                ),
+                r,
+            );
+        }
+
+        target
     }
 
     pub fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
@@ -429,14 +478,13 @@ impl BrushRendererWithReadback {
 }
 
 pub struct BrushRendererWithReadbackBatched {
-    ubo: Buffer,
-    ubo_size: u64,
+    ubo: BufferRange,
     brush_manager: Rc<BrushManager>,
     size_in_pixels: u32,
-    temp_texture_view: wgpu::TextureView,
     points: Vec<(usize, CanvasPoint)>,
     brush_texture: Arc<Texture>,
-    sampler: wgpu::Sampler,
+    sampler: Arc<wgpu::Sampler>,
+    material: Arc<Material>,
 }
 
 #[repr(C, align(16))]
@@ -460,14 +508,13 @@ impl BrushRendererWithReadbackBatched {
         _view: &CanvasView,
         device: &Device,
         _encoder: &mut CommandEncoder,
-        _scene_ubo: &Buffer,
-        _scene_ubo_size: u64,
+        _scene_ubo: &BufferRange,
         brush_manager: &Rc<BrushManager>,
         texture: &Arc<Texture>,
     ) -> BrushRendererWithReadbackBatched {
         let points = sample_points_along_curve(&brush_data.path, 1.41);
 
-        let size_in_pixels = 32;
+        let size_in_pixels = 64;
         let offset = -vector(size_in_pixels as f32 * 0.5, size_in_pixels as f32 * 0.5);
         let primitives: Vec<ReadbackPrimitive> = points
             .windows(2)
@@ -482,31 +529,11 @@ impl BrushRendererWithReadbackBatched {
             })
             .collect();
 
-        let (ubo, ubo_size) = create_buffer(device, &primitives, wgpu::BufferUsage::STORAGE, None);
+        let ubo = create_buffer_range(device, &primitives, wgpu::BufferUsage::STORAGE, None);
 
         const LOCAL_SIZE: u32 = 32;
-        let width_per_group = (size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
 
-        let texture_extent = wgpu::Extent3d {
-            width: width_per_group * 32,
-            height: width_per_group * 32,
-            depth_or_array_layers: 1,
-        };
-
-        let temp_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Temp texture"),
-            size: texture_extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            // array_layer_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: crate::config::TEXTURE_FORMAT,
-            usage: wgpu::TextureUsage::STORAGE,
-        });
-
-        let temp_texture_view = temp_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = Arc::new(device.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -519,90 +546,151 @@ impl BrushRendererWithReadbackBatched {
             compare: None,
             anisotropy_clamp: None,
             border_color: None,
-        });
+        }));
 
-        // let width_in_pixels = (2.0 * (CanvasLength::new(size) * view.canvas_to_screen_scale()).get()).round() as u32;
+        let width_per_group = (size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
+        let height_per_group = (size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
 
-        Self {
-            brush_manager: brush_manager.clone(),
-            ubo,
-            ubo_size,
-            size_in_pixels,
-            temp_texture_view,
-            sampler,
-            points,
-            brush_texture: texture.clone(),
-        }
-    }
-
-    pub fn render(&self, encoder: &mut Encoder, _view: &CanvasView) {
-        if self.ubo_size == 0 {
-            return;
-        }
-
-        const LOCAL_SIZE: u32 = 32;
-
-        let width_per_group = (self.size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
-        let height_per_group = (self.size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
-
-        let (settings_ubo, settings_ubo_size) = create_buffer(
-            encoder.device,
+        let settings_ubo = create_buffer_range(
+            device,
             &[ReadbackUniforms {
                 width_per_group: width_per_group as i32,
                 height_per_group: height_per_group as i32,
-                num_primitives: self.points.len() as i32 - 1,
+                num_primitives: points.len() as i32 - 1,
             }],
             wgpu::BufferUsage::UNIFORM,
             "Readback settings",
         );
 
-        let bind_group = encoder.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.brush_manager.splat_with_readback_batched.bind_group_layout,
-            label: Some("Clone brush Bind Group"),
-            entries: &[
-                wgpu::BindGroupEntry {
+        let material = Arc::new(Material::from_consecutive_entries(
+            device,
+            "clone brush",
+            BlendState::REPLACE,
+            brush_manager.splat_with_readback_batched.bind_group_layout.clone(),
+            vec![
+                BindingResourceArc::texture(None),
+                BindingResourceArc::texture(None),
+                BindingResourceArc::sampler(Some(sampler.clone())),
+                BindingResourceArc::texture(Some(texture.to_owned())),
+                BindingResourceArc::buffer(Some(ubo.clone())),
+                BindingResourceArc::buffer(Some(settings_ubo)),
+            ],
+        ));
+
+        Self {
+            brush_manager: brush_manager.clone(),
+            ubo,
+            size_in_pixels,
+            sampler,
+            points,
+            brush_texture: texture.clone(),
+            material,
+        }
+    }
+
+    pub fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
+        if self.ubo.size() == 0 {
+            return target;
+        }
+
+        let scratch = render_graph.clear(size(self.size_in_pixels, self.size_in_pixels), wgpu::Color::RED);
+        let material = DynamicMaterial::new(
+            self.material.clone(),
+            vec![
+                BindGroupEntryArc {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(encoder.target_texture.view),
+                    resource: BindingResourceArc::graph_node(target.clone()),
                 },
-                wgpu::BindGroupEntry {
+                BindGroupEntryArc {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.temp_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&self.brush_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.ubo,
-                        offset: 0,
-                        // TODO: Use None?
-                        size: Some(NonZeroU64::new(self.ubo_size).unwrap()),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &settings_ubo,
-                        offset: 0,
-                        size: Some(NonZeroU64::new(settings_ubo_size).unwrap()),
-                    }),
+                    resource: BindingResourceArc::graph_node(scratch),
                 },
             ],
-        });
+        );
 
-        let mut cpass = encoder.encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("brush with readback"),
-        });
-        cpass.set_pipeline(&self.brush_manager.splat_with_readback_batched.pipeline);
-        cpass.set_bind_group(0, &bind_group, &[]);
-        cpass.dispatch(1, 1, 1);
+        render_graph.compute(
+            target,
+            self.brush_manager.splat_with_readback_batched.pipeline.clone(),
+            material,
+            (1, 1, 1),
+        )
     }
+
+    // pub fn render(&self, encoder: &mut Encoder, _view: &CanvasView) {
+    //     if self.ubo.size() == 0 {
+    //         return;
+    //     }
+
+    //     const LOCAL_SIZE: u32 = 32;
+
+    //     let width_per_group = (self.size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
+    //     let height_per_group = (self.size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
+
+    //     let settings_ubo = create_buffer_range(
+    //         encoder.device,
+    //         &[ReadbackUniforms {
+    //             width_per_group: width_per_group as i32,
+    //             height_per_group: height_per_group as i32,
+    //             num_primitives: self.points.len() as i32 - 1,
+    //         }],
+    //         wgpu::BufferUsage::UNIFORM,
+    //         "Readback settings",
+    //     );
+
+    //     DynamicMaterial::new(self.material.clone(), vec![
+    //         BindGroupEntryArc {
+    //             binding: 0,
+    //             resource: BindingResourceArc::graph_node(texture)
+    //         }
+    //     ]);
+
+    //     let bind_group = encoder.device.create_bind_group(&wgpu::BindGroupDescriptor {
+    //         layout: &self.brush_manager.splat_with_readback_batched.bind_group_layout,
+    //         label: Some("Clone brush Bind Group"),
+    //         entries: &[
+    //             wgpu::BindGroupEntry {
+    //                 binding: 0,
+    //                 resource: wgpu::BindingResource::TextureView(encoder.target_texture.view),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 1,
+    //                 resource: wgpu::BindingResource::TextureView(&self.temp_texture_view),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 2,
+    //                 resource: wgpu::BindingResource::Sampler(&self.sampler),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 3,
+    //                 resource: wgpu::BindingResource::TextureView(&self.brush_texture.view),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 4,
+    //                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+    //                     buffer: &self.ubo,
+    //                     offset: 0,
+    //                     // TODO: Use None?
+    //                     size: Some(NonZeroU64::new(self.ubo_size).unwrap()),
+    //                 }),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 5,
+    //                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+    //                     buffer: &settings_ubo,
+    //                     offset: 0,
+    //                     size: Some(NonZeroU64::new(settings_ubo_size).unwrap()),
+    //                 }),
+    //             },
+    //         ],
+    //     });
+
+    //     let mut cpass = encoder.encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+    //         label: Some("brush with readback"),
+    //     });
+    //     cpass.set_pipeline(&self.brush_manager.splat_with_readback_batched.pipeline);
+    //     cpass.set_bind_group(0, &bind_group, &[]);
+    //     cpass.dispatch(1, 1, 1);
+    // }
 }
 
 impl BrushRenderer {
@@ -838,7 +926,7 @@ impl DocumentRenderer {
             ],
         ));
 
-        let brush_renderer = BrushRenderer::new(
+        let brush_renderer = BrushRendererWithReadbackBatched::new(
             &document.brushes,
             view,
             device,

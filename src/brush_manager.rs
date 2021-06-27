@@ -95,8 +95,8 @@ pub struct ShaderBundle {
 }
 
 pub struct ShaderBundleCompute {
-    pub pipeline: ComputePipeline,
-    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub pipeline: Arc<ComputePipeline>,
+    pub bind_group_layout: Arc<wgpu::BindGroupLayout>,
 }
 
 pub struct BrushManager {
@@ -241,70 +241,71 @@ impl BrushManager {
             target_count: 1,
         });
 
-        let bind_group_layout_clone_brush_batched = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        view_dimension: TextureViewDimension::D2,
-                        format: crate::config::TEXTURE_FORMAT,
-                        access: wgpu::StorageTextureAccess::ReadWrite,
+        let bind_group_layout_clone_brush_batched =
+            Arc::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            view_dimension: TextureViewDimension::D2,
+                            format: crate::config::TEXTURE_FORMAT,
+                            access: wgpu::StorageTextureAccess::ReadWrite,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        view_dimension: TextureViewDimension::D2,
-                        format: crate::config::TEXTURE_FORMAT,
-                        access: wgpu::StorageTextureAccess::ReadWrite,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            view_dimension: TextureViewDimension::D2,
+                            format: crate::config::TEXTURE_FORMAT,
+                            access: wgpu::StorageTextureAccess::ReadWrite,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::Sampler {
-                        filtering: true,
-                        comparison: false,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Sampler {
+                            filtering: true,
+                            comparison: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: TextureViewDimension::D2,
-                        multisampled: false,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-            label: None,
-        });
+                ],
+                label: None,
+            }));
 
         let pipeline_layout_clone_brush_batched =
             Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -333,7 +334,7 @@ impl BrushManager {
             },
             splat_with_readback_batched: ShaderBundleCompute {
                 bind_group_layout: bind_group_layout_clone_brush_batched,
-                pipeline: device.create_compute_pipeline(&render_pipeline_descriptor_clone_brush_batched),
+                pipeline: Arc::new(device.create_compute_pipeline(&render_pipeline_descriptor_clone_brush_batched)),
             },
         }
     }
