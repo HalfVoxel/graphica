@@ -682,14 +682,6 @@ impl BrushRenderer {
             "Brush Primitive UBO",
         );
 
-        // let primitive_ubo_transfer = device.create_buffer_with_data(as_u8_slice(&[BrushUniforms { dummy: 0 }]), wgpu::BufferUsage::COPY_SRC);
-        // let primitive_ubo_size = std::mem::size_of::<BrushUniforms>() as u64;
-        // let primitive_ubo = device.create_buffer(&wgpu::BufferDescriptor {
-        //     size: primitive_ubo_size,
-        //     usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-        // });
-        // encoder.copy_buffer_to_buffer(&primitive_ubo_transfer, 0, &primitive_ubo, 0, primitive_ubo_size);
-
         let sampler = Arc::new(device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Brush sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -712,8 +704,8 @@ impl BrushRenderer {
             brush_manager.splat.bind_group_layout.clone(),
             vec![
                 BindingResourceArc::buffer(Some(scene_ubo.clone())),
-                BindingResourceArc::buffer(Some(primitive_ubo.clone())),
-                BindingResourceArc::sampler(Some(sampler.clone())),
+                BindingResourceArc::buffer(Some(primitive_ubo)),
+                BindingResourceArc::sampler(Some(sampler)),
                 BindingResourceArc::texture(Some(texture.clone())),
             ],
         ));
@@ -771,44 +763,6 @@ impl BrushRenderer {
             );
         }
         target
-    }
-
-    pub fn render(&self, encoder: &mut Encoder, _view: &CanvasView) {
-        // if self.index_buffer_length == 0 {
-        //     return;
-        // }
-
-        // // let blitter = encoder.blitter.with_textures(encoder.device, &encoder.scratch_texture.view, encoder.target_texture);
-        // for stroke_range in &self.stroke_ranges {
-        //     {
-        //         let mut pass = encoder.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        //             label: Some("brush"),
-        //             color_attachments: &[wgpu::RenderPassColorAttachment {
-        //                 view: &encoder.scratch_texture.view,
-        //                 ops: wgpu::Operations {
-        //                     load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-        //                     store: true,
-        //                 },
-        //                 resolve_target: None,
-        //             }],
-        //             depth_stencil_attachment: None,
-        //         });
-
-        //         pass.set_pipeline(&self.brush_manager.splat.pipeline);
-        //         pass.set_bind_group(0, &self.bind_group, &[]);
-        //         pass.set_index_buffer(self.ibo.slice(..), wgpu::IndexFormat::Uint32);
-        //         pass.set_vertex_buffer(0, self.vbo.slice(..));
-        //         pass.draw_indexed(stroke_range.clone(), 0, 0..1);
-        //     }
-
-        //     encoder.blitter.blend(
-        //         encoder.device,
-        //         encoder.encoder,
-        //         &encoder.scratch_texture.view,
-        //         encoder.target_texture.view,
-        //         (encoder.resolution.width, encoder.resolution.height),
-        //     );
-        // }
     }
 }
 
@@ -942,20 +896,6 @@ impl DocumentRenderer {
         );
 
         self.brush_renderer.render_node(render_graph, target)
-    }
-
-    fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
-        // puffin::profile_function!();
-        // {
-        //     let mut pass = encoder.begin_msaa_render_pass(None, Some("document render pass"));
-        //     pass.set_pipeline(&self.render_pipeline);
-        //     pass.set_bind_group(0, &self.bind_group, &[]);
-        //     pass.set_index_buffer(self.ibo.slice(..), wgpu::IndexFormat::Uint32);
-        //     pass.set_vertex_buffer(0, self.vbo.slice(..));
-        //     pass.draw_indexed(0..(self.index_buffer_length as u32), 0, 0..1);
-        // }
-
-        // self.brush_renderer.render(encoder, view);
     }
 }
 
@@ -1347,35 +1287,6 @@ pub fn main() {
         depth_or_array_layers: 1,
     };
 
-    // Render into this texture
-    // let temp_document_frame = Arc::new(Texture::new(
-    //     &device,
-    //     wgpu::TextureDescriptor {
-    //         label: Some("Temp frame texture"),
-    //         size: document_extent,
-    //         mip_level_count: crate::mipmap::max_mipmaps(document_extent),
-    //         sample_count: 1,
-    //         // array_layer_count: 1,
-    //         dimension: wgpu::TextureDimension::D2,
-    //         format: crate::config::TEXTURE_FORMAT,
-    //         usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::STORAGE,
-    //     },
-    // ));
-
-    // let scratch_texture = Arc::new(Texture::new(
-    //     &device,
-    //     wgpu::TextureDescriptor {
-    //         label: Some("Scratch texture"),
-    //         size: document_extent,
-    //         mip_level_count: 1,
-    //         sample_count: 1,
-    //         // array_layer_count: 1,
-    //         dimension: wgpu::TextureDimension::D2,
-    //         format: crate::config::TEXTURE_FORMAT,
-    //         usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::STORAGE,
-    //     },
-    // ));
-
     let start_time = Instant::now();
 
     let mut egui_wrapper = EguiWrapper::new(&device, size, window.scale_factor(), 1);
@@ -1463,7 +1374,6 @@ pub fn main() {
                     TextureDescriptor {
                         label: Some("Framebuffer depth"),
                         size: window_extent,
-                        // array_layer_count: 1,
                         mip_level_count: 1,
                         sample_count,
                         dimension: wgpu::TextureDimension::D2,
@@ -1556,22 +1466,6 @@ pub fn main() {
                 ));
             }
 
-            // {
-            // let msaa_render_target = RenderTexture::from(multisampled_render_target.as_ref().unwrap().clone());
-            // let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
-            // let mut hl_encoder = Encoder {
-            //     device: &device,
-            //     encoder: &mut encoder,
-            //     multisampled_render_target: Some(msaa_render_target.default_view()),
-            //     target_texture: frame.default_view(),
-            //     depth_texture_view: depth_target.default_view(),
-            //     blitter: &blitter,
-            //     resolution: document_extent,
-            //     scratch_texture: scratch_texture.clone(),
-            // };
-
-            // render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
-
             document_renderer1
                 .as_mut()
                 .unwrap()
@@ -1582,85 +1476,6 @@ pub fn main() {
                 .update(&ui_view, &device, &mut encoder, &mut staging_belt);
 
             {
-                //     {
-                //         let msaa_render_target =
-                //             RenderTexture::from(multisampled_render_target_document.as_ref().unwrap().clone());
-                //         let render_target = RenderTexture::from(temp_document_frame.clone());
-                //         let depth_target = RenderTexture::from(depth_texture_document.as_ref().unwrap().clone());
-                //         let mut hl_encoder = Encoder {
-                //             device: &device,
-                //             encoder: &mut encoder,
-                //             multisampled_render_target: Some(msaa_render_target.default_view()),
-                //             target_texture: render_target.get_mip_level_view(0).unwrap(),
-                //             depth_texture_view: depth_target.default_view(),
-                //             blitter: &blitter,
-                //             resolution: document_extent,
-                //             scratch_texture: scratch_texture.clone(),
-                //         };
-                //         // render_main_view(&scene);
-
-                //         if scene.draw_background {
-                //             // render_background(&mut hl_encoder, &bg_pipeline, &bind_group, &bg_ibo, &bg_vbo);
-                //         } else {
-                //             hl_encoder.begin_msaa_render_pass(Some(wgpu::Color::RED), Some("background clear pass"));
-                //         }
-
-                //         document_renderer1
-                //             .as_ref()
-                //             .unwrap()
-                //             .render(&mut hl_encoder, &dummy_view);
-                //     }
-
-                // blitter.rgb_to_srgb(
-                //     &device,
-                //     &mut encoder,
-                //     &temp_document_frame.view,
-                //     (document_extent.width, document_extent.height),
-                // );
-                // mipmapper.generate_mipmaps(&device, &mut encoder, &temp_document_frame);
-
-                let msaa_render_target = multisampled_render_target.clone().map(RenderTexture::from);
-                let depth_target = RenderTexture::from(depth_texture.as_ref().unwrap().clone());
-                // let mut hl_encoder = Encoder {
-                //     device: &device,
-                //     encoder: &mut encoder,
-                //     multisampled_render_target: msaa_render_target.as_ref().map(RenderTexture::default_view),
-                //     target_texture: frame.default_view(),
-                //     depth_texture_view: depth_target.default_view(),
-                //     blitter: &blitter,
-                //     resolution: document_extent,
-                //     scratch_texture: scratch_texture.clone(),
-                // };
-
-                // let blitop = blit_document_to_window(
-                //     &mut hl_encoder,
-                //     scene,
-                //     doc_size,
-                //     window_extent,
-                //     &temp_document_frame.view,
-                //     msaa_render_target.as_ref().unwrap_or(&frame),
-                // );
-
-                // {
-                //     // Clear pass
-                //     let mut pass = hl_encoder.begin_msaa_render_pass(
-                //         Some(wgpu::Color {
-                //             r: 120.0 / 255.0,
-                //             g: 41.0 / 255.0,
-                //             b: 41.0 / 255.0,
-                //             a: 1.0,
-                //         }),
-                //         Some("clear pass"),
-                //     );
-
-                //     blitop.render(&mut pass);
-                // }
-
-                // document_renderer2
-                //     .as_ref()
-                //     .unwrap()
-                //     .render(&mut hl_encoder, &scene.view);
-
                 ephermal_buffer_cache.reset();
 
                 let canvas_in_screen_space =
@@ -1723,38 +1538,7 @@ pub fn main() {
 
                     render_graph_compiler.render(&passes);
                 });
-
-                // // // blur.render(&mut hl_encoder);
-
-                // let section = Section {
-                //     screen_position: (10.0, 10.0),
-                //     text: vec![Text::new("Hello wgpu_gfilyphåäöЎaњ").with_scale(36.0)],
-                //     ..Section::default() // color, position, etc
-                // };
-
-                // glyph_brush.queue(section);
-
-                // glyph_brush
-                //     .draw_queued(
-                //         &device,
-                //         &mut staging_belt,
-                //         &mut encoder,
-                //         frame.default_view().view,
-                //         window_extent.width,
-                //         window_extent.height,
-                //     )
-                //     .unwrap();
             }
-
-            // blitter.blit(
-            //     &device,
-            //     &mut encoder,
-            //     &temp_window_frame_view,
-            //     frame.default_view(),
-            //     rect(0.0, 0.0, 1.0, 1.0),
-            //     rect(0.0, 0.0, 1.0, 1.0),
-            //     1,
-            // );
 
             staging_belt.finish();
 

@@ -911,17 +911,6 @@ impl<'a> RenderGraphCompiler<'a> {
                         label: Some("pass"),
                         color_attachments: &[color_attachment],
                         depth_stencil_attachment: None,
-                        // Some(wgpu::RenderPassDepthStencilAttachment {
-                        //     view: self.depth_texture_view.view,
-                        //     depth_ops: Some(wgpu::Operations {
-                        //         load: wgpu::LoadOp::Clear(0.0),
-                        //         store: true,
-                        //     }),
-                        //     stencil_ops: Some(wgpu::Operations {
-                        //         load: wgpu::LoadOp::Clear(0),
-                        //         store: true,
-                        //     }),
-                        // }),
                     });
 
                     for op in ops {
