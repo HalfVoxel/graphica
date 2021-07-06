@@ -25,14 +25,20 @@ fn vs_main(
     ) -> VertexOutput {
 
     let z = 1.0;
-    let transformed_pos: vec2<f32> = a_uv_brush * 2.0 - 1.0;
+    var uv_brush: vec2<f32> = a_uv_brush;
+    uv_brush.y = 1.0 - uv_brush.y;
+    let transformed_pos: vec2<f32> = uv_brush * 2.0 - 1.0;
+    var uv_src: vec2<f32> = a_uv_background_src;
+    var uv_dst: vec2<f32> = a_uv_background_target;
+    uv_src.y = 1.0 - uv_src.y;
+    uv_dst.y = 1.0 - uv_dst.y;
     // transformed_pos.y = -transformed_pos.y;
     var v_out: VertexOutput;
     v_out.position = vec4<f32>(transformed_pos, z / 1000.0, 1.0);
     v_out.color = a_color;//vec4(1.0, 1.0, 1.0, 1.0);
-    v_out.uv_background_src = a_uv_background_src;
-    v_out.uv_background_target = a_uv_background_target;
-    v_out.uv_brush = a_uv_brush;
+    v_out.uv_background_src = uv_src;
+    v_out.uv_background_target = uv_dst;
+    v_out.uv_brush = uv_brush;
     return v_out;
 }
 

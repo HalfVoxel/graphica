@@ -157,6 +157,11 @@ fn create_multisampled_framebuffer(
     )
 }
 
+trait BrushRendererTrait {
+    fn update(&self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt);
+    fn render_node(&self, render_graph: &mut RenderGraph, target: GraphNode) -> GraphNode;
+}
+
 struct DocumentRenderer {
     vbo: BufferRange,
     ibo: BufferRange,
@@ -166,7 +171,7 @@ struct DocumentRenderer {
     vector_material: Arc<Material>,
     // index_buffer_length: usize,
     render_pipeline: Arc<RenderPipelineBase>,
-    brush_renderer: BrushRendererWithReadbackBatched,
+    brush_renderer: Box<dyn BrushRendererTrait>,
 }
 
 pub struct BrushRenderer {
@@ -189,6 +194,8 @@ fn sample_points_along_curve(path: &PathData, spacing: f32) -> Vec<(usize, Canva
 
 fn sample_points_along_sub_path(sub_path: &SubPath, spacing: f32, result: &mut Vec<(usize, CanvasPoint)>) {
     let mut offset = 0f32;
+
+    result.push((sub_path.first().index(), sub_path.first().position()));
 
     for start in sub_path.iter_beziers() {
         let end = start.next().unwrap();
@@ -247,11 +254,14 @@ impl BrushRendererWithReadback {
         brush_manager: &Rc<BrushManager>,
         texture: &Arc<Texture>,
     ) -> BrushRendererWithReadback {
-        let points = sample_points_along_curve(&brush_data.path, 1.41);
+        let mut points = sample_points_along_curve(&brush_data.path, 1.41);
+        if points.len() > 20 {
+            points.drain(0..points.len() - 20);
+        }
 
         let to_normalized_pos = |v: CanvasPoint| view.screen_to_normalized(view.canvas_to_screen_point(v));
 
-        let size = 20.0;
+        let size = 256.0;
         let color = Srgba::new(1.0, 1.0, 1.0, 1.0).into_format().into_raw();
         let vertices: Vec<CloneBrushGpuVertex> = points
             .windows(2)
@@ -341,61 +351,6 @@ impl BrushRendererWithReadback {
         }
     }
 
-    pub fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
-        if self.points.len() <= 1 {
-            return target;
-        }
-
-        let to_screen_pos = |v: CanvasPoint| self.view.canvas_to_screen_point(v);
-
-        for (mut i, (_, p)) in self.points.iter().enumerate() {
-            // First point is a noop
-            if i == 0 {
-                continue;
-            }
-            i -= 1;
-
-            // First pass
-            let mut scratch = render_graph.clear(
-                size(self.width_in_pixels, self.width_in_pixels),
-                wgpu::Color::TRANSPARENT,
-            );
-            let mut ibo = self.ibo.clone();
-            ibo.range.start += ((i * 6) * std::mem::size_of::<u32>()) as u64;
-            ibo.range.end = self.ibo.range.start + (((i + 1) * 6) * std::mem::size_of::<u32>()) as u64;
-            let material = DynamicMaterial::new(
-                self.material.clone(),
-                vec![BindGroupEntryArc {
-                    binding: 1,
-                    resource: BindingResourceArc::graph_node(target.clone()),
-                }],
-            );
-            scratch = render_graph.mesh(
-                scratch,
-                self.vbo.clone(),
-                ibo,
-                self.brush_manager.splat_with_readback.pipeline.clone(),
-                material,
-            );
-
-            // Second pass: copy back
-            let mn = to_screen_pos(*p - vector(self.size, self.size));
-            let mx = to_screen_pos(*p + vector(self.size, self.size));
-            let r = CanvasRect::new(mn.cast_unit(), size(mx.x - mn.x, mx.y - mn.y));
-            target = render_graph.blit(
-                scratch,
-                target,
-                CanvasRect::new(
-                    point(0.0, 0.0),
-                    size(self.width_in_pixels as f32, self.width_in_pixels as f32),
-                ),
-                r,
-            );
-        }
-
-        target
-    }
-
     pub fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
         // if self.points.len() <= 1 {
         //     return;
@@ -480,6 +435,72 @@ impl BrushRendererWithReadback {
     }
 }
 
+#[derive(Copy, Clone, PartialEq)]
+pub enum BrushType {
+    Normal,
+    Smudge,
+    SmudgeBatch,
+}
+
+impl BrushRendererTrait for BrushRendererWithReadback {
+    fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
+        if self.points.len() <= 1 {
+            return target;
+        }
+
+        let to_screen_pos = |v: CanvasPoint| self.view.canvas_to_screen_point(v);
+
+        for (mut i, (_, p)) in self.points.iter().enumerate() {
+            // First point is a noop
+            if i == 0 {
+                continue;
+            }
+            i -= 1;
+
+            // First pass
+            let mut scratch = render_graph.clear(
+                size(self.width_in_pixels, self.width_in_pixels),
+                wgpu::Color::TRANSPARENT,
+            );
+            let mut ibo = self.ibo.clone();
+            ibo.range.start += ((i * 6) * std::mem::size_of::<u32>()) as u64;
+            ibo.range.end = self.ibo.range.start + (((i + 1) * 6) * std::mem::size_of::<u32>()) as u64;
+            let material = DynamicMaterial::new(
+                self.material.clone(),
+                vec![BindGroupEntryArc {
+                    binding: 1,
+                    resource: BindingResourceArc::graph_node(target.clone()),
+                }],
+            );
+            scratch = render_graph.mesh(
+                scratch,
+                self.vbo.clone(),
+                ibo,
+                self.brush_manager.splat_with_readback.pipeline.clone(),
+                material,
+            );
+
+            // Second pass: copy back
+            let mn = to_screen_pos(*p - vector(self.size, self.size));
+            let mx = to_screen_pos(*p + vector(self.size, self.size));
+            let r = CanvasRect::new(mn.cast_unit(), size(mx.x - mn.x, mx.y - mn.y));
+            target = render_graph.blit(
+                scratch,
+                target,
+                CanvasRect::new(
+                    point(0.0, 0.0),
+                    size(self.width_in_pixels as f32, self.width_in_pixels as f32),
+                ),
+                r,
+            );
+        }
+
+        target
+    }
+
+    fn update(&self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {}
+}
+
 pub struct BrushRendererWithReadbackBatched {
     ubo: BufferRange,
     brush_manager: Rc<BrushManager>,
@@ -521,7 +542,7 @@ impl BrushRendererWithReadbackBatched {
         brush_manager: &Rc<BrushManager>,
         texture: &Arc<Texture>,
     ) -> BrushRendererWithReadbackBatched {
-        let size_in_pixels = 512;
+        let size_in_pixels = 64;
         // let points = sample_points_along_curve(&brush_data.path, 1.41);
         let points = sample_points_along_curve(&brush_data.path, (size_in_pixels as f32) * 0.5);
 
@@ -663,8 +684,10 @@ impl BrushRendererWithReadbackBatched {
         }
         self.readback_buffer.buffer.unmap();
     }
+}
 
-    pub fn update(&self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {
+impl BrushRendererTrait for BrushRendererWithReadbackBatched {
+    fn update(&self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {
         staging_belt
             .write_buffer(
                 encoder,
@@ -676,12 +699,12 @@ impl BrushRendererWithReadbackBatched {
             .fill(0);
     }
 
-    pub fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
+    fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
         if self.ubo.size() == 0 {
             return target;
         }
 
-        let scratch = render_graph.clear(size(self.size_in_pixels, self.size_in_pixels), wgpu::Color::RED);
+        let scratch = render_graph.clear(size(self.size_in_pixels * 2, self.size_in_pixels), wgpu::Color::RED);
         let material = DynamicMaterial::new(
             self.material.clone(),
             vec![
@@ -897,7 +920,7 @@ impl BrushRenderer {
         }
     }
 
-    pub fn update(&mut self, _view: &CanvasView, _device: &Device, _encoder: &mut CommandEncoder) {
+    fn update(&self, _view: &CanvasView, _device: &Device, _encoder: &mut CommandEncoder) {
         // let scene_ubo_transfer = device
         // .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
         // .fill_from_slice(&[Globals {
@@ -909,8 +932,10 @@ impl BrushRenderer {
         // let scene_ubo_size = std::mem::size_of::<Globals>() as u64;
         // encoder.copy_buffer_to_buffer(&scene_ubo_transfer, 0, &self.scene_ubo, 0, scene_ubo_size);
     }
+}
 
-    pub fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
+impl BrushRendererTrait for BrushRenderer {
+    fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
         for stroke_path in &self.stroke_ranges {
             if stroke_path.is_empty() {
                 continue;
@@ -940,6 +965,8 @@ impl BrushRenderer {
         }
         target
     }
+
+    fn update(&self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {}
 }
 
 impl DocumentRenderer {
@@ -955,6 +982,7 @@ impl DocumentRenderer {
         render_pipeline: &Arc<RenderPipelineBase>,
         wireframe_render_pipeline: &Arc<RenderPipelineBase>,
         brush_manager: &Rc<BrushManager>,
+        brush: BrushType,
     ) -> DocumentRenderer {
         puffin::profile_function!();
 
@@ -1014,15 +1042,35 @@ impl DocumentRenderer {
             ],
         ));
 
-        let brush_renderer = BrushRendererWithReadbackBatched::new(
-            &document.brushes,
-            view,
-            device,
-            encoder,
-            &scene_ubo,
-            brush_manager,
-            &document.textures[0],
-        );
+        let brush_renderer: Box<dyn BrushRendererTrait> = match brush {
+            BrushType::Normal => Box::new(BrushRenderer::new(
+                &document.brushes,
+                view,
+                device,
+                encoder,
+                &scene_ubo,
+                brush_manager,
+                &document.textures[0],
+            )),
+            BrushType::Smudge => Box::new(BrushRendererWithReadback::new(
+                &document.brushes,
+                view,
+                device,
+                encoder,
+                &scene_ubo,
+                brush_manager,
+                &document.textures[0],
+            )),
+            BrushType::SmudgeBatch => Box::new(BrushRendererWithReadbackBatched::new(
+                &document.brushes,
+                view,
+                device,
+                encoder,
+                &scene_ubo,
+                brush_manager,
+                &document.textures[0],
+            )),
+        };
 
         let mut res = DocumentRenderer {
             vbo,
@@ -1164,6 +1212,7 @@ pub fn main() {
             draw_background: true,
             cursor_position: (0.0, 0.0),
             size_changed: true,
+            brush: BrushType::Normal,
         },
         input: InputManager::default(),
     };
@@ -1474,6 +1523,7 @@ pub fn main() {
     let mut material_cache = MaterialCache::default();
 
     let mut gpu_profiler = GpuProfiler::new(4, queue.get_timestamp_period());
+    let mut enable_profiler = false;
 
     event_loop.run(move |event, _, control_flow| {
         {
@@ -1618,6 +1668,7 @@ pub fn main() {
                     &render_pipeline,
                     &wireframe_render_pipeline,
                     &brush_manager,
+                    scene.brush,
                 ));
             }
 
@@ -1641,6 +1692,7 @@ pub fn main() {
                     &render_pipeline,
                     &wireframe_render_pipeline,
                     &brush_manager,
+                    scene.brush,
                 ));
             }
 
@@ -1733,9 +1785,17 @@ pub fn main() {
                     if ui.button("Hello").clicked() {
                         ui.label("BLAH!");
                     }
+
+                    ui.checkbox(&mut enable_profiler, "Profiler");
+
+                    ui.radio_value(&mut scene.brush, BrushType::Normal, "Normal");
+                    ui.radio_value(&mut scene.brush, BrushType::Smudge, "Smudge");
+                    ui.radio_value(&mut scene.brush, BrushType::SmudgeBatch, "SmudgeBatch");
                 });
 
-                puffin_egui::profiler_window(&ctx);
+                if enable_profiler {
+                    puffin_egui::profiler_window(&ctx);
+                }
             });
 
             wgpu_profiler!("egui", &mut gpu_profiler, &mut encoder, &device, {
@@ -1749,11 +1809,11 @@ pub fn main() {
                 );
             });
 
-            document_renderer1
-                .as_ref()
-                .unwrap()
-                .brush_renderer
-                .readback(&mut encoder);
+            // document_renderer1
+            //     .as_ref()
+            //     .unwrap()
+            //     .brush_renderer
+            //     .readback(&mut encoder);
 
             let queue_submit_ns = puffin::now_ns();
 
@@ -1791,11 +1851,11 @@ pub fn main() {
                 }
             }
 
-            document_renderer1
-                .as_ref()
-                .unwrap()
-                .brush_renderer
-                .check_readback(&device);
+            // document_renderer1
+            //     .as_ref()
+            //     .unwrap()
+            //     .brush_renderer
+            //     .check_readback(&device);
 
             crate::gpu_profiler::process_finished_frame(&mut gpu_profiler, queue_submit_ns);
 
@@ -1909,6 +1969,7 @@ pub struct SceneParams {
     pub draw_background: bool,
     pub cursor_position: (f32, f32),
     pub size_changed: bool,
+    pub brush: BrushType,
 }
 
 impl SceneParams {

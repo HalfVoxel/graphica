@@ -35,6 +35,19 @@ layout(std430, binding = 7) buffer restrict outdata {
     int outbuffer[];
 };
 
+vec4 blend_over(vec4 a, vec4 b) {
+    // A over B
+    // TODO: Might need more numerically stable algorithm
+    return (a * a.a + b * b.a * (1 - a.a)) / (a.a + b.a * (1 - a.a));
+}
+
+// A over B
+// Assumes a and b are premultiplied by their alpha
+vec4 blend_over_premultiplied(vec4 a, vec4 b) {
+    // A over B
+    return a + b * (1 - a.a);
+}
+
 void main() {
     // int val = atomicAdd(atcounter, 1);
     // uint v = subgroupBroadcast(val, 0) * gl_SubgroupSize + gl_SubgroupInvocationID;
@@ -78,6 +91,12 @@ void main() {
 
         ivec2 origin_dst = primitives[primitive].origin_dst;
         origin_dst += ivec2(work.xy);
+
+        ivec2 next_brush = ivec2((primitive % 2) * size_in_pixels, 0);
+        ivec2 prev_brush = ivec2((1 - (primitive % 2)) * size_in_pixels, 0);
+        if (primitive == 0) {
+            prev_brush = next_brush;
+        }
         
         if ((chunk % 2) == 0) {
             int dy = 0;
@@ -86,27 +105,52 @@ void main() {
                 // for (int dx = 0; dx < width_per_group; dx++) {
                     ivec2 offset = ivec2(dx, dy) * int(gl_WorkGroupSize.xy);
                     vec4 a = imageLoad(image, origin_src + offset);
-                    vec4 b = imageLoad(image, origin_dst + offset);
+                    // vec4 b = imageLoad(image, origin_dst + offset);
                     vec2 uv = (vec2(work.xy) + offset) / vec2(size_in_pixels, size_in_pixels);
                     vec4 c = texture(sampler2D(t_brush, s_brush), uv);
-                    a.a *= c.a;
-                    // A over B
-                    // TODO: Might need more numerically stable algorithm
-                    vec4 r = (a * a.a + b * b.a * (1 - a.a)) / (a.a + b.a * (1 - a.a));
-                    imageStore(temp_image, ivec2(work.xy) + offset, r);
+                    a.a = 1.0;
+                    a.a *= c.a * 0.5;
+                    a.rgb *= a.a;
+                    imageStore(temp_image, ivec2(work.xy) + offset + next_brush, a);
                 // }
             // }
         } else {
-            int dy = 0;
-            int dx = 0;
+            ivec2 mn = min(primitives[primitive].origin_src, primitives[primitive].origin_dst);
+            ivec2 mx = max(primitives[primitive].origin_src, primitives[primitive].origin_dst) + ivec2(size_in_pixels, size_in_pixels);
             // break;
-            // for (int dy = 0; dy < height_per_group; dy++) {
-                // for (int dx = 0; dx < width_per_group; dx++) {
-                    ivec2 offset = ivec2(dx, dy) * int(gl_WorkGroupSize.xy);
-                    vec4 a = imageLoad(temp_image, ivec2(work.xy) + offset);
-                    imageStore(image, origin_dst + offset, a);
-                // }
-            // }
+            for (int dy = mn.y + work.y; dy < mx.y; dy += size_in_pixels) {
+                for (int dx = mn.x + work.x; dx < mx.x; dx += size_in_pixels) {
+                    ivec2 pixel = ivec2(dx, dy);
+
+                    vec4 canvas = imageLoad(image, pixel);
+                    // Premultiply alpha
+                    canvas.rgb *= canvas.a;
+                    // vec4 b = vec4(0.0, 0.0, 0.0, 0.0);
+                    for (int i = 0; i <= 32; i++) {
+                        float t = i / 32.0;
+                        vec2 brush_origin = mix(primitives[primitive].origin_src, primitives[primitive].origin_dst, t);
+                        ivec2 offset_from_brush = pixel - ivec2(round(brush_origin));
+                        offset_from_brush = clamp(offset_from_brush, ivec2(0, 0), ivec2(size_in_pixels - 1, size_in_pixels - 1));
+                        
+
+                        vec4 brush_prev = imageLoad(temp_image, offset_from_brush + prev_brush);
+                        vec4 brush_next = imageLoad(temp_image, offset_from_brush + next_brush);
+                        // TODO: Can we mix premultiplied values?
+                        vec4 brush = mix(brush_prev, brush_next, t);
+                        // brush = vec4(0.0);
+                        // brush.a = 0.0;
+
+                        canvas = blend_over_premultiplied(brush, canvas);
+                        // b += brush;
+                    }
+                    // Unpremultiply alpha
+                    canvas.rgb /= canvas.a;
+                    // b /= 33;
+                    // canvas = blend_over(b, canvas);
+                    // canvas = vec4((primitive % 5) / 5.0, 0.0, 0.0, 1.0);
+                    imageStore(image, pixel, canvas);
+                }
+            }
         }
 
         memoryBarrier();
