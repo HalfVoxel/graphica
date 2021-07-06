@@ -8,6 +8,7 @@ use lyon::path::Path;
 use lyon::tessellation::geometry_builder::*;
 use lyon::tessellation::FillOptions;
 use lyon::tessellation::{StrokeOptions, StrokeTessellator};
+use std::convert::TryInto;
 use std::num::NonZeroU64;
 use wgpu::BlendState;
 
@@ -74,6 +75,8 @@ use kurbo::Point as KurboPoint;
 use palette::Pixel;
 use palette::Srgba;
 use std::sync::Arc;
+
+const DISPATCH: usize = 32;
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
@@ -485,6 +488,9 @@ pub struct BrushRendererWithReadbackBatched {
     brush_texture: Arc<Texture>,
     sampler: Arc<wgpu::Sampler>,
     material: Arc<Material>,
+    atomic_sbo: BufferRange,
+    readback_buffer: BufferRange,
+    atomic_output: BufferRange,
 }
 
 #[repr(C, align(16))]
@@ -499,9 +505,12 @@ struct ReadbackUniforms {
     width_per_group: i32,
     height_per_group: i32,
     num_primitives: i32,
+    size_in_pixels: i32,
 }
 
 impl BrushRendererWithReadbackBatched {
+    const LOCAL_SIZE: usize = 32;
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         brush_data: &BrushData,
@@ -512,9 +521,10 @@ impl BrushRendererWithReadbackBatched {
         brush_manager: &Rc<BrushManager>,
         texture: &Arc<Texture>,
     ) -> BrushRendererWithReadbackBatched {
-        let points = sample_points_along_curve(&brush_data.path, 1.41);
+        let size_in_pixels = 512;
+        // let points = sample_points_along_curve(&brush_data.path, 1.41);
+        let points = sample_points_along_curve(&brush_data.path, (size_in_pixels as f32) * 0.5);
 
-        let size_in_pixels = 64;
         let offset = -vector(size_in_pixels as f32 * 0.5, size_in_pixels as f32 * 0.5);
         let primitives: Vec<ReadbackPrimitive> = points
             .windows(2)
@@ -531,8 +541,6 @@ impl BrushRendererWithReadbackBatched {
 
         let ubo = create_buffer_range(device, &primitives, wgpu::BufferUsage::STORAGE, None);
 
-        const LOCAL_SIZE: u32 = 32;
-
         let sampler = Arc::new(device.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -548,8 +556,8 @@ impl BrushRendererWithReadbackBatched {
             border_color: None,
         }));
 
-        let width_per_group = (size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
-        let height_per_group = (size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
+        let width_per_group = (size_in_pixels as usize + Self::LOCAL_SIZE - 1) / Self::LOCAL_SIZE;
+        let height_per_group = (size_in_pixels as usize + Self::LOCAL_SIZE - 1) / Self::LOCAL_SIZE;
 
         let settings_ubo = create_buffer_range(
             device,
@@ -557,9 +565,29 @@ impl BrushRendererWithReadbackBatched {
                 width_per_group: width_per_group as i32,
                 height_per_group: height_per_group as i32,
                 num_primitives: points.len() as i32 - 1,
+                size_in_pixels: size_in_pixels as i32,
             }],
             wgpu::BufferUsage::UNIFORM,
             "Readback settings",
+        );
+
+        let atomic_sbo = create_buffer_range(
+            device,
+            &[0, 0],
+            wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
+            "atomic counter",
+        );
+        let atomic_output = create_buffer_range(
+            device,
+            &vec![0; DISPATCH * DISPATCH * Self::LOCAL_SIZE * Self::LOCAL_SIZE],
+            wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
+            "atomic output",
+        );
+        let readback_buffer = create_buffer_range(
+            device,
+            &vec![0; DISPATCH * DISPATCH * Self::LOCAL_SIZE * Self::LOCAL_SIZE],
+            wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
+            "readback",
         );
 
         let material = Arc::new(Material::from_consecutive_entries(
@@ -574,6 +602,8 @@ impl BrushRendererWithReadbackBatched {
                 BindingResourceArc::texture(Some(texture.to_owned())),
                 BindingResourceArc::buffer(Some(ubo.clone())),
                 BindingResourceArc::buffer(Some(settings_ubo)),
+                BindingResourceArc::buffer(Some(atomic_sbo.clone())),
+                BindingResourceArc::buffer(Some(atomic_output.clone())),
             ],
         ));
 
@@ -585,7 +615,65 @@ impl BrushRendererWithReadbackBatched {
             points,
             brush_texture: texture.clone(),
             material,
+            atomic_sbo,
+            readback_buffer,
+            atomic_output,
         }
+    }
+
+    pub fn readback(&self, encoder: &mut CommandEncoder) {
+        encoder.copy_buffer_to_buffer(
+            &self.atomic_output.buffer,
+            0,
+            &self.readback_buffer.buffer,
+            0,
+            4 * (DISPATCH * DISPATCH * Self::LOCAL_SIZE * Self::LOCAL_SIZE) as u64,
+        );
+    }
+
+    pub fn check_readback(&self, device: &Device) {
+        {
+            let slice = self.readback_buffer.buffer.slice(..);
+            let f = slice.map_async(wgpu::MapMode::Read);
+            device.poll(wgpu::Maintain::Wait);
+            futures::executor::block_on(f).unwrap();
+            let data = slice.get_mapped_range();
+            let result: Vec<u32> = data
+                .chunks_exact(4)
+                .map(|b| u32::from_ne_bytes(b.try_into().unwrap()))
+                .collect();
+
+            dbg!(result.len());
+            let mut distinct = vec![0; DISPATCH * DISPATCH * Self::LOCAL_SIZE * Self::LOCAL_SIZE];
+            for r in result {
+                distinct[r as usize] += 1;
+            }
+            if distinct[2] != 0 {
+                let mut cnt = 0;
+                for (i, d) in distinct.iter().enumerate() {
+                    if *d != 1 {
+                        println!("Diff at {}: {}", i, d);
+                        cnt += 1;
+                        if cnt > 10 {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        self.readback_buffer.buffer.unmap();
+    }
+
+    pub fn update(&self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {
+        staging_belt
+            .write_buffer(
+                encoder,
+                &self.atomic_sbo.buffer,
+                0,
+                NonZeroU64::new(self.atomic_sbo.size()).unwrap(),
+                device,
+            )
+            .fill(0);
     }
 
     pub fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
@@ -612,7 +700,7 @@ impl BrushRendererWithReadbackBatched {
             target,
             self.brush_manager.splat_with_readback_batched.pipeline.clone(),
             material,
-            (1, 1, 1),
+            (DISPATCH as u32, DISPATCH as u32, 1),
         )
     }
 
@@ -972,6 +1060,8 @@ impl DocumentRenderer {
             }],
             &self.scene_ubo,
         );
+
+        self.brush_renderer.update(device, encoder, staging_belt);
     }
 
     fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode, view: &CanvasView) -> GraphNode {
@@ -1659,6 +1749,12 @@ pub fn main() {
                 );
             });
 
+            document_renderer1
+                .as_ref()
+                .unwrap()
+                .brush_renderer
+                .readback(&mut encoder);
+
             let queue_submit_ns = puffin::now_ns();
 
             {
@@ -1694,6 +1790,12 @@ pub fn main() {
                     device.poll(wgpu::Maintain::Wait);
                 }
             }
+
+            document_renderer1
+                .as_ref()
+                .unwrap()
+                .brush_renderer
+                .check_readback(&device);
 
             crate::gpu_profiler::process_finished_frame(&mut gpu_profiler, queue_submit_ns);
 

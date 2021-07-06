@@ -1,9 +1,10 @@
 #version 450
+#extension GL_KHR_shader_subgroup_ballot: enable
 
 layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
-layout (set=0, binding=0, rgba8) uniform restrict image2D image;
-layout (set=0, binding=1, rgba8) uniform restrict image2D temp_image;
+layout (set=0, binding=0, rgba8) uniform coherent image2D image;
+layout (set=0, binding=1, rgba8) uniform coherent image2D temp_image;
 layout (set=0, binding=2) uniform sampler s_brush;
 layout (set=0, binding=3) uniform texture2D t_brush;
 
@@ -15,49 +16,136 @@ struct Primitive {
 };
 
 layout(std140, binding = 4)
-buffer u_primitives { Primitive primitives[]; };
+buffer restrict u_primitives { Primitive primitives[]; };
 
 layout(std140, binding = 5)
 uniform Settings {
     int width_per_group;
     int height_per_group;
     int num_primitives;
+    int size_in_pixels;
+};
+
+layout(std140, binding = 6) buffer counter {
+    volatile int next_work_item;
+    volatile int done_work_items;
+};
+
+layout(std430, binding = 7) buffer restrict outdata {
+    int outbuffer[];
 };
 
 void main() {
-    for (int i = 0; i < num_primitives; i++) {
-        ivec2 origin_src = primitives[i].origin_src;
-        origin_src += ivec2(gl_LocalInvocationID.xy);
+    // int val = atomicAdd(atcounter, 1);
+    // uint v = subgroupBroadcast(val, 0) * gl_SubgroupSize + gl_SubgroupInvocationID;
+    // uint idx = gl_GlobalInvocationID.y * gl_WorkGroupSize.x * 32 + gl_GlobalInvocationID.x;
+    // // imageStore(image, ivec2(gl_GlobalInvocationID.xy), vec4(float(val % (32*32)) / 1024.0, float(val % 32) / (32), log(val+1) / (14.0), 1.0));
+    // imageStore(image, ivec2(gl_GlobalInvocationID.xy), vec4(float(idx) / (32*32*32*32), 0.0, 0.0, 1.0));
+    // outbuffer[idx] = int(v);
 
-        ivec2 origin_dst = primitives[i].origin_dst;
-        origin_dst += ivec2(gl_LocalInvocationID.xy);
+    // For each primitive
+    //    ensure all previous work is done -> barrier
+    //    atomic add to get new id
+    //    perform work
+    //    atomic add work done
+    // for (int i = 0; i < num_primitives; i++) {
+    int chunk_size = size_in_pixels*size_in_pixels;
+    while (true) {
+        int val = atomicAdd(next_work_item, 1);
 
-        for (int dy = 0; dy < height_per_group; dy++) {
-            for (int dx = 0; dx < width_per_group; dx++) {
-                ivec2 offset = ivec2(dx, dy) * ivec2(32, 32);
-                vec4 a = imageLoad(image, origin_src + offset);
-                vec4 b = imageLoad(image, origin_dst + offset);
-                vec2 uv = (vec2(gl_LocalInvocationID.xy) + offset) / vec2(32 * width_per_group, 32 * height_per_group);
-                vec4 c = texture(sampler2D(t_brush, s_brush), uv);
-                a.a *= c.a;
-                // A over B
-                // TODO: Might need more numerically stable algorithm
-                vec4 r = (a * a.a + b * b.a * (1 - a.a)) / (a.a + b.a * (1 - a.a));
-                imageStore(temp_image, ivec2(gl_LocalInvocationID.xy) + offset, r);
-            }
+        int chunk = val / chunk_size;
+        int primitive = chunk / 2;
+        if (primitive >= num_primitives) {
+            break;
         }
 
-        barrier();
-
-        for (int dy = 0; dy < height_per_group; dy++) {
-            for (int dx = 0; dx < width_per_group; dx++) {
-                ivec2 offset = ivec2(dx, dy) * ivec2(32, 32);
-                vec4 a = imageLoad(temp_image, ivec2(gl_LocalInvocationID.xy) + offset);
-                imageStore(image, origin_dst + offset, a);
-            }
+        int done_threshold = chunk*chunk_size;
+        while (done_work_items < done_threshold) {
+            // Without this barrier the loop will be optimized out
+            memoryBarrier();
         }
 
-        barrier();
-        groupMemoryBarrier();
+        // Safeguard to make sure the above loop is not optimized out
+        if (done_work_items < done_threshold) {
+            break;
+        }
+
+        int wId = val % chunk_size;
+
+        ivec2 work = ivec2(wId % size_in_pixels, wId / size_in_pixels);
+        ivec2 origin_src = primitives[primitive].origin_src;
+        origin_src += ivec2(work.xy);
+
+        ivec2 origin_dst = primitives[primitive].origin_dst;
+        origin_dst += ivec2(work.xy);
+        
+        if ((chunk % 2) == 0) {
+            int dy = 0;
+            int dx = 0;
+            // for (int dy = 0; dy < height_per_group; dy++) {
+                // for (int dx = 0; dx < width_per_group; dx++) {
+                    ivec2 offset = ivec2(dx, dy) * int(gl_WorkGroupSize.xy);
+                    vec4 a = imageLoad(image, origin_src + offset);
+                    vec4 b = imageLoad(image, origin_dst + offset);
+                    vec2 uv = (vec2(work.xy) + offset) / vec2(size_in_pixels, size_in_pixels);
+                    vec4 c = texture(sampler2D(t_brush, s_brush), uv);
+                    a.a *= c.a;
+                    // A over B
+                    // TODO: Might need more numerically stable algorithm
+                    vec4 r = (a * a.a + b * b.a * (1 - a.a)) / (a.a + b.a * (1 - a.a));
+                    imageStore(temp_image, ivec2(work.xy) + offset, r);
+                // }
+            // }
+        } else {
+            int dy = 0;
+            int dx = 0;
+            // break;
+            // for (int dy = 0; dy < height_per_group; dy++) {
+                // for (int dx = 0; dx < width_per_group; dx++) {
+                    ivec2 offset = ivec2(dx, dy) * int(gl_WorkGroupSize.xy);
+                    vec4 a = imageLoad(temp_image, ivec2(work.xy) + offset);
+                    imageStore(image, origin_dst + offset, a);
+                // }
+            // }
+        }
+
+        memoryBarrier();
+        atomicAdd(done_work_items, 1);
     }
+    
+    // for (int i = 0; i < num_primitives; i++) {
+    //     ivec2 origin_src = primitives[i].origin_src;
+    //     origin_src += ivec2(gl_LocalInvocationID.xy);
+
+    //     ivec2 origin_dst = primitives[i].origin_dst;
+    //     origin_dst += ivec2(gl_LocalInvocationID.xy);
+
+    //     for (int dy = 0; dy < height_per_group; dy++) {
+    //         for (int dx = 0; dx < width_per_group; dx++) {
+    //             ivec2 offset = ivec2(dx, dy) * ivec2(32, 32);
+    //             vec4 a = imageLoad(image, origin_src + offset);
+    //             vec4 b = imageLoad(image, origin_dst + offset);
+    //             vec2 uv = (vec2(gl_LocalInvocationID.xy) + offset) / vec2(32 * width_per_group, 32 * height_per_group);
+    //             vec4 c = texture(sampler2D(t_brush, s_brush), uv);
+    //             a.a *= c.a;
+    //             // A over B
+    //             // TODO: Might need more numerically stable algorithm
+    //             vec4 r = (a * a.a + b * b.a * (1 - a.a)) / (a.a + b.a * (1 - a.a));
+    //             imageStore(temp_image, ivec2(gl_LocalInvocationID.xy) + offset, r);
+    //         }
+    //     }
+
+    //     barrier();
+
+    //     for (int dy = 0; dy < height_per_group; dy++) {
+    //         for (int dx = 0; dx < width_per_group; dx++) {
+    //             ivec2 offset = ivec2(dx, dy) * ivec2(32, 32);
+    //             vec4 a = imageLoad(temp_image, ivec2(gl_LocalInvocationID.xy) + offset);
+    //             imageStore(image, origin_dst + offset, a);
+    //         }
+    //     }
+
+    //     barrier();
+    //     groupMemoryBarrier();
+    // }
 }

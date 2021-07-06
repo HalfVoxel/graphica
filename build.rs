@@ -93,6 +93,8 @@ fn main() -> Result<()> {
     });
     options.set_generate_debug_info();
     options.set_optimization_level(OptimizationLevel::Performance);
+    options.set_target_env(shaderc::TargetEnv::Vulkan, shaderc::EnvVersion::Vulkan1_1 as u32);
+    options.set_target_spirv(shaderc::SpirvVersion::V1_3);
 
     // This can't be parallelized. The [shaderc::Compiler] is not
     // thread safe. Also, it creates a lot of resources. You could
