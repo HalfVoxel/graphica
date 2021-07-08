@@ -122,33 +122,50 @@ void main() {
                 for (int dx = mn.x + work.x; dx < mx.x; dx += size_in_pixels) {
                     ivec2 pixel = ivec2(dx, dy);
 
-                    vec4 canvas = imageLoad(image, pixel);
-                    // Premultiply alpha
-                    canvas.rgb *= canvas.a;
-                    // vec4 b = vec4(0.0, 0.0, 0.0, 0.0);
-                    for (int i = 0; i <= 32; i++) {
-                        float t = i / 32.0;
-                        vec2 brush_origin = mix(primitives[primitive].origin_src, primitives[primitive].origin_dst, t);
-                        ivec2 offset_from_brush = pixel - ivec2(round(brush_origin));
-                        offset_from_brush = clamp(offset_from_brush, ivec2(0, 0), ivec2(size_in_pixels - 1, size_in_pixels - 1));
-                        
+                    if (true) {
+                        vec4 canvas = vec4(0.0);
+                        for (int i = 0; i <= 32; i++) {
+                            float t = 1.0 - i / 32.0;
+                            ivec2 d = primitives[primitive].origin_src - primitives[primitive].origin_dst;
+                            vec2 offset = vec2(d) * t;
+                            vec4 c = imageLoad(image, pixel + ivec2(offset));
+                            float contribution = exp(-t*2.0);
+                            c.a *= contribution;
+                            c.rgb *= c.a;
+                            canvas = blend_over_premultiplied(canvas, c);
+                        }
+                        // Unpremultiply alpha
+                        canvas.rgb /= canvas.a;
+                        imageStore(image, pixel, canvas);
+                    } else {
+                        vec4 canvas = imageLoad(image, pixel);
+                        // Premultiply alpha
+                        canvas.rgb *= canvas.a;
+                        // vec4 b = vec4(0.0, 0.0, 0.0, 0.0);
+                        for (int i = 0; i <= 32; i++) {
+                            float t = i / 32.0;
+                            vec2 brush_origin = mix(primitives[primitive].origin_src, primitives[primitive].origin_dst, t);
+                            ivec2 offset_from_brush = pixel - ivec2(round(brush_origin));
+                            offset_from_brush = clamp(offset_from_brush, ivec2(0, 0), ivec2(size_in_pixels - 1, size_in_pixels - 1));
+                            
 
-                        vec4 brush_prev = imageLoad(temp_image, offset_from_brush + prev_brush);
-                        vec4 brush_next = imageLoad(temp_image, offset_from_brush + next_brush);
-                        // TODO: Can we mix premultiplied values?
-                        vec4 brush = mix(brush_prev, brush_next, t);
-                        // brush = vec4(0.0);
-                        // brush.a = 0.0;
+                            vec4 brush_prev = imageLoad(temp_image, offset_from_brush + prev_brush);
+                            vec4 brush_next = imageLoad(temp_image, offset_from_brush + next_brush);
+                            // TODO: Can we mix premultiplied values?
+                            vec4 brush = mix(brush_prev, brush_next, t);
+                            // brush = vec4(0.0);
+                            // brush.a = 0.0;
 
-                        canvas = blend_over_premultiplied(brush, canvas);
-                        // b += brush;
+                            canvas = blend_over_premultiplied(brush, canvas);
+                            // b += brush;
+                        }
+                        // Unpremultiply alpha
+                        canvas.rgb /= canvas.a;
+                        // b /= 33;
+                        // canvas = blend_over(b, canvas);
+                        // canvas = vec4((primitive % 5) / 5.0, 0.0, 0.0, 1.0);
+                        imageStore(image, pixel, canvas);
                     }
-                    // Unpremultiply alpha
-                    canvas.rgb /= canvas.a;
-                    // b /= 33;
-                    // canvas = blend_over(b, canvas);
-                    // canvas = vec4((primitive % 5) / 5.0, 0.0, 0.0, 1.0);
-                    imageStore(image, pixel, canvas);
                 }
             }
         }

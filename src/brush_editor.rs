@@ -49,7 +49,7 @@ impl BrushEditor {
         #[allow(clippy::single_match)]
         match tool {
             ToolType::Brush => {
-                p.copy_from(&data.path);
+                // p.copy_from(&data.path);
                 self.state = match self.state.take() {
                     None => {
                         if let Some(captured) = input.capture_click(MouseButton::Left) {
@@ -122,11 +122,23 @@ impl BrushData {
     fn move_to(&mut self, p: CanvasPoint, color: Srgba) {
         self.path.move_to(p);
         self.colors.push(color);
+        self.path.dirty();
     }
 
     fn line_to(&mut self, p: CanvasPoint, color: Srgba) {
         self.path.line_to(p);
         self.colors.push(color);
+        self.path.dirty();
+    }
+
+    pub fn clear(&mut self) {
+        self.path.clear();
+        self.colors.clear();
+        self.path.dirty();
+    }
+
+    pub fn hash(&self) -> u64 {
+        self.path.hash()
     }
 }
 

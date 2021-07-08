@@ -78,7 +78,7 @@ impl RenderTextureCache {
                     sample_count: 1,
                     // array_layer_count: 1,
                     dimension: wgpu::TextureDimension::D2,
-                    format: crate::config::TEXTURE_FORMAT,
+                    format,
                     usage,
                 },
             );

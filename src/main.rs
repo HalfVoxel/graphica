@@ -3,6 +3,7 @@ use euclid::rect;
 use euclid::size2 as size;
 use euclid::vec2 as vector;
 use euclid::Size2D;
+use image::ColorType;
 use lyon::math::Point;
 use lyon::path::Path;
 use lyon::tessellation::geometry_builder::*;
@@ -255,8 +256,8 @@ impl BrushRendererWithReadback {
         texture: &Arc<Texture>,
     ) -> BrushRendererWithReadback {
         let mut points = sample_points_along_curve(&brush_data.path, 1.41);
-        if points.len() > 20 {
-            points.drain(0..points.len() - 20);
+        if points.len() > 200 {
+            points.drain(0..points.len() - 200);
         }
 
         let to_normalized_pos = |v: CanvasPoint| view.screen_to_normalized(view.canvas_to_screen_point(v));
@@ -440,6 +441,7 @@ pub enum BrushType {
     Normal,
     Smudge,
     SmudgeBatch,
+    SmudgeSingle,
 }
 
 impl BrushRendererTrait for BrushRendererWithReadback {
@@ -499,6 +501,228 @@ impl BrushRendererTrait for BrushRendererWithReadback {
     }
 
     fn update(&self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {}
+}
+
+pub struct BrushRendererWithReadbackSingle {
+    ubo: BufferRange,
+    brush_manager: Rc<BrushManager>,
+    size_in_pixels: u32,
+    num_primitives: usize,
+    brush_texture: Arc<Texture>,
+    sampler: Arc<wgpu::Sampler>,
+    material: Arc<Material>,
+}
+
+fn pixel_path<U>(mut points: impl Iterator<Item = euclid::Point2D<f32, U>>) -> Vec<euclid::Point2D<i32, U>> {
+    let mut prev = match points.next() {
+        Some(x) => x,
+        None => return vec![],
+    }
+    .round()
+    .cast::<i32>();
+
+    let mut result = vec![prev];
+    for p in points {
+        let next = p.round().cast::<i32>();
+        while prev != next {
+            let delta = next - prev;
+            if delta.x.abs() > delta.y.abs() {
+                prev += vector(delta.x.signum(), 0);
+            } else {
+                prev += vector(0, delta.y.signum());
+            }
+            result.push(prev);
+
+            // if delta.x.abs() > delta.y.abs() {
+            //     prev += vector(delta.x.signum(), 0);
+            //     result.push(prev);
+            // } else if delta.y.abs() > delta.x.abs() {
+            //     prev += vector(0, delta.y.signum());
+            //     result.push(prev);
+            // } else {
+            //     // Diagonal
+            //     prev += vector(delta.x.signum(), delta.y.signum());
+            //     result.push(prev);
+            // }
+        }
+    }
+
+    result
+}
+
+impl BrushRendererWithReadbackSingle {
+    const LOCAL_SIZE: usize = 32;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        brush_data: &BrushData,
+        _view: &CanvasView,
+        device: &Device,
+        _encoder: &mut CommandEncoder,
+        _scene_ubo: &BufferRange,
+        brush_manager: &Rc<BrushManager>,
+        texture: &Arc<Texture>,
+    ) -> BrushRendererWithReadbackSingle {
+        let size_in_pixels = 64;
+        let points = pixel_path(
+            sample_points_along_curve(&brush_data.path, 2.0)
+                .into_iter()
+                .map(|(_, p)| p),
+        );
+
+        let offset = -vector(size_in_pixels as i32 / 2, size_in_pixels as i32 / 2);
+        let primitives: Vec<ReadbackPrimitive> = points
+            .windows(2)
+            .map(|window| {
+                let clone_pos = window[0] + offset;
+                let pos = window[1] + offset;
+
+                ReadbackPrimitive {
+                    origin_src: (clone_pos.x, clone_pos.y),
+                    origin_dst: (pos.x, pos.y),
+                }
+            })
+            .collect();
+
+        let ubo = create_buffer_range(device, &primitives, wgpu::BufferUsage::STORAGE, None);
+
+        let sampler = Arc::new(device.create_sampler(&wgpu::SamplerDescriptor {
+            label: None,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            lod_min_clamp: -100.0,
+            lod_max_clamp: 100.0,
+            compare: None,
+            anisotropy_clamp: None,
+            border_color: None,
+        }));
+
+        let width_per_group = 1; //(size_in_pixels as usize + Self::LOCAL_SIZE - 1) / Self::LOCAL_SIZE;
+        let height_per_group = 1; //(size_in_pixels as usize + Self::LOCAL_SIZE - 1) / Self::LOCAL_SIZE;
+
+        let settings_ubo = create_buffer_range(
+            device,
+            &[ReadbackUniforms {
+                width_per_group: width_per_group as i32,
+                height_per_group: height_per_group as i32,
+                num_primitives: points.len() as i32 - 1,
+                size_in_pixels: size_in_pixels as i32,
+            }],
+            wgpu::BufferUsage::UNIFORM,
+            "Readback settings",
+        );
+
+        let material = Arc::new(Material::from_consecutive_entries(
+            device,
+            "clone brush",
+            BlendState::REPLACE,
+            brush_manager.splat_with_readback_single_a.bind_group_layout.clone(),
+            vec![
+                BindingResourceArc::texture(None),
+                BindingResourceArc::texture(None),
+                BindingResourceArc::sampler(Some(sampler.clone())),
+                BindingResourceArc::texture(Some(texture.to_owned())),
+                BindingResourceArc::buffer(Some(ubo.clone())),
+                BindingResourceArc::buffer(Some(settings_ubo)),
+            ],
+        ));
+
+        Self {
+            brush_manager: brush_manager.clone(),
+            ubo,
+            size_in_pixels,
+            sampler,
+            num_primitives: points.len() - 1,
+            brush_texture: texture.clone(),
+            material,
+        }
+    }
+}
+
+impl BrushRendererTrait for BrushRendererWithReadbackSingle {
+    fn update(&self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {}
+
+    fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
+        if self.ubo.size() == 0 {
+            return target;
+        }
+
+        let scratch = render_graph.clear_with_format(
+            size(self.size_in_pixels * 2, self.size_in_pixels),
+            wgpu::Color::RED,
+            wgpu::TextureFormat::Rgba32Float,
+        );
+        let material = DynamicMaterial::new(
+            self.material.clone(),
+            vec![
+                BindGroupEntryArc {
+                    binding: 0,
+                    resource: BindingResourceArc::graph_node(target.clone()),
+                },
+                BindGroupEntryArc {
+                    binding: 1,
+                    resource: BindingResourceArc::graph_node(scratch.clone()),
+                },
+            ],
+        );
+
+        let dispatch_width = (self.size_in_pixels + Self::LOCAL_SIZE as u32 - 1) / Self::LOCAL_SIZE as u32;
+        render_graph.custom_compute(
+            vec![],
+            vec![target, scratch],
+            BrushRendererWithReadbackSingleCPassPrimitive {
+                pipeline: self.brush_manager.splat_with_readback_single_a.pipeline.clone(),
+                primitive_count: self.num_primitives,
+                material: material.into(),
+                dispatch: (dispatch_width, dispatch_width, 1),
+            },
+        )
+    }
+}
+
+struct BrushRendererWithReadbackSingleCPassPrimitive {
+    pipeline: Arc<wgpu::ComputePipeline>,
+    primitive_count: usize,
+    material: crate::render_graph::RenderGraphMaterial,
+    dispatch: (u32, u32, u32),
+}
+
+impl crate::render_graph::CustomComputePassPrimitive for BrushRendererWithReadbackSingleCPassPrimitive {
+    fn compile<'a>(
+        &'a self,
+        context: &mut crate::render_graph::CompilationContext<'a>,
+    ) -> Box<dyn crate::render_graph::CustomComputePass> {
+        Box::new(BrushRendererWithReadbackSingleCPassCompiled {
+            pipeline: self.pipeline.clone(),
+            primitive_count: self.primitive_count,
+            bind_group: context.resolve_material(&self.material).bind_group().to_owned(),
+            dispatch: self.dispatch,
+        })
+    }
+}
+
+struct BrushRendererWithReadbackSingleCPassCompiled {
+    pipeline: Arc<wgpu::ComputePipeline>,
+    primitive_count: usize,
+    bind_group: Rc<wgpu::BindGroup>,
+    dispatch: (u32, u32, u32),
+}
+
+impl crate::render_graph::CustomComputePass for BrushRendererWithReadbackSingleCPassCompiled {
+    fn execute<'a>(&'a self, cpass: &mut wgpu::ComputePass<'a>) {
+        cpass.set_pipeline(&self.pipeline);
+        cpass.set_bind_group(0, &self.bind_group, &[]);
+        let (dx, dy, dz) = self.dispatch;
+        for i in 0..self.primitive_count * 2 {
+            cpass.set_push_constants(0, as_u8_slice(&[i as u32]));
+            cpass.dispatch(dx, dy, dz);
+            // cpass.set_pipeline(&pipeline_b);
+        }
+    }
 }
 
 pub struct BrushRendererWithReadbackBatched {
@@ -1070,6 +1294,15 @@ impl DocumentRenderer {
                 brush_manager,
                 &document.textures[0],
             )),
+            BrushType::SmudgeSingle => Box::new(BrushRendererWithReadbackSingle::new(
+                &document.brushes,
+                view,
+                device,
+                encoder,
+                &scene_ubo,
+                brush_manager,
+                &document.textures[0],
+            )),
         };
 
         let mut res = DocumentRenderer {
@@ -1229,8 +1462,12 @@ pub fn main() {
             label: None,
             features: wgpu::Features::NON_FILL_POLYGON_MODE
                 | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                | wgpu::Features::TIMESTAMP_QUERY,
-            limits: wgpu::Limits::default(),
+                | wgpu::Features::TIMESTAMP_QUERY
+                | wgpu::Features::PUSH_CONSTANTS,
+            limits: wgpu::Limits {
+                max_push_constant_size: 4,
+                ..Default::default()
+            },
         },
         None,
     ))
@@ -1525,6 +1762,9 @@ pub fn main() {
     let mut gpu_profiler = GpuProfiler::new(4, queue.get_timestamp_period());
     let mut enable_profiler = false;
 
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _guard = runtime.enter();
+
     event_loop.run(move |event, _, control_flow| {
         {
             let scene = &mut editor.scene;
@@ -1705,72 +1945,63 @@ pub fn main() {
                 .unwrap()
                 .update(&ui_view, &device, &mut encoder, &mut staging_belt);
 
-            {
-                ephermal_buffer_cache.reset();
+            ephermal_buffer_cache.reset();
 
-                let canvas_in_screen_space =
-                    scene
-                        .view
-                        .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
-                let canvas_in_screen_uv_space =
-                    canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
+            let canvas_in_screen_space =
+                scene
+                    .view
+                    .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
+            let canvas_in_screen_uv_space =
+                canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
 
-                wgpu_profiler!("rendering", &mut gpu_profiler, &mut encoder, &device, {
-                    let mut render_graph = crate::render_graph::RenderGraph::default();
-                    let mut framebuffer =
-                        render_graph.clear(Size2D::new(frame.size().width, frame.size().height), wgpu::Color::GREEN);
-                    let mut canvas = render_graph.clear(doc_size.to_untyped(), wgpu::Color::BLUE);
-                    canvas = render_graph.quad(
-                        canvas,
-                        CanvasRect::from_size(doc_size.cast()),
-                        bg_pipeline_base.clone(),
-                        bg_material_base.clone(),
-                    );
-                    canvas = document_renderer1
+            let (mut render_graph, canvas, framebuffer) = {
+                let mut render_graph = crate::render_graph::RenderGraph::default();
+                let mut framebuffer =
+                    render_graph.clear(Size2D::new(frame.size().width, frame.size().height), wgpu::Color::GREEN);
+                let mut canvas = render_graph.clear(
+                    doc_size.to_untyped(),
+                    wgpu::Color {
+                        r: 0.5,
+                        g: 0.5,
+                        b: 0.5,
+                        a: 1.0,
+                    },
+                );
+                // canvas = render_graph.quad(
+                //     canvas,
+                //     CanvasRect::from_size(doc_size.cast()),
+                //     bg_pipeline_base.clone(),
+                //     bg_material_base.clone(),
+                // );
+                canvas = document_renderer1
+                    .as_ref()
+                    .unwrap()
+                    .render_node(&mut render_graph, canvas, &dummy_view);
+                canvas = render_graph.generate_mipmaps(canvas);
+
+                framebuffer = render_graph.quad(
+                    framebuffer,
+                    CanvasRect::from_size(Size2D::new(frame.size().width as f32, frame.size().height as f32)),
+                    bg_pipeline_base.clone(),
+                    screen_bg_material_base.clone(),
+                );
+
+                framebuffer = render_graph.blit(
+                    canvas.clone(),
+                    framebuffer,
+                    CanvasRect::from_size(doc_size.cast()),
+                    canvas_in_screen_space.cast_unit(),
+                );
+
+                framebuffer =
+                    document_renderer2
                         .as_ref()
                         .unwrap()
-                        .render_node(&mut render_graph, canvas, &dummy_view);
-                    canvas = render_graph.generate_mipmaps(canvas);
+                        .render_node(&mut render_graph, framebuffer, &scene.view);
 
-                    framebuffer = render_graph.quad(
-                        framebuffer,
-                        CanvasRect::from_size(Size2D::new(frame.size().width as f32, frame.size().height as f32)),
-                        bg_pipeline_base.clone(),
-                        screen_bg_material_base.clone(),
-                    );
-
-                    framebuffer = render_graph.blit(
-                        canvas,
-                        framebuffer,
-                        CanvasRect::from_size(doc_size.cast()),
-                        canvas_in_screen_space.cast_unit(),
-                    );
-
-                    framebuffer =
-                        document_renderer2
-                            .as_ref()
-                            .unwrap()
-                            .render_node(&mut render_graph, framebuffer, &scene.view);
-
-                    let mut render_graph_compiler = crate::render_graph::RenderGraphCompiler {
-                        device: &device,
-                        encoder: &mut encoder,
-                        blitter: &blitter,
-                        render_pipeline_cache: &mut render_pipeline_cache,
-                        ephermal_buffer_cache: &mut ephermal_buffer_cache,
-                        render_texture_cache: &mut render_texture_cache,
-                        material_cache: &mut material_cache,
-                        staging_belt: &mut staging_belt,
-                        mipmapper: &mipmapper,
-                        gpu_profiler: &mut gpu_profiler,
-                    };
-                    let passes = render_graph_compiler.compile(&render_graph, framebuffer, &frame);
-
-                    render_graph_compiler.render(&passes);
-                });
-            }
-
-            staging_belt.finish();
+                render_graph.output_texture(framebuffer.clone(), frame.clone());
+                (render_graph, canvas, framebuffer)
+            };
 
             // Upload all resources for the GPU.
             let screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
@@ -1779,11 +2010,15 @@ pub fn main() {
                 scale_factor: window.scale_factor() as f32,
             };
 
+            let doc = &mut editor.document;
+
+            let mut export = None;
+
             let paint_jobs = egui_wrapper.frame(|ctx| {
                 egui::SidePanel::left("side", 300.0).show(&ctx, |ui| {
                     ui.label("Hello");
-                    if ui.button("Hello").clicked() {
-                        ui.label("BLAH!");
+                    if ui.button("Clear").clicked() {
+                        doc.brushes.clear();
                     }
 
                     ui.checkbox(&mut enable_profiler, "Profiler");
@@ -1791,12 +2026,54 @@ pub fn main() {
                     ui.radio_value(&mut scene.brush, BrushType::Normal, "Normal");
                     ui.radio_value(&mut scene.brush, BrushType::Smudge, "Smudge");
                     ui.radio_value(&mut scene.brush, BrushType::SmudgeBatch, "SmudgeBatch");
+                    ui.radio_value(&mut scene.brush, BrushType::SmudgeSingle, "SmudgeSingle");
+
+                    if ui.button("Export").clicked() {
+                        let buffer = create_buffer_range(
+                            &device,
+                            &vec![0; doc_size.area() as usize],
+                            wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
+                            "Readback",
+                        );
+                        let mut buffer_node = render_graph.uninitialized_buffer(buffer.size() as usize);
+                        buffer_node = render_graph.copy_texture_to_buffer(
+                            canvas,
+                            buffer_node,
+                            Extent3d {
+                                width: doc_size.width,
+                                height: doc_size.height,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                        render_graph.output_buffer(buffer_node, buffer.clone());
+                        export = Some(buffer);
+                    }
                 });
 
                 if enable_profiler {
                     puffin_egui::profiler_window(&ctx);
                 }
             });
+
+            wgpu_profiler!("rendering", &mut gpu_profiler, &mut encoder, &device, {
+                let mut render_graph_compiler = crate::render_graph::RenderGraphCompiler {
+                    device: &device,
+                    encoder: &mut encoder,
+                    blitter: &blitter,
+                    render_pipeline_cache: &mut render_pipeline_cache,
+                    ephermal_buffer_cache: &mut ephermal_buffer_cache,
+                    render_texture_cache: &mut render_texture_cache,
+                    material_cache: &mut material_cache,
+                    staging_belt: &mut staging_belt,
+                    mipmapper: &mipmapper,
+                    gpu_profiler: &mut gpu_profiler,
+                };
+
+                let passes = render_graph_compiler.compile(&render_graph, framebuffer, &frame);
+                render_graph_compiler.render(&passes);
+            });
+
+            staging_belt.finish();
 
             wgpu_profiler!("egui", &mut gpu_profiler, &mut encoder, &device, {
                 egui_wrapper.render(
@@ -1830,6 +2107,21 @@ pub fn main() {
 
             // Signal to the profiler that the frame is finished.
             gpu_profiler.end_frame().unwrap();
+
+            if let Some(buffer) = export {
+                let slice = buffer.buffer.slice(..);
+                let mapped = slice.map_async(wgpu::MapMode::Read);
+                tokio::spawn(async move {
+                    mapped.await.unwrap();
+                    {
+                        let data = buffer.buffer.slice(..).get_mapped_range();
+                        println!("Got output data: {:#?}", &data[0..10]);
+                        image::save_buffer("export.png", &data, doc_size.width, doc_size.height, ColorType::Rgba8)
+                            .unwrap();
+                    }
+                    buffer.buffer.unmap();
+                });
+            }
 
             let (sender, mut receiver) = futures::channel::oneshot::channel();
             let recall = staging_belt.recall();
@@ -1926,8 +2218,9 @@ impl Document {
         puffin::profile_function!();
         let mut h = 0u64;
         for path in self.paths.iter() {
-            h = h.wrapping_mul(32) ^ path.hash();
+            h = h.wrapping_mul(31) ^ path.hash();
         }
+        h = h.wrapping_mul(31) ^ self.brushes.hash();
         h
     }
 

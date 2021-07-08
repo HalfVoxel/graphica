@@ -5,7 +5,7 @@ use crate::shader::load_shader;
 use crate::shader::load_wgsl_shader;
 use crate::{geometry_utilities::types::*, vertex::GPUVertex};
 use lyon::math::*;
-use wgpu::{ComputePipeline, Device, RenderPipeline, TextureViewDimension};
+use wgpu::{ComputePipeline, Device, PushConstantRange, RenderPipeline, TextureViewDimension};
 
 type GPURGBA = [u8; 4];
 
@@ -103,6 +103,8 @@ pub struct BrushManager {
     pub splat: ShaderBundle,
     pub splat_with_readback: ShaderBundle,
     pub splat_with_readback_batched: ShaderBundleCompute,
+    pub splat_with_readback_single_a: ShaderBundleCompute,
+    pub splat_with_readback_single_b: ShaderBundleCompute,
 }
 
 impl BrushManager {
@@ -343,6 +345,98 @@ impl BrushManager {
             entry_point: "main",
         };
 
+        let bind_group_layout_clone_brush_single =
+            Arc::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            view_dimension: TextureViewDimension::D2,
+                            format: crate::config::TEXTURE_FORMAT,
+                            access: wgpu::StorageTextureAccess::ReadWrite,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            view_dimension: TextureViewDimension::D2,
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            access: wgpu::StorageTextureAccess::ReadWrite,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Sampler {
+                            filtering: true,
+                            comparison: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+                label: None,
+            }));
+
+        let pipeline_layout_clone_brush_single =
+            Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&bind_group_layout_clone_brush_single],
+                push_constant_ranges: &[PushConstantRange {
+                    stages: wgpu::ShaderStage::COMPUTE,
+                    range: 0..4,
+                }],
+            }));
+
+        let clone_brush_single_cs_module = Arc::new(load_shader(device, "shaders/clone_brush_single.comp.spv"));
+
+        let render_pipeline_descriptor_clone_brush_single_a = wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout_clone_brush_single),
+            module: &clone_brush_single_cs_module,
+            entry_point: "main",
+        };
+
+        let render_pipeline_descriptor_clone_brush_single_b = wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout_clone_brush_single),
+            module: &clone_brush_single_cs_module,
+            entry_point: "main",
+        };
+
         BrushManager {
             splat: ShaderBundle {
                 bind_group_layout: bind_group_layout_brush,
@@ -355,6 +449,14 @@ impl BrushManager {
             splat_with_readback_batched: ShaderBundleCompute {
                 bind_group_layout: bind_group_layout_clone_brush_batched,
                 pipeline: Arc::new(device.create_compute_pipeline(&render_pipeline_descriptor_clone_brush_batched)),
+            },
+            splat_with_readback_single_a: ShaderBundleCompute {
+                bind_group_layout: bind_group_layout_clone_brush_single.clone(),
+                pipeline: Arc::new(device.create_compute_pipeline(&render_pipeline_descriptor_clone_brush_single_a)),
+            },
+            splat_with_readback_single_b: ShaderBundleCompute {
+                bind_group_layout: bind_group_layout_clone_brush_single,
+                pipeline: Arc::new(device.create_compute_pipeline(&render_pipeline_descriptor_clone_brush_single_b)),
             },
         }
     }
