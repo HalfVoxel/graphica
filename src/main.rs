@@ -563,26 +563,28 @@ impl BrushRendererWithReadbackSingle {
         brush_manager: &Rc<BrushManager>,
         texture: &Arc<Texture>,
     ) -> BrushRendererWithReadbackSingle {
-        let size_in_pixels = 64;
-        let points = pixel_path(
-            sample_points_along_curve(&brush_data.path, 2.0)
-                .into_iter()
-                .map(|(_, p)| p),
-        );
+        let size_in_pixels = 256;
+        let mut primitives = vec![];
+        for subpath in brush_data.path.iter_sub_paths() {
+            let mut points = vec![];
+            sample_points_along_sub_path(&subpath, 2.0, &mut points);
+            let points = pixel_path(points.into_iter().map(|(_, p)| p))
+                .chunks_exact(2)
+                .map(|a| a[0])
+                .collect::<Vec<_>>();
 
-        let offset = -vector(size_in_pixels as i32 / 2, size_in_pixels as i32 / 2);
-        let primitives: Vec<ReadbackPrimitive> = points
-            .windows(2)
-            .map(|window| {
+            let offset = -vector(size_in_pixels as i32 / 2, size_in_pixels as i32 / 2);
+            primitives.extend(points.windows(2).enumerate().map(|(i, window)| {
                 let clone_pos = window[0] + offset;
                 let pos = window[1] + offset;
 
                 ReadbackPrimitive {
                     origin_src: (clone_pos.x, clone_pos.y),
                     origin_dst: (pos.x, pos.y),
+                    start: if i == 0 { 1 } else { 0 },
                 }
-            })
-            .collect();
+            }));
+        }
 
         let ubo = create_buffer_range(device, &primitives, wgpu::BufferUsage::STORAGE, None);
 
@@ -609,7 +611,7 @@ impl BrushRendererWithReadbackSingle {
             &[ReadbackUniforms {
                 width_per_group: width_per_group as i32,
                 height_per_group: height_per_group as i32,
-                num_primitives: points.len() as i32 - 1,
+                num_primitives: primitives.len() as i32,
                 size_in_pixels: size_in_pixels as i32,
             }],
             wgpu::BufferUsage::UNIFORM,
@@ -636,7 +638,7 @@ impl BrushRendererWithReadbackSingle {
             ubo,
             size_in_pixels,
             sampler,
-            num_primitives: points.len() - 1,
+            num_primitives: primitives.len(),
             brush_texture: texture.clone(),
             material,
         }
@@ -743,6 +745,7 @@ pub struct BrushRendererWithReadbackBatched {
 struct ReadbackPrimitive {
     origin_src: (i32, i32),
     origin_dst: (i32, i32),
+    start: u32,
 }
 
 #[repr(C, align(16))]
@@ -780,6 +783,7 @@ impl BrushRendererWithReadbackBatched {
                 ReadbackPrimitive {
                     origin_src: (clone_pos.x.round() as i32, clone_pos.y.round() as i32),
                     origin_dst: (pos.x.round() as i32, pos.y.round() as i32),
+                    start: 0,
                 }
             })
             .collect();
@@ -1967,6 +1971,16 @@ pub fn main() {
                         a: 1.0,
                     },
                 );
+
+                let white = render_graph.clear(Size2D::new(1, 1), wgpu::Color::WHITE);
+                canvas = render_graph.blit(
+                    white.clone(),
+                    canvas,
+                    rect(0.0, 0.0, 1.0, 1.0),
+                    rect(512.0, 512.0, 50.0, 50.0),
+                );
+                canvas = render_graph.blit(white, canvas, rect(0.0, 0.0, 1.0, 1.0), rect(512.0, 0.0, 50.0, 50.0));
+
                 // canvas = render_graph.quad(
                 //     canvas,
                 //     CanvasRect::from_size(doc_size.cast()),
