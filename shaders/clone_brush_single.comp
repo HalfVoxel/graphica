@@ -57,6 +57,18 @@ uint hash(uint r) {
     return r;
 }
 
+/// Adds random noise to the color assuming it is going to be stored in an 8-bit per channel unorm texture.
+///
+/// Note: no rounding is done by this function.
+///
+/// See https://en.wikipedia.org/wiki/Rounding#Stochastic_rounding
+vec4 stochastic_dithering_u8(vec4 color, uint seed) {
+    uint noise = hash(seed);
+    vec4 noisev = vec4(uvec4((noise >> 24) & 255, (noise >> 16) & 255, (noise >> 8) & 255, (noise >> 0) & 255)) / 255.0;
+    color += (noisev - 0.5) * 0.99 / 255.0;
+    return color;
+}
+
 void pass_a(int primitive_index) {
     uvec2 work = gl_GlobalInvocationID.xy;
     if (work.x >= size_in_pixels || work.y >= size_in_pixels) {
@@ -80,45 +92,28 @@ void pass_a(int primitive_index) {
             vec4 a;
             if (start) {
                 a = imageLoad(image, ivec2(origin_src + offset));
-                // a.rgb = a.rgb*a.rgb;
             } else {
                 // Essentially the same as the line above, but this image has higher precision
                 a = imageLoad(temp_image, ivec2(work) + prev_image);
-                // a = round(clamp(a, 0.0, 1.0) * 255.0 + 0.49 * (work.x % 2 == 0 ? 1 : -1)) / 255.0;
             }
             vec4 b;
             ivec2 relative = ivec2(origin_dst + offset) - ivec2(primitives[primitive_index].origin_src);
             if (!start && all(greaterThanEqual(relative, ivec2(0))) && all(lessThan(relative, ivec2(size_in_pixels)))) {
                 // If we are inside the bounds of the high precision texture we can sample from that instead
                 b = imageLoad(temp_image, relative + prev_image);
-                // b = round(clamp(b, 0.0, 1.0) * 255.0 + 0.49 * (work.x % 2 == 0 ? 1 : -1)) / 255.0;
             } else {
                 // Otherwise fall back to the low-precision image
                 b = imageLoad(image, ivec2(origin_dst + offset));
             }
-            // b.rgb = b.rgb*b.rgb;
 
             vec2 uv = vec2(work + offset) / vec2(size_in_pixels, size_in_pixels);
             vec4 c = texture(sampler2D(t_brush, s_brush), uv);
-            // a.a *= c.a * 0.5;
-            // a.rgb *= a.a;
-            // b.rgb *= b.a;
-            // vec4 result = mix(b, a, 0.5);//blend_over(a, b);
+
             float blend = c.a * 0.5;
             float out_alpha = mix(b.a, a.a, blend);
             out_alpha = 1.0;
             vec3 col = mix(b.rgb * b.a, a.rgb * a.a, blend) / out_alpha;
             vec4 result = vec4(col, out_alpha);
-
-            // result = round(result * 255.0) / 255.0;
-            
-            
-            // uint noise2 = hash(hashcoord.x*1024 + hashcoord.y + 1323);
-            // uint noise3 = hash(hashcoord.x*1024 + hashcoord.y + 5123);
-            // uint noise4 = hash(hashcoord.x*1024 + hashcoord.y + 721);
-
-            // Random noise dithering
-            // result += (vec4(float(noise1 % 1024) / 1023.0, float(noise2 % 1024) / 1023.0, float(noise3 % 1024) / 1023.0, float(noise4 % 1024) / 1023.0) - vec4(0.5)) * 0.99 / 255.0;
             imageStore(temp_image, ivec2(work + offset) + next_image, result);
         }
     }
@@ -139,15 +134,13 @@ void pass_b(int primitive_index) {
         for (int dx = 0; dx < width_per_group; dx++) {
             uvec2 offset = uvec2(dx, dy) * gl_WorkGroupSize.xy;
             vec4 a = imageLoad(temp_image, ivec2(work + offset) + next_image);
-            // a = round(clamp(a, 0.0, 1.0) * 255.0) / 255.0;
 
+            // Random noise dithering
             uvec2 hashcoord = origin_dst + offset + ivec2(primitive_index, 0);
-            uint noise1 = hash(hashcoord.x*1024 + hashcoord.y);
-            vec4 noisev = vec4(uvec4((noise1 >> 24) & 255, (noise1 >> 16) & 255, (noise1 >> 8) & 255, (noise1 >> 0) & 255)) / 255.0;
-            a += (noisev - 0.5) * 0.99 / 255.0;
+            vec4 result = stochastic_dithering_u8(a, hashcoord.x*1024 + hashcoord.y);
 
             // a.rgb = sqrt(a.rgb);
-            imageStore(image, ivec2(origin_dst + offset), a);
+            imageStore(image, ivec2(origin_dst + offset), result);
         }
     }
 }
