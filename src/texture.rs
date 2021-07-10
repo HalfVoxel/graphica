@@ -2,7 +2,7 @@ use by_address::ByAddress;
 use euclid::rect;
 use lazy_init::Lazy;
 use std::{num::NonZeroU32, rc::Rc, sync::Arc};
-use wgpu::{util::DeviceExt, CommandEncoder, Device, Extent3d, TextureFormat, TextureUsage, TextureView};
+use wgpu::{util::DeviceExt, CommandEncoder, Device, Extent3d, Queue, TextureFormat, TextureUsage, TextureView};
 
 pub struct Texture {
     pub descriptor: wgpu::TextureDescriptor<'static>,
@@ -202,6 +202,10 @@ impl Texture {
             usage: descriptor.usage,
         };
 
+        Self::from_tex_and_descriptor(tex, descriptor)
+    }
+
+    fn from_tex_and_descriptor(tex: wgpu::Texture, descriptor: wgpu::TextureDescriptor<'static>) -> Self {
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
         let mut views = vec![];
         for _ in 0..descriptor.mip_level_count {
@@ -214,6 +218,30 @@ impl Texture {
             view,
             mipmap_views: views,
         }
+    }
+
+    pub fn from_data_u8(
+        device: &Device,
+        queue: &Queue,
+        data: &[u8],
+        extent: Extent3d,
+        format: TextureFormat,
+        usage: TextureUsage,
+        label: Option<&'static str>,
+    ) -> Texture {
+        let descriptor = wgpu::TextureDescriptor {
+            label,
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            // array_layer_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+        };
+
+        let tex = device.create_texture_with_data(queue, &descriptor, data);
+        Self::from_tex_and_descriptor(tex, descriptor)
     }
 
     pub fn load_from_file(

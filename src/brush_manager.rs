@@ -3,9 +3,15 @@ use std::sync::Arc;
 use crate::cache::render_pipeline_cache::RenderPipelineBase;
 use crate::shader::load_shader;
 use crate::shader::load_wgsl_shader;
+use crate::texture::Texture;
 use crate::{geometry_utilities::types::*, vertex::GPUVertex};
+use image::GenericImageView;
 use lyon::math::*;
-use wgpu::{ComputePipeline, Device, PushConstantRange, RenderPipeline, TextureViewDimension};
+use wgpu::util::DeviceExt;
+use wgpu::{
+    ComputePipeline, Device, Extent3d, PushConstantRange, Queue, RenderPipeline, TextureFormat, TextureUsage,
+    TextureViewDimension,
+};
 
 type GPURGBA = [u8; 4];
 
@@ -105,10 +111,32 @@ pub struct BrushManager {
     pub splat_with_readback_batched: ShaderBundleCompute,
     pub splat_with_readback_single_a: ShaderBundleCompute,
     pub splat_with_readback_single_b: ShaderBundleCompute,
+    pub blue_noise_tex: Arc<Texture>,
 }
 
 impl BrushManager {
-    pub fn load(device: &Device, _sample_count: u32) -> BrushManager {
+    pub fn load(device: &Device, queue: &Queue, _sample_count: u32) -> BrushManager {
+        let blue_noise = image::open("blue_noise_56.png").expect("Could not open blue noise image");
+        let size = blue_noise.dimensions();
+        let blue_noise = blue_noise
+            .into_rgba8()
+            .chunks_exact(4)
+            .map(|c| c[0])
+            .collect::<Vec<_>>();
+        let blue_noise_tex = Arc::new(crate::texture::Texture::from_data_u8(
+            device,
+            queue,
+            &blue_noise,
+            Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+            TextureFormat::R8Uint,
+            TextureUsage::STORAGE | TextureUsage::COPY_DST,
+            Some("blue noise"),
+        ));
+
         let bind_group_layout_brush = Arc::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Bind group layout brush"),
             entries: &[
@@ -261,7 +289,7 @@ impl BrushManager {
                         visibility: wgpu::ShaderStage::COMPUTE,
                         ty: wgpu::BindingType::StorageTexture {
                             view_dimension: TextureViewDimension::D2,
-                            format: crate::config::TEXTURE_FORMAT,
+                            format: wgpu::TextureFormat::Rgba32Float,
                             access: wgpu::StorageTextureAccess::ReadWrite,
                         },
                         count: None,
@@ -371,6 +399,16 @@ impl BrushManager {
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
                         visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            view_dimension: TextureViewDimension::D2,
+                            format: wgpu::TextureFormat::R8Uint,
+                            access: wgpu::StorageTextureAccess::ReadOnly,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStage::COMPUTE,
                         ty: wgpu::BindingType::Sampler {
                             filtering: true,
                             comparison: false,
@@ -378,7 +416,7 @@ impl BrushManager {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 3,
+                        binding: 4,
                         visibility: wgpu::ShaderStage::COMPUTE,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -388,7 +426,7 @@ impl BrushManager {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 4,
+                        binding: 5,
                         visibility: wgpu::ShaderStage::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -398,7 +436,7 @@ impl BrushManager {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 5,
+                        binding: 6,
                         visibility: wgpu::ShaderStage::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
@@ -438,6 +476,7 @@ impl BrushManager {
         };
 
         BrushManager {
+            blue_noise_tex,
             splat: ShaderBundle {
                 bind_group_layout: bind_group_layout_brush,
                 pipeline: render_pipeline_brush,

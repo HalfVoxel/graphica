@@ -109,7 +109,7 @@ pub trait CustomComputePassPrimitive {
 }
 
 pub trait CustomComputePass {
-    fn execute<'a>(&'a self, cpass: &mut wgpu::ComputePass<'a>);
+    fn execute<'a>(&'a self, device: &Device, gpu_profiler: &mut GpuProfiler, cpass: &mut wgpu::ComputePass<'a>);
 }
 
 #[derive(Clone)]
@@ -1358,7 +1358,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                 });
                             }
                             CompiledComputePrimitive::CustomCompute(f) => {
-                                f.0.execute(&mut cpass);
+                                f.0.execute(self.device, self.gpu_profiler, &mut cpass);
                             }
                         }
                     }

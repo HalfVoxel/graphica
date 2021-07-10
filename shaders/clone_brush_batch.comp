@@ -4,15 +4,16 @@
 layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
 layout (set=0, binding=0, rgba8) uniform coherent image2D image;
-layout (set=0, binding=1, rgba8) uniform coherent image2D temp_image;
+layout (set=0, binding=1, rgba32f) uniform coherent image2D temp_image;
 layout (set=0, binding=2) uniform sampler s_brush;
 layout (set=0, binding=3) uniform texture2D t_brush;
 
 #define PRIM_BUFFER_LEN 64
 
 struct Primitive {
-    ivec2 origin_src;
-    ivec2 origin_dst;
+    uvec2 origin_src;
+    uvec2 origin_dst;
+    uint start;
 };
 
 layout(std140, binding = 4)
@@ -48,20 +49,109 @@ vec4 blend_over_premultiplied(vec4 a, vec4 b) {
     return a + b * (1 - a.a);
 }
 
-void main() {
-    // int val = atomicAdd(atcounter, 1);
-    // uint v = subgroupBroadcast(val, 0) * gl_SubgroupSize + gl_SubgroupInvocationID;
-    // uint idx = gl_GlobalInvocationID.y * gl_WorkGroupSize.x * 32 + gl_GlobalInvocationID.x;
-    // // imageStore(image, ivec2(gl_GlobalInvocationID.xy), vec4(float(val % (32*32)) / 1024.0, float(val % 32) / (32), log(val+1) / (14.0), 1.0));
-    // imageStore(image, ivec2(gl_GlobalInvocationID.xy), vec4(float(idx) / (32*32*32*32), 0.0, 0.0, 1.0));
-    // outbuffer[idx] = int(v);
+uint hash(uint r) {
+    r = r ^ 61 ^ r >> 16;
+    r = r + (r << 3);
+    r = r ^ r >> 4;
+    r = r * 668265261;
+    r = r ^ r >> 15;
+    return r;
+}
 
+/// Adds random noise to the color assuming it is going to be stored in an 8-bit per channel unorm texture.
+///
+/// Note: no rounding is done by this function.
+///
+/// See https://en.wikipedia.org/wiki/Rounding#Stochastic_rounding
+vec4 stochastic_dithering_u8(vec4 color, uint seed) {
+    uint noise = hash(seed);
+    vec4 noisev = vec4(uvec4((noise >> 24) & 255, (noise >> 16) & 255, (noise >> 8) & 255, (noise >> 0) & 255)) / 255.0;
+    color += (noisev - 0.5) * 0.99 / 255.0;
+    return color;
+}
+
+vec4 gamma_to_linear_approximate(vec4 color) {
+    return vec4(color.rgb*color.rgb, color.a);
+}
+
+vec4 linear_to_gamma_approximate(vec4 color) {
+    return vec4(sqrt(color.rgb), color.a);
+}
+
+void pass_a(int primitive_index, uvec2 work) {
+    uvec2 origin_src = primitives[primitive_index].origin_src;
+    origin_src += work;
+
+    uvec2 origin_dst = primitives[primitive_index].origin_dst;
+    origin_dst += work;
+
+    bool start = primitives[primitive_index].start != 0;
+
+    ivec2 prev_image = ivec2(((primitive_index+0) % 2) * size_in_pixels, 0);
+    ivec2 next_image = ivec2(((primitive_index+1) % 2) * size_in_pixels, 0);
+
+    vec4 a;
+    if (start) {
+        a = imageLoad(image, ivec2(origin_src));
+        a = gamma_to_linear_approximate(a);
+    } else {
+        // Essentially the same as the line above, but this image has higher precision
+        a = imageLoad(temp_image, ivec2(work) + prev_image);
+    }
+    vec4 b;
+    ivec2 relative = ivec2(origin_dst) - ivec2(primitives[primitive_index].origin_src);
+    if (!start && all(greaterThanEqual(relative, ivec2(0))) && all(lessThan(relative, ivec2(size_in_pixels)))) {
+        // If we are inside the bounds of the high precision texture we can sample from that instead
+        b = imageLoad(temp_image, relative + prev_image);
+    } else {
+        // Otherwise fall back to the low-precision image
+        b = imageLoad(image, ivec2(origin_dst));
+        b = gamma_to_linear_approximate(b);
+    }
+
+    vec2 uv = vec2(work) / vec2(size_in_pixels, size_in_pixels);
+    vec4 c = texture(sampler2D(t_brush, s_brush), uv);
+
+    float blend = c.a * 0.5;
+    float out_alpha = mix(b.a, a.a, blend);
+    out_alpha = 1.0;
+    vec3 col = mix(b.rgb * b.a, a.rgb * a.a, blend) / out_alpha;
+    vec4 result = vec4(col, out_alpha);
+    imageStore(temp_image, ivec2(work) + next_image, result);
+}
+
+void pass_b(int primitive_index, uvec2 work) {
+    uvec2 origin_dst = primitives[primitive_index].origin_dst;
+    origin_dst += work;
+
+    ivec2 next_image = ivec2(((primitive_index+1) % 2) * size_in_pixels, 0);
+
+    if (primitive_index + 1 < num_primitives) {
+        uvec2 mn = primitives[primitive_index+1].origin_dst;
+        uvec2 mx = mn + uvec2(size_in_pixels, size_in_pixels);
+        if (all(greaterThanEqual(origin_dst, mn)) && all(lessThan(origin_dst, mx))) {
+            // This pixel will be written in the next step anyway, skip it
+            return;
+        }
+    }
+    return;
+
+    vec4 a = imageLoad(temp_image, ivec2(work) + next_image);
+
+    a = linear_to_gamma_approximate(a);
+
+    // Random noise dithering
+    uvec2 hashcoord = origin_dst + ivec2(primitive_index, 0);
+    vec4 result = stochastic_dithering_u8(a, hashcoord.x*1024 + hashcoord.y);
+    imageStore(image, ivec2(origin_dst), result);
+}
+
+void main() {
     // For each primitive
     //    ensure all previous work is done -> barrier
     //    atomic add to get new id
     //    perform work
     //    atomic add work done
-    // for (int i = 0; i < num_primitives; i++) {
     int chunk_size = size_in_pixels*size_in_pixels;
     while (true) {
         int val = atomicAdd(next_work_item, 1);
@@ -85,128 +175,15 @@ void main() {
 
         int wId = val % chunk_size;
 
-        ivec2 work = ivec2(wId % size_in_pixels, wId / size_in_pixels);
-        ivec2 origin_src = primitives[primitive].origin_src;
-        origin_src += ivec2(work.xy);
-
-        ivec2 origin_dst = primitives[primitive].origin_dst;
-        origin_dst += ivec2(work.xy);
-
-        ivec2 next_brush = ivec2((primitive % 2) * size_in_pixels, 0);
-        ivec2 prev_brush = ivec2((1 - (primitive % 2)) * size_in_pixels, 0);
-        if (primitive == 0) {
-            prev_brush = next_brush;
-        }
+        uvec2 work = uvec2(wId % size_in_pixels, wId / size_in_pixels);
         
         if ((chunk % 2) == 0) {
-            int dy = 0;
-            int dx = 0;
-            // for (int dy = 0; dy < height_per_group; dy++) {
-                // for (int dx = 0; dx < width_per_group; dx++) {
-                    ivec2 offset = ivec2(dx, dy) * int(gl_WorkGroupSize.xy);
-                    vec4 a = imageLoad(image, origin_src + offset);
-                    // vec4 b = imageLoad(image, origin_dst + offset);
-                    vec2 uv = (vec2(work.xy) + offset) / vec2(size_in_pixels, size_in_pixels);
-                    vec4 c = texture(sampler2D(t_brush, s_brush), uv);
-                    a.a = 1.0;
-                    a.a *= c.a * 0.5;
-                    a.rgb *= a.a;
-                    imageStore(temp_image, ivec2(work.xy) + offset + next_brush, a);
-                // }
-            // }
+            pass_a(primitive, work);
         } else {
-            ivec2 mn = min(primitives[primitive].origin_src, primitives[primitive].origin_dst);
-            ivec2 mx = max(primitives[primitive].origin_src, primitives[primitive].origin_dst) + ivec2(size_in_pixels, size_in_pixels);
-            // break;
-            for (int dy = mn.y + work.y; dy < mx.y; dy += size_in_pixels) {
-                for (int dx = mn.x + work.x; dx < mx.x; dx += size_in_pixels) {
-                    ivec2 pixel = ivec2(dx, dy);
-
-                    if (true) {
-                        vec4 canvas = vec4(0.0);
-                        for (int i = 0; i <= 32; i++) {
-                            float t = 1.0 - i / 32.0;
-                            ivec2 d = primitives[primitive].origin_src - primitives[primitive].origin_dst;
-                            vec2 offset = vec2(d) * t;
-                            vec4 c = imageLoad(image, pixel + ivec2(offset));
-                            float contribution = exp(-t*2.0);
-                            c.a *= contribution;
-                            c.rgb *= c.a;
-                            canvas = blend_over_premultiplied(canvas, c);
-                        }
-                        // Unpremultiply alpha
-                        canvas.rgb /= canvas.a;
-                        imageStore(image, pixel, canvas);
-                    } else {
-                        vec4 canvas = imageLoad(image, pixel);
-                        // Premultiply alpha
-                        canvas.rgb *= canvas.a;
-                        // vec4 b = vec4(0.0, 0.0, 0.0, 0.0);
-                        for (int i = 0; i <= 32; i++) {
-                            float t = i / 32.0;
-                            vec2 brush_origin = mix(primitives[primitive].origin_src, primitives[primitive].origin_dst, t);
-                            ivec2 offset_from_brush = pixel - ivec2(round(brush_origin));
-                            offset_from_brush = clamp(offset_from_brush, ivec2(0, 0), ivec2(size_in_pixels - 1, size_in_pixels - 1));
-                            
-
-                            vec4 brush_prev = imageLoad(temp_image, offset_from_brush + prev_brush);
-                            vec4 brush_next = imageLoad(temp_image, offset_from_brush + next_brush);
-                            // TODO: Can we mix premultiplied values?
-                            vec4 brush = mix(brush_prev, brush_next, t);
-                            // brush = vec4(0.0);
-                            // brush.a = 0.0;
-
-                            canvas = blend_over_premultiplied(brush, canvas);
-                            // b += brush;
-                        }
-                        // Unpremultiply alpha
-                        canvas.rgb /= canvas.a;
-                        // b /= 33;
-                        // canvas = blend_over(b, canvas);
-                        // canvas = vec4((primitive % 5) / 5.0, 0.0, 0.0, 1.0);
-                        imageStore(image, pixel, canvas);
-                    }
-                }
-            }
+            pass_b(primitive, work);
         }
 
         memoryBarrier();
         atomicAdd(done_work_items, 1);
     }
-    
-    // for (int i = 0; i < num_primitives; i++) {
-    //     ivec2 origin_src = primitives[i].origin_src;
-    //     origin_src += ivec2(gl_LocalInvocationID.xy);
-
-    //     ivec2 origin_dst = primitives[i].origin_dst;
-    //     origin_dst += ivec2(gl_LocalInvocationID.xy);
-
-    //     for (int dy = 0; dy < height_per_group; dy++) {
-    //         for (int dx = 0; dx < width_per_group; dx++) {
-    //             ivec2 offset = ivec2(dx, dy) * ivec2(32, 32);
-    //             vec4 a = imageLoad(image, origin_src + offset);
-    //             vec4 b = imageLoad(image, origin_dst + offset);
-    //             vec2 uv = (vec2(gl_LocalInvocationID.xy) + offset) / vec2(32 * width_per_group, 32 * height_per_group);
-    //             vec4 c = texture(sampler2D(t_brush, s_brush), uv);
-    //             a.a *= c.a;
-    //             // A over B
-    //             // TODO: Might need more numerically stable algorithm
-    //             vec4 r = (a * a.a + b * b.a * (1 - a.a)) / (a.a + b.a * (1 - a.a));
-    //             imageStore(temp_image, ivec2(gl_LocalInvocationID.xy) + offset, r);
-    //         }
-    //     }
-
-    //     barrier();
-
-    //     for (int dy = 0; dy < height_per_group; dy++) {
-    //         for (int dx = 0; dx < width_per_group; dx++) {
-    //             ivec2 offset = ivec2(dx, dy) * ivec2(32, 32);
-    //             vec4 a = imageLoad(temp_image, ivec2(gl_LocalInvocationID.xy) + offset);
-    //             imageStore(image, origin_dst + offset, a);
-    //         }
-    //     }
-
-    //     barrier();
-    //     groupMemoryBarrier();
-    // }
 }

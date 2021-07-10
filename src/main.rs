@@ -9,6 +9,7 @@ use lyon::path::Path;
 use lyon::tessellation::geometry_builder::*;
 use lyon::tessellation::FillOptions;
 use lyon::tessellation::{StrokeOptions, StrokeTessellator};
+use rand::Rng;
 use std::convert::TryInto;
 use std::num::NonZeroU64;
 use wgpu::BlendState;
@@ -506,6 +507,7 @@ impl BrushRendererTrait for BrushRendererWithReadback {
 pub struct BrushRendererWithReadbackSingle {
     ubo: BufferRange,
     brush_manager: Rc<BrushManager>,
+    group_width: u32,
     size_in_pixels: u32,
     num_primitives: usize,
     brush_texture: Arc<Texture>,
@@ -565,13 +567,14 @@ impl BrushRendererWithReadbackSingle {
     ) -> BrushRendererWithReadbackSingle {
         let size_in_pixels = 256;
         let mut primitives = vec![];
+        let mut rnd = rand::thread_rng();
         for subpath in brush_data.path.iter_sub_paths() {
             let mut points = vec![];
             sample_points_along_sub_path(&subpath, 2.0, &mut points);
-            let points = pixel_path(points.into_iter().map(|(_, p)| p))
-                .chunks_exact(2)
-                .map(|a| a[0])
-                .collect::<Vec<_>>();
+            let points = pixel_path(points.into_iter().map(|(_, p)| p));
+            // .chunks_exact(2)
+            // .map(|a| a[0])
+            // .collect::<Vec<_>>();
 
             let offset = -vector(size_in_pixels as i32 / 2, size_in_pixels as i32 / 2);
             primitives.extend(points.windows(2).enumerate().map(|(i, window)| {
@@ -582,6 +585,7 @@ impl BrushRendererWithReadbackSingle {
                     origin_src: (clone_pos.x, clone_pos.y),
                     origin_dst: (pos.x, pos.y),
                     start: if i == 0 { 1 } else { 0 },
+                    random_offset_64: (rnd.gen_range(0..64), rnd.gen_range(0..64)),
                 }
             }));
         }
@@ -626,6 +630,7 @@ impl BrushRendererWithReadbackSingle {
             vec![
                 BindingResourceArc::texture(None),
                 BindingResourceArc::texture(None),
+                BindingResourceArc::texture(Some(brush_manager.blue_noise_tex.clone())),
                 BindingResourceArc::sampler(Some(sampler.clone())),
                 BindingResourceArc::texture(Some(texture.to_owned())),
                 BindingResourceArc::buffer(Some(ubo.clone())),
@@ -634,6 +639,7 @@ impl BrushRendererWithReadbackSingle {
         ));
 
         Self {
+            group_width: (Self::LOCAL_SIZE * width_per_group) as u32,
             brush_manager: brush_manager.clone(),
             ubo,
             size_in_pixels,
@@ -672,7 +678,7 @@ impl BrushRendererTrait for BrushRendererWithReadbackSingle {
             ],
         );
 
-        let dispatch_width = (self.size_in_pixels + Self::LOCAL_SIZE as u32 - 1) / Self::LOCAL_SIZE as u32;
+        let dispatch_width = (self.size_in_pixels + self.group_width as u32 - 1) / self.group_width as u32;
         render_graph.custom_compute(
             vec![],
             vec![target, scratch],
@@ -715,15 +721,16 @@ struct BrushRendererWithReadbackSingleCPassCompiled {
 }
 
 impl crate::render_graph::CustomComputePass for BrushRendererWithReadbackSingleCPassCompiled {
-    fn execute<'a>(&'a self, cpass: &mut wgpu::ComputePass<'a>) {
+    fn execute<'a>(&'a self, device: &Device, gpu_profiler: &mut GpuProfiler, cpass: &mut wgpu::ComputePass<'a>) {
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &self.bind_group, &[]);
         let (dx, dy, dz) = self.dispatch;
-        for i in 0..self.primitive_count * 2 {
-            cpass.set_push_constants(0, as_u8_slice(&[i as u32]));
-            cpass.dispatch(dx, dy, dz);
-            // cpass.set_pipeline(&pipeline_b);
-        }
+        wgpu_profiler!("smudge", gpu_profiler, cpass, device, {
+            for i in 0..self.primitive_count * 2 {
+                cpass.set_push_constants(0, as_u8_slice(&[i as u32]));
+                cpass.dispatch(dx, dy, dz);
+            }
+        });
     }
 }
 
@@ -731,7 +738,6 @@ pub struct BrushRendererWithReadbackBatched {
     ubo: BufferRange,
     brush_manager: Rc<BrushManager>,
     size_in_pixels: u32,
-    points: Vec<(usize, CanvasPoint)>,
     brush_texture: Arc<Texture>,
     sampler: Arc<wgpu::Sampler>,
     material: Arc<Material>,
@@ -745,6 +751,7 @@ pub struct BrushRendererWithReadbackBatched {
 struct ReadbackPrimitive {
     origin_src: (i32, i32),
     origin_dst: (i32, i32),
+    random_offset_64: (u32, u32),
     start: u32,
 }
 
@@ -769,24 +776,30 @@ impl BrushRendererWithReadbackBatched {
         brush_manager: &Rc<BrushManager>,
         texture: &Arc<Texture>,
     ) -> BrushRendererWithReadbackBatched {
-        let size_in_pixels = 64;
-        // let points = sample_points_along_curve(&brush_data.path, 1.41);
-        let points = sample_points_along_curve(&brush_data.path, (size_in_pixels as f32) * 0.5);
+        let size_in_pixels = 256;
 
-        let offset = -vector(size_in_pixels as f32 * 0.5, size_in_pixels as f32 * 0.5);
-        let primitives: Vec<ReadbackPrimitive> = points
-            .windows(2)
-            .map(|window| {
-                let clone_pos = window[0].1 + offset;
-                let pos = window[1].1 + offset;
+        let mut primitives = vec![];
+        for subpath in brush_data.path.iter_sub_paths() {
+            let mut points = vec![];
+            sample_points_along_sub_path(&subpath, 2.0, &mut points);
+            let points = pixel_path(points.into_iter().map(|(_, p)| p))
+                .chunks_exact(2)
+                .map(|a| a[0])
+                .collect::<Vec<_>>();
+
+            let offset = -vector(size_in_pixels as i32 / 2, size_in_pixels as i32 / 2);
+            primitives.extend(points.windows(2).enumerate().map(|(i, window)| {
+                let clone_pos = window[0] + offset;
+                let pos = window[1] + offset;
 
                 ReadbackPrimitive {
-                    origin_src: (clone_pos.x.round() as i32, clone_pos.y.round() as i32),
-                    origin_dst: (pos.x.round() as i32, pos.y.round() as i32),
-                    start: 0,
+                    origin_src: (clone_pos.x, clone_pos.y),
+                    origin_dst: (pos.x, pos.y),
+                    start: if i == 0 { 1 } else { 0 },
+                    random_offset_64: (0, 0),
                 }
-            })
-            .collect();
+            }));
+        }
 
         let ubo = create_buffer_range(device, &primitives, wgpu::BufferUsage::STORAGE, None);
 
@@ -813,7 +826,7 @@ impl BrushRendererWithReadbackBatched {
             &[ReadbackUniforms {
                 width_per_group: width_per_group as i32,
                 height_per_group: height_per_group as i32,
-                num_primitives: points.len() as i32 - 1,
+                num_primitives: primitives.len() as i32,
                 size_in_pixels: size_in_pixels as i32,
             }],
             wgpu::BufferUsage::UNIFORM,
@@ -822,7 +835,7 @@ impl BrushRendererWithReadbackBatched {
 
         let atomic_sbo = create_buffer_range(
             device,
-            &[0, 0],
+            &[0u32, 0u32],
             wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
             "atomic counter",
         );
@@ -861,7 +874,6 @@ impl BrushRendererWithReadbackBatched {
             ubo,
             size_in_pixels,
             sampler,
-            points,
             brush_texture: texture.clone(),
             material,
             atomic_sbo,
@@ -932,7 +944,11 @@ impl BrushRendererTrait for BrushRendererWithReadbackBatched {
             return target;
         }
 
-        let scratch = render_graph.clear(size(self.size_in_pixels * 2, self.size_in_pixels), wgpu::Color::RED);
+        let scratch = render_graph.clear_with_format(
+            size(self.size_in_pixels * 2, self.size_in_pixels),
+            wgpu::Color::RED,
+            wgpu::TextureFormat::Rgba32Float,
+        );
         let material = DynamicMaterial::new(
             self.material.clone(),
             vec![
@@ -1469,7 +1485,7 @@ pub fn main() {
                 | wgpu::Features::TIMESTAMP_QUERY
                 | wgpu::Features::PUSH_CONSTANTS,
             limits: wgpu::Limits {
-                max_push_constant_size: 4,
+                max_push_constant_size: 12,
                 ..Default::default()
             },
         },
@@ -1602,7 +1618,7 @@ pub fn main() {
         },
     });
 
-    let brush_manager = Rc::new(BrushManager::load(&device, sample_count));
+    let brush_manager = Rc::new(BrushManager::load(&device, &queue, sample_count));
 
     let event_loop = EventLoop::new();
     let window = Window::new(&event_loop).unwrap();
@@ -2033,6 +2049,13 @@ pub fn main() {
                     ui.label("Hello");
                     if ui.button("Clear").clicked() {
                         doc.brushes.clear();
+                    }
+
+                    if ui.button("Sample path").clicked() {
+                        doc.brushes.clear();
+                        doc.brushes.move_to(point(10.0, 10.0), Srgba::new(0.0, 0.0, 0.0, 0.0));
+                        doc.brushes.line_to(point(100.0, 100.0), Srgba::new(0.0, 0.0, 0.0, 0.0));
+                        doc.brushes.line_to(point(200.0, 100.0), Srgba::new(0.0, 0.0, 0.0, 0.0));
                     }
 
                     ui.checkbox(&mut enable_profiler, "Profiler");

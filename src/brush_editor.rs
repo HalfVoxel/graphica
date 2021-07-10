@@ -119,13 +119,13 @@ impl BrushData {
         }
     }
 
-    fn move_to(&mut self, p: CanvasPoint, color: Srgba) {
+    pub fn move_to(&mut self, p: CanvasPoint, color: Srgba) {
         self.path.move_to(p);
         self.colors.push(color);
         self.path.dirty();
     }
 
-    fn line_to(&mut self, p: CanvasPoint, color: Srgba) {
+    pub fn line_to(&mut self, p: CanvasPoint, color: Srgba) {
         self.path.line_to(p);
         self.colors.push(color);
         self.path.dirty();

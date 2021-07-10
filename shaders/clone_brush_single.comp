@@ -1,23 +1,25 @@
 #version 450
-precision highp float;
 
 layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
 layout (set=0, binding=0, rgba8) uniform restrict image2D image;
 layout (set=0, binding=1, rgba32f) uniform restrict image2D temp_image;
-layout (set=0, binding=2) uniform sampler s_brush;
-layout (set=0, binding=3) uniform texture2D t_brush;
+layout (set=0, binding=2, r8ui) uniform restrict uimage2D blue_noise;
+layout (set=0, binding=3) uniform sampler s_brush;
+layout (set=0, binding=4) uniform texture2D t_brush;
 
 struct Primitive {
     uvec2 origin_src;
     uvec2 origin_dst;
+    // Random offset in the range 0..64
+    uvec2 random_offset_64;
     uint start;
 };
 
-layout(std140, binding = 4)
+layout(std140, binding = 5)
 buffer restrict u_primitives { Primitive primitives[]; };
 
-layout(std140, binding = 5)
+layout(std140, binding = 6)
 uniform Settings {
     int width_per_group;
     int height_per_group;
@@ -64,92 +66,102 @@ uint hash(uint r) {
 /// See https://en.wikipedia.org/wiki/Rounding#Stochastic_rounding
 vec4 stochastic_dithering_u8(vec4 color, uint seed) {
     uint noise = hash(seed);
-    vec4 noisev = vec4(uvec4((noise >> 24) & 255, (noise >> 16) & 255, (noise >> 8) & 255, (noise >> 0) & 255)) / 255.0;
-    color += (noisev - 0.5) * 0.99 / 255.0;
+    uvec4 noisei = uvec4((noise >> 24) & 255, (noise >> 16) & 255, (noise >> 8) & 255, (noise >> 0) & 255);
+    color = floor(color * 255.0 + vec4(noisei)/256.0) / 255.0;
+    // vec4 noisev = vec4(noisei) / 255.0;
+    // color += (noisev - 0.5) * 0.99 / 255.0;
+    // return color;
     return color;
 }
 
-void pass_a(int primitive_index) {
-    uvec2 work = gl_GlobalInvocationID.xy;
-    if (work.x >= size_in_pixels || work.y >= size_in_pixels) {
-        return;
-    }
+vec4 stochastic_dithering_blue_noise_u8(vec4 color, uvec2 seed) {
+    float noise = imageLoad(blue_noise, ivec2(seed % uvec2(64))).r;
+    // return color + vec4((noise - 127.5) / (256.0 * 255.0));
+    color = floor(color * 255.0 + noise/256.0) / 255.0;
+    return color;
+    // return color + vec4((noise - 0.5)*0.99/255.0);
+}
 
+vec4 gamma_to_linear_approximate(vec4 color) {
+    return vec4(color.rgb*color.rgb, color.a);
+}
+
+vec4 linear_to_gamma_approximate(vec4 color) {
+    return vec4(sqrt(color.rgb), color.a);
+}
+
+void pass_a(int primitive_index, uvec2 work) {
     uvec2 origin_src = primitives[primitive_index].origin_src;
-    origin_src += work;
-
     uvec2 origin_dst = primitives[primitive_index].origin_dst;
-    origin_dst += work;
 
     bool start = primitives[primitive_index].start != 0;
 
     ivec2 prev_image = ivec2(((primitive_index+0) % 2) * size_in_pixels, 0);
     ivec2 next_image = ivec2(((primitive_index+1) % 2) * size_in_pixels, 0);
 
-    for (int dy = 0; dy < height_per_group; dy++) {
-        for (int dx = 0; dx < width_per_group; dx++) {
-            uvec2 offset = uvec2(dx, dy) * gl_WorkGroupSize.xy;
-            vec4 a;
-            if (start) {
-                a = imageLoad(image, ivec2(origin_src + offset));
-            } else {
-                // Essentially the same as the line above, but this image has higher precision
-                a = imageLoad(temp_image, ivec2(work) + prev_image);
-            }
-            vec4 b;
-            ivec2 relative = ivec2(origin_dst + offset) - ivec2(primitives[primitive_index].origin_src);
-            if (!start && all(greaterThanEqual(relative, ivec2(0))) && all(lessThan(relative, ivec2(size_in_pixels)))) {
-                // If we are inside the bounds of the high precision texture we can sample from that instead
-                b = imageLoad(temp_image, relative + prev_image);
-            } else {
-                // Otherwise fall back to the low-precision image
-                b = imageLoad(image, ivec2(origin_dst + offset));
-            }
-
-            vec2 uv = vec2(work + offset) / vec2(size_in_pixels, size_in_pixels);
-            vec4 c = texture(sampler2D(t_brush, s_brush), uv);
-
-            float blend = c.a * 0.5;
-            float out_alpha = mix(b.a, a.a, blend);
-            out_alpha = 1.0;
-            vec3 col = mix(b.rgb * b.a, a.rgb * a.a, blend) / out_alpha;
-            vec4 result = vec4(col, out_alpha);
-            imageStore(temp_image, ivec2(work + offset) + next_image, result);
-        }
+    vec4 a;
+    if (start) {
+        a = imageLoad(image, ivec2(origin_src + work));
+        a = gamma_to_linear_approximate(a);
+    } else {
+        // Essentially the same as the line above, but this image has higher precision
+        a = imageLoad(temp_image, ivec2(work) + prev_image);
     }
+    vec4 b;
+    ivec2 relative = ivec2(origin_dst + work) - ivec2(origin_src);
+    if (!start && all(greaterThanEqual(relative, ivec2(0))) && all(lessThan(relative, ivec2(size_in_pixels)))) {
+        // If we are inside the bounds of the high precision texture we can sample from that instead
+        b = imageLoad(temp_image, relative + prev_image);
+    } else {
+        // Otherwise fall back to the low-precision image
+        b = imageLoad(image, ivec2(origin_dst + work));
+        b = gamma_to_linear_approximate(b);
+    }
+
+    vec2 uv = vec2(work) / vec2(size_in_pixels, size_in_pixels);
+    vec4 c = texture(sampler2D(t_brush, s_brush), uv);
+
+    float blend = c.a * 0.5;
+    float out_alpha = mix(b.a, a.a, blend);
+    out_alpha = 1.0;
+    vec3 col;
+    if (out_alpha <= 0.0001) {
+        // Keep previous canvas color (with zero alpha) to avoid divisions by zero
+        col = b.rgb;
+    } else {
+        col = mix(b.rgb * b.a, a.rgb * a.a, blend) / out_alpha;
+    }
+    vec4 result = vec4(col, out_alpha);
+    imageStore(temp_image, ivec2(work) + next_image, result);
 }
 
-void pass_b(int primitive_index) {
-    uvec2 work = gl_GlobalInvocationID.xy;
-    if (work.x >= size_in_pixels || work.y >= size_in_pixels) {
-        return;
-    }
-
+void pass_b(int primitive_index, uvec2 work) {
     uvec2 origin_dst = primitives[primitive_index].origin_dst;
     origin_dst += work;
 
     ivec2 next_image = ivec2(((primitive_index+1) % 2) * size_in_pixels, 0);
 
-    for (int dy = 0; dy < height_per_group; dy++) {
-        for (int dx = 0; dx < width_per_group; dx++) {
-            uvec2 offset = uvec2(dx, dy) * gl_WorkGroupSize.xy;
-            vec4 a = imageLoad(temp_image, ivec2(work + offset) + next_image);
+    vec4 result = imageLoad(temp_image, ivec2(work) + next_image);
+    result = linear_to_gamma_approximate(result);
 
-            // Random noise dithering
-            uvec2 hashcoord = origin_dst + offset + ivec2(primitive_index, 0);
-            vec4 result = stochastic_dithering_u8(a, hashcoord.x*1024 + hashcoord.y);
-
-            // a.rgb = sqrt(a.rgb);
-            imageStore(image, ivec2(origin_dst + offset), result);
-        }
-    }
+    // Random noise dithering
+    // int random_offset = int(imageLoad(blue_noise, ivec2(primitive_index % 64, primitive_index / 64)));
+    uvec2 hashcoord = work + primitives[primitive_index].random_offset_64; // ivec2(random_offset * 7, random_offset);
+    // vec4 result = vec4(1.0 - origin_dst.x/1024.0, 1.0 - origin_dst.x/1024.0, 1.0 - origin_dst.x/1024.0, 1.0);
+    // result = stochastic_dithering_u8(result, hashcoord.y*1024 + hashcoord.x);
+    result = stochastic_dithering_blue_noise_u8(result, hashcoord);
+    imageStore(image, ivec2(origin_dst), result);
 }
 
 void main() {
+    uvec2 work = gl_GlobalInvocationID.xy;
+    if (work.x >= size_in_pixels || work.y >= size_in_pixels) {
+        return;
+    }
     int primitive = u_pushConstants.work_index / 2;
     if ((u_pushConstants.work_index % 2) == 0) {
-        pass_a(primitive);
+        pass_a(primitive, work);
     } else {
-        pass_b(primitive);
+        pass_b(primitive, work);
     }
 }
