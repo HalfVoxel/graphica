@@ -100,7 +100,7 @@ impl GPUVertex for PosNormVertex {
     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as u64,
-            step_mode: wgpu::InputStepMode::Vertex,
+            step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
@@ -153,7 +153,7 @@ fn create_multisampled_framebuffer(
             sample_count,
             dimension: wgpu::TextureDimension::D2,
             format, //sc_desc.format,
-            usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             label: Some("MSAA Framebuffer"),
         },
     )
@@ -304,13 +304,13 @@ impl BrushRendererWithReadback {
             })
             .collect();
 
-        let vbo = create_buffer_range(device, &vertices, wgpu::BufferUsage::VERTEX, None);
+        let vbo = create_buffer_range(device, &vertices, wgpu::BufferUsages::VERTEX, None);
 
         #[allow(clippy::identity_op)]
         let indices: Vec<u32> = (0..points.len() as u32)
             .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
             .collect();
-        let ibo = create_buffer_range(device, &indices, wgpu::BufferUsage::INDEX, None);
+        let ibo = create_buffer_range(device, &indices, wgpu::BufferUsages::INDEX, None);
 
         let sampler = Arc::new(device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -331,7 +331,7 @@ impl BrushRendererWithReadback {
 
         let material = Arc::new(Material::from_consecutive_entries(
             device,
-            "clone brush",
+            "clone brush readback",
             BlendState::REPLACE,
             brush_manager.splat_with_readback.bind_group_layout.clone(),
             vec![
@@ -590,7 +590,7 @@ impl BrushRendererWithReadbackSingle {
             }));
         }
 
-        let ubo = create_buffer_range(device, &primitives, wgpu::BufferUsage::STORAGE, None);
+        let ubo = create_buffer_range(device, &primitives, wgpu::BufferUsages::STORAGE, None);
 
         let sampler = Arc::new(device.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
@@ -618,13 +618,13 @@ impl BrushRendererWithReadbackSingle {
                 num_primitives: primitives.len() as i32,
                 size_in_pixels: size_in_pixels as i32,
             }],
-            wgpu::BufferUsage::UNIFORM,
+            wgpu::BufferUsages::UNIFORM,
             "Readback settings",
         );
 
         let material = Arc::new(Material::from_consecutive_entries(
             device,
-            "clone brush",
+            "clone brush single",
             BlendState::REPLACE,
             brush_manager.splat_with_readback_single_a.bind_group_layout.clone(),
             vec![
@@ -801,7 +801,7 @@ impl BrushRendererWithReadbackBatched {
             }));
         }
 
-        let ubo = create_buffer_range(device, &primitives, wgpu::BufferUsage::STORAGE, None);
+        let ubo = create_buffer_range(device, &primitives, wgpu::BufferUsages::STORAGE, None);
 
         let sampler = Arc::new(device.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
@@ -829,32 +829,32 @@ impl BrushRendererWithReadbackBatched {
                 num_primitives: primitives.len() as i32,
                 size_in_pixels: size_in_pixels as i32,
             }],
-            wgpu::BufferUsage::UNIFORM,
+            wgpu::BufferUsages::UNIFORM,
             "Readback settings",
         );
 
         let atomic_sbo = create_buffer_range(
             device,
             &[0u32, 0u32],
-            wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             "atomic counter",
         );
         let atomic_output = create_buffer_range(
             device,
             &vec![0; DISPATCH * DISPATCH * Self::LOCAL_SIZE * Self::LOCAL_SIZE],
-            wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             "atomic output",
         );
         let readback_buffer = create_buffer_range(
             device,
             &vec![0; DISPATCH * DISPATCH * Self::LOCAL_SIZE * Self::LOCAL_SIZE],
-            wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             "readback",
         );
 
         let material = Arc::new(Material::from_consecutive_entries(
             device,
-            "clone brush",
+            "clone brush batched",
             BlendState::REPLACE,
             brush_manager.splat_with_readback_batched.bind_group_layout.clone(),
             vec![
@@ -988,7 +988,7 @@ impl BrushRendererTrait for BrushRendererWithReadbackBatched {
     //             height_per_group: height_per_group as i32,
     //             num_primitives: self.points.len() as i32 - 1,
     //         }],
-    //         wgpu::BufferUsage::UNIFORM,
+    //         wgpu::BufferUsages::UNIFORM,
     //         "Readback settings",
     //     );
 
@@ -1106,13 +1106,13 @@ impl BrushRenderer {
             stroke_ranges.push(start_triangle..end_triangle);
         }
 
-        let vbo = create_buffer_range(device, &vertices, wgpu::BufferUsage::VERTEX, None);
+        let vbo = create_buffer_range(device, &vertices, wgpu::BufferUsages::VERTEX, None);
 
         #[allow(clippy::identity_op)]
         let indices: Vec<u32> = (0..(vertices.len() / 4) as u32)
             .flat_map(|x| vec![4 * x + 0, 4 * x + 1, 4 * x + 2, 4 * x + 3, 4 * x + 2, 4 * x + 0])
             .collect();
-        let ibo = create_buffer_range(device, &indices, wgpu::BufferUsage::INDEX, None);
+        let ibo = create_buffer_range(device, &indices, wgpu::BufferUsages::INDEX, None);
 
         let view_matrix = view.canvas_to_view_matrix();
 
@@ -1121,7 +1121,7 @@ impl BrushRenderer {
             &[BrushUniforms {
                 mvp_matrix: view_matrix * Matrix4::from_translation([0.0, 0.0, 0.1].into()),
             }],
-            wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             "Brush Primitive UBO",
         );
 
@@ -1166,7 +1166,7 @@ impl BrushRenderer {
 
     fn update(&self, _view: &CanvasView, _device: &Device, _encoder: &mut CommandEncoder) {
         // let scene_ubo_transfer = device
-        // .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
+        // .create_buffer_mapped(1, wgpu::BufferUsages::COPY_SRC)
         // .fill_from_slice(&[Globals {
         //     resolution: [view.resolution.width as f32, view.resolution.height as f32],
         //     zoom: view.zoom,
@@ -1248,8 +1248,8 @@ impl DocumentRenderer {
             )
             .unwrap();
 
-        let vbo = create_buffer_range(device, &geometry.vertices, wgpu::BufferUsage::VERTEX, "Document VBO");
-        let ibo = create_buffer_range(device, &geometry.indices, wgpu::BufferUsage::INDEX, "Document IBO");
+        let vbo = create_buffer_range(device, &geometry.vertices, wgpu::BufferUsages::VERTEX, "Document VBO");
+        let ibo = create_buffer_range(device, &geometry.indices, wgpu::BufferUsages::INDEX, "Document IBO");
 
         let scene_ubo = create_buffer_range(
             device,
@@ -1258,7 +1258,7 @@ impl DocumentRenderer {
                 zoom: view.zoom,
                 scroll_offset: view.scroll.to_array(),
             }],
-            wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             "Document UBO",
         );
 
@@ -1271,7 +1271,7 @@ impl DocumentRenderer {
                 mvp_matrix: view_matrix * Matrix4::from_translation([0.0, 0.0, 0.1].into()),
                 width: 0.0,
             }],
-            wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             "Document Primitive UBO",
         );
 
@@ -1470,7 +1470,7 @@ pub fn main() {
         input: InputManager::default(),
     };
 
-    let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
+    let instance = wgpu::Instance::new(wgpu::Backends::PRIMARY);
     let adapter = task::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,
         compatible_surface: None, // TODO
@@ -1483,7 +1483,8 @@ pub fn main() {
             features: wgpu::Features::NON_FILL_POLYGON_MODE
                 | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
                 | wgpu::Features::TIMESTAMP_QUERY
-                | wgpu::Features::PUSH_CONSTANTS,
+                | wgpu::Features::PUSH_CONSTANTS
+                | wgpu::Features::SPIRV_SHADER_PASSTHROUGH,
             limits: wgpu::Limits {
                 max_push_constant_size: 12,
                 ..Default::default()
@@ -1507,7 +1508,7 @@ pub fn main() {
         entries: &[
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStage::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -1517,7 +1518,7 @@ pub fn main() {
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                visibility: wgpu::ShaderStage::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -1598,7 +1599,7 @@ pub fn main() {
             targets: &[wgpu::ColorTargetState {
                 format: crate::config::TEXTURE_FORMAT,
                 blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrite::ALL,
+                write_mask: wgpu::ColorWrites::ALL,
             }],
         }),
         primitive: wgpu::PrimitiveState {
@@ -1625,8 +1626,8 @@ pub fn main() {
     window.set_inner_size(PhysicalSize::new(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT));
     let size = window.inner_size();
 
-    let mut swap_chain_desc = wgpu::SwapChainDescriptor {
-        usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+    let mut swap_chain_desc = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: crate::config::FRAMEBUFFER_TEXTURE_FORMAT,
         width: size.width,
         height: size.height,
@@ -1637,7 +1638,8 @@ pub fn main() {
     let multisampled_render_target_document;
 
     let window_surface = unsafe { instance.create_surface(&window) };
-    let mut swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
+    window_surface.configure(&device, &swap_chain_desc);
+    // device.create_swap_chain(&window_surface, &swap_chain_desc);
 
     let mut depth_texture = None;
     let depth_texture_document;
@@ -1658,7 +1660,7 @@ pub fn main() {
                 // array_layer_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Depth32Float,
-                usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             },
         )));
 
@@ -1688,27 +1690,27 @@ pub fn main() {
 
     let blitter = Blitter::new(&device, &mut init_encoder);
 
-    let (bg_vbo, _) = create_buffer(&device, &bg_geometry.vertices, wgpu::BufferUsage::VERTEX, "BG VBO");
-    let (bg_ibo, _) = create_buffer(&device, &bg_geometry.indices, wgpu::BufferUsage::INDEX, "BG IBO");
+    let (bg_vbo, _) = create_buffer(&device, &bg_geometry.vertices, wgpu::BufferUsages::VERTEX, "BG VBO");
+    let (bg_ibo, _) = create_buffer(&device, &bg_geometry.indices, wgpu::BufferUsages::INDEX, "BG IBO");
 
     let bg_ubo_data = &[Primitive {
         color: [1.0, 1.0, 1.0, 1.0],
         mvp_matrix: Matrix4::from_translation([0.0, 0.0, 100.0].into()),
         width: 0.0,
     }];
-    let bg_ubo = create_buffer_range(&device, bg_ubo_data, wgpu::BufferUsage::UNIFORM, "BG UBO");
+    let bg_ubo = create_buffer_range(&device, bg_ubo_data, wgpu::BufferUsages::UNIFORM, "BG UBO");
 
     let globals_ubo = create_buffer_range(
         &device,
         &[Globals { ..Default::default() }],
-        wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         "Globals UBO",
     );
 
     let canvas_globals_ubo = create_buffer_range(
         &device,
         &[Globals { ..Default::default() }],
-        wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         "Canvas Globals UBO",
     );
 
@@ -1856,7 +1858,7 @@ pub fn main() {
                 puffin::profile_scope!("rebuild swapchain");
                 println!("Rebuilding swap chain");
                 scene.size_changed = false;
-                swap_chain = device.create_swap_chain(&window_surface, &swap_chain_desc);
+                window_surface.configure(&device, &swap_chain_desc);
                 depth_texture = Some(Arc::new(Texture::new(
                     &device,
                     TextureDescriptor {
@@ -1866,7 +1868,7 @@ pub fn main() {
                         sample_count,
                         dimension: wgpu::TextureDimension::D2,
                         format: wgpu::TextureFormat::Depth32Float,
-                        usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                     },
                 )));
 
@@ -1884,7 +1886,7 @@ pub fn main() {
 
             let swapchain_output = {
                 puffin::profile_scope!("aquire swapchain");
-                swap_chain.get_current_frame().unwrap()
+                window_surface.get_current_frame().unwrap()
             };
             let frame = RenderTexture::from(SwapchainImageWrapper::from_swapchain_image(
                 swapchain_output,
@@ -1915,7 +1917,7 @@ pub fn main() {
             );
 
             let hash = editor.document.hash() ^ scene.view.hash();
-            if hash != last_hash1 || document_renderer1.is_none() {
+            if hash != last_hash1 || document_renderer1.is_none() || true {
                 last_hash1 = hash;
                 document_renderer1 = Some(DocumentRenderer::new(
                     &editor.document,
@@ -2045,7 +2047,7 @@ pub fn main() {
             let mut export = None;
 
             let paint_jobs = egui_wrapper.frame(|ctx| {
-                egui::SidePanel::left("side", 300.0).show(&ctx, |ui| {
+                egui::SidePanel::left("side").show(&ctx, |ui| {
                     ui.label("Hello");
                     if ui.button("Clear").clicked() {
                         doc.brushes.clear();
@@ -2069,7 +2071,7 @@ pub fn main() {
                         let buffer = create_buffer_range(
                             &device,
                             &vec![0; doc_size.area() as usize],
-                            wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::MAP_READ,
+                            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                             "Readback",
                         );
                         let mut buffer_node = render_graph.uninitialized_buffer(buffer.size() as usize);

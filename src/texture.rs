@@ -2,7 +2,7 @@ use by_address::ByAddress;
 use euclid::rect;
 use lazy_init::Lazy;
 use std::{num::NonZeroU32, rc::Rc, sync::Arc};
-use wgpu::{util::DeviceExt, CommandEncoder, Device, Extent3d, Queue, TextureFormat, TextureUsage, TextureView};
+use wgpu::{util::DeviceExt, CommandEncoder, Device, Extent3d, Queue, TextureFormat, TextureUsages, TextureView};
 
 pub struct Texture {
     pub descriptor: wgpu::TextureDescriptor<'static>,
@@ -22,8 +22,10 @@ impl std::fmt::Debug for Texture {
 }
 
 pub struct SwapchainImageWrapper {
-    descriptor: wgpu::SwapChainDescriptor,
-    image: wgpu::SwapChainFrame,
+    descriptor: wgpu::SurfaceConfiguration,
+    // Note: view must be dropped *before* image due to https://github.com/gfx-rs/wgpu/issues/1797
+    view: TextureView,
+    image: wgpu::SurfaceFrame,
 }
 
 impl std::fmt::Debug for SwapchainImageWrapper {
@@ -64,8 +66,21 @@ impl<'a> RenderTextureView<'a> {
 }
 
 impl SwapchainImageWrapper {
-    pub fn from_swapchain_image(swapchain_image: wgpu::SwapChainFrame, descriptor: &wgpu::SwapChainDescriptor) -> Self {
+    pub fn from_swapchain_image(swapchain_image: wgpu::SurfaceFrame, descriptor: &wgpu::SurfaceConfiguration) -> Self {
         Self {
+            view: swapchain_image
+                .output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: None,
+                    format: Some(descriptor.format),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    aspect: wgpu::TextureAspect::All,
+                    base_mip_level: 0,
+                    mip_level_count: Some(NonZeroU32::new(1).unwrap()),
+                    base_array_layer: 0,
+                    array_layer_count: None,
+                }),
             descriptor: descriptor.clone(),
             image: swapchain_image,
         }
@@ -90,7 +105,7 @@ impl RenderTexture {
             RenderTexture::Texture(tex) => Ok(RenderTextureView::new(self, tex.get_mip_level_view(miplevel))),
             RenderTexture::SwapchainImage(tex) => {
                 if miplevel == 0 {
-                    Ok(RenderTextureView::new(self, &tex.image.output.view))
+                    Ok(RenderTextureView::new(self, &tex.view))
                 } else {
                     Err("Cannot get mip levels other than level 0 from a swapchain image")
                 }
@@ -102,7 +117,7 @@ impl RenderTexture {
     pub fn default_view(&self) -> RenderTextureView {
         match self {
             RenderTexture::Texture(tex) => RenderTextureView::new(self, &tex.view),
-            RenderTexture::SwapchainImage(tex) => RenderTextureView::new(self, &tex.image.output.view),
+            RenderTexture::SwapchainImage(tex) => RenderTextureView::new(self, &tex.view),
         }
     }
 
@@ -132,7 +147,7 @@ impl RenderTexture {
         }
     }
 
-    pub fn usage(&self) -> TextureUsage {
+    pub fn usage(&self) -> TextureUsages {
         match self {
             RenderTexture::Texture(tex) => tex.descriptor.usage,
             RenderTexture::SwapchainImage(t) => t.descriptor.usage,
@@ -226,7 +241,7 @@ impl Texture {
         data: &[u8],
         extent: Extent3d,
         format: TextureFormat,
-        usage: TextureUsage,
+        usage: TextureUsages,
         label: Option<&'static str>,
     ) -> Texture {
         let descriptor = wgpu::TextureDescriptor {
@@ -268,7 +283,7 @@ impl Texture {
             // array_layer_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: crate::config::TEXTURE_FORMAT,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         };
         let texture = Self::new(device, descriptor);
 
@@ -277,7 +292,7 @@ impl Texture {
         let transfer_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: &raw,
-            usage: wgpu::BufferUsage::COPY_SRC,
+            usage: wgpu::BufferUsages::COPY_SRC,
         });
 
         encoder.copy_buffer_to_texture(
@@ -296,6 +311,7 @@ impl Texture {
                 mip_level: 0,
                 // array_layer: 0,
                 origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+                aspect: wgpu::TextureAspect::All,
             },
             texture_extent,
         );

@@ -24,7 +24,7 @@ impl GPUVertex for BlitGpuVertex {
     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as u64,
-            step_mode: wgpu::InputStepMode::Vertex,
+            step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
@@ -83,7 +83,7 @@ impl Blitter {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler {
                         filtering: true,
                         comparison: false,
@@ -92,7 +92,7 @@ impl Blitter {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         multisampled: false,
@@ -144,7 +144,7 @@ impl Blitter {
                         targets: &[wgpu::ColorTargetState {
                             format: crate::config::TEXTURE_FORMAT,
                             blend: Some(wgpu::BlendState::REPLACE),
-                            write_mask: wgpu::ColorWrite::ALL,
+                            write_mask: wgpu::ColorWrites::ALL,
                         }],
                     }),
                     primitive: wgpu::PrimitiveState {
@@ -191,7 +191,7 @@ impl Blitter {
             entries: &[wgpu::BindGroupLayoutEntry {
                 count: None,
                 binding: 0,
-                visibility: wgpu::ShaderStage::COMPUTE,
+                visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::StorageTexture {
                     view_dimension: wgpu::TextureViewDimension::D2,
                     access: wgpu::StorageTextureAccess::ReadWrite,
@@ -206,7 +206,7 @@ impl Blitter {
                 wgpu::BindGroupLayoutEntry {
                     count: None,
                     binding: 0,
-                    visibility: wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
                         view_dimension: wgpu::TextureViewDimension::D2,
                         access: wgpu::StorageTextureAccess::ReadWrite,
@@ -216,7 +216,7 @@ impl Blitter {
                 wgpu::BindGroupLayoutEntry {
                     count: None,
                     binding: 1,
-                    visibility: wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
                         view_dimension: wgpu::TextureViewDimension::D2,
                         access: wgpu::StorageTextureAccess::WriteOnly,
@@ -255,7 +255,7 @@ impl Blitter {
         });
 
         let indices = &[0, 1, 2, 3, 2, 0];
-        let (ibo, _ibo_size) = create_buffer(device, indices, wgpu::BufferUsage::INDEX, "Blitter IBO");
+        let (ibo, _ibo_size) = create_buffer(device, indices, wgpu::BufferUsages::INDEX, "Blitter IBO");
 
         Blitter {
             render_pipeline_base,
@@ -422,7 +422,7 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
             },
         ];
 
-        let (vbo, _) = create_buffer(device, vertices, wgpu::BufferUsage::VERTEX, None);
+        let (vbo, _) = create_buffer(device, vertices, wgpu::BufferUsages::VERTEX, None);
         let pipeline = self.blitter.blit_pipeline(sample_count);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -471,7 +471,7 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
             },
         ];
 
-        let (vbo, _) = create_buffer(device, vertices, wgpu::BufferUsage::VERTEX, None);
+        let (vbo, _) = create_buffer(device, vertices, wgpu::BufferUsages::VERTEX, None);
 
         let pipeline: &'a RenderPipeline = match sample_count {
             1 => &self.blitter.render_pipelines[0],

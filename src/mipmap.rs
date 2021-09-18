@@ -27,7 +27,7 @@ impl Mipmapper {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
                         view_dimension: TextureViewDimension::D2,
                         format: crate::config::TEXTURE_FORMAT,
@@ -37,7 +37,7 @@ impl Mipmapper {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStage::COMPUTE,
+                    visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
                         view_dimension: TextureViewDimension::D2,
                         format: crate::config::TEXTURE_FORMAT,

@@ -4,8 +4,8 @@ use std::{collections::VecDeque, rc::Rc, sync::Arc};
 use euclid::default::Size2D;
 use lyon::math::{point, size, Rect};
 use wgpu::{
-    util::StagingBelt, BindGroup, BlendState, BufferUsage, Color, CommandEncoder, ComputePass, ComputePipeline, Device,
-    Extent3d, LoadOp, Origin3d, TextureFormat, TextureUsage,
+    util::StagingBelt, BindGroup, BlendState, BufferUsages, Color, CommandEncoder, ComputePass, ComputePipeline,
+    Device, Extent3d, LoadOp, Origin3d, TextureFormat, TextureUsages,
 };
 use wgpu_profiler::{wgpu_profiler, GpuProfiler};
 
@@ -421,7 +421,7 @@ struct RenderTextureHandle(usize);
 
 #[derive(Debug, Clone)]
 struct Usage {
-    usages: TextureUsage,
+    usages: TextureUsages,
     requires_mipmaps: bool,
     logical_resource: usize,
 }
@@ -493,7 +493,7 @@ impl<'a> RenderGraphCompiler<'a> {
             self.device,
             self.encoder,
             self.staging_belt,
-            wgpu::BufferUsage::VERTEX,
+            wgpu::BufferUsages::VERTEX,
             vertices,
         )
     }
@@ -509,7 +509,7 @@ impl<'a> RenderGraphCompiler<'a> {
         let mut usages = vec![
             Usage {
                 requires_mipmaps: false,
-                usages: TextureUsage::empty(),
+                usages: TextureUsages::empty(),
                 logical_resource: usize::MAX,
             };
             render_graph.nodes.len()
@@ -526,29 +526,29 @@ impl<'a> RenderGraphCompiler<'a> {
                     logical_render_target_index += 1;
                 }
                 RenderingPrimitive::Clear(_, _) => {
-                    usage.usages |= TextureUsage::RENDER_ATTACHMENT;
+                    usage.usages |= TextureUsages::RENDER_ATTACHMENT;
                 }
                 RenderingPrimitive::Blit(_) => {
-                    usage.usages |= TextureUsage::RENDER_ATTACHMENT;
+                    usage.usages |= TextureUsages::RENDER_ATTACHMENT;
                 }
                 RenderingPrimitive::Quad { .. } => {
-                    usage.usages |= TextureUsage::RENDER_ATTACHMENT;
+                    usage.usages |= TextureUsages::RENDER_ATTACHMENT;
                 }
                 RenderingPrimitive::Mesh { .. } => {
-                    usage.usages |= TextureUsage::RENDER_ATTACHMENT;
+                    usage.usages |= TextureUsages::RENDER_ATTACHMENT;
                 }
                 RenderingPrimitive::GenerateMipmaps { .. } => {
-                    usage.usages |= TextureUsage::STORAGE;
+                    usage.usages |= TextureUsages::STORAGE_BINDING;
                     usage.requires_mipmaps = true;
                 }
                 RenderingPrimitive::Compute { .. } => {
-                    usage.usages |= TextureUsage::STORAGE;
+                    usage.usages |= TextureUsages::STORAGE_BINDING;
                 }
                 RenderingPrimitive::CustomCompute { .. } => {
-                    usage.usages |= TextureUsage::STORAGE;
+                    usage.usages |= TextureUsages::STORAGE_BINDING;
                 }
                 RenderingPrimitive::CopyTextureToBuffer { .. } => {
-                    // usage.usages |= TextureUsage::COPY_DST;
+                    // usage.usages |= TextureUsages::COPY_DST;
                 }
                 RenderingPrimitive::OutputRenderTarget { .. } => {
                     // NOP
@@ -567,7 +567,7 @@ impl<'a> RenderGraphCompiler<'a> {
                 RenderingPrimitive::Compute { .. } | RenderingPrimitive::CustomCompute { .. } => {
                     for write in nodes[i].writes() {
                         // Assume compute writes are storage textures. TODO: Not necessarily true.
-                        usages[write.index].usages |= TextureUsage::STORAGE;
+                        usages[write.index].usages |= TextureUsages::STORAGE_BINDING;
                     }
                 }
                 _ => {}
@@ -577,15 +577,15 @@ impl<'a> RenderGraphCompiler<'a> {
                 match &nodes[i] {
                     RenderingPrimitive::Compute { .. } | RenderingPrimitive::CustomCompute { .. } => {
                         // Assume compute reads are storage textures. TODO: Not necessarily true.
-                        usages[source.index].usages |= TextureUsage::STORAGE;
+                        usages[source.index].usages |= TextureUsages::STORAGE_BINDING;
                     }
                     RenderingPrimitive::CopyTextureToBuffer { .. } => {
                         // Read is done using COPY
-                        usages[source.index].usages |= TextureUsage::COPY_SRC;
+                        usages[source.index].usages |= TextureUsages::COPY_SRC;
                     }
                     _ => {
                         // Assume reads are sampled with texture samplers. TODO: Not necessarily true.
-                        usages[source.index].usages |= TextureUsage::SAMPLED;
+                        usages[source.index].usages |= TextureUsages::TEXTURE_BINDING;
                     }
                 }
             }
@@ -707,11 +707,12 @@ impl<'a> RenderGraphCompiler<'a> {
                     .map(|e| BindGroupEntryArc {
                         binding: e.binding,
                         resource: match &e.resource {
-                            BindingResourceArc::GraphNode(node) => BindingResourceArc::render_texture(Some(
+                            BindingResourceArc::GraphNode(node) => BindingResourceArc::mipmap(Some((
                                 logical_to_physical_render_targets[usages[node.index].logical_resource]
                                     .expect_render_texture()
                                     .clone(),
-                            )),
+                                0,
+                            ))),
                             x => x.clone(),
                         },
                     })
@@ -1073,7 +1074,7 @@ impl<'a> RenderGraphCompiler<'a> {
                         self.device,
                         self.encoder,
                         self.staging_belt,
-                        BufferUsage::VERTEX,
+                        BufferUsages::VERTEX,
                         &[
                             point(uv_rect.min_x(), uv_rect.min_y()),
                             point(uv_rect.max_x(), uv_rect.min_y()),
@@ -1086,7 +1087,7 @@ impl<'a> RenderGraphCompiler<'a> {
                         self.device,
                         self.encoder,
                         self.staging_belt,
-                        BufferUsage::INDEX,
+                        BufferUsages::INDEX,
                         &[0, 1, 2, 3, 2, 0],
                     );
 
@@ -1380,6 +1381,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                     texture: &texture.buffer,
                                     mip_level: 0,
                                     origin: Origin3d::ZERO,
+                                    aspect: wgpu::TextureAspect::All,
                                 },
                                 wgpu::ImageCopyBuffer {
                                     buffer: &target.buffer,

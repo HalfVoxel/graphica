@@ -134,7 +134,6 @@ void pass_b(int primitive_index, uvec2 work) {
             return;
         }
     }
-    return;
 
     vec4 a = imageLoad(temp_image, ivec2(work) + next_image);
 

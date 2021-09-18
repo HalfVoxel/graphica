@@ -1,7 +1,7 @@
 use std::{rc::Rc, sync::Arc};
 
 use euclid::default::Size2D;
-use wgpu::{Device, Extent3d, TextureFormat, TextureUsage};
+use wgpu::{Device, Extent3d, TextureFormat, TextureUsages};
 
 use crate::texture::{RenderTexture, Texture};
 
@@ -19,11 +19,11 @@ impl RenderTextureCache {
         self.render_textures.clear();
     }
 
-    pub fn has(&self, size: Size2D<u32>, format: TextureFormat, mipmaps: bool, usage: TextureUsage) -> bool {
+    pub fn has(&self, size: Size2D<u32>, format: TextureFormat, mipmaps: bool, usage: TextureUsages) -> bool {
         self.try_get(size, format, mipmaps, usage).is_some()
     }
 
-    fn try_get(&self, size: Size2D<u32>, format: TextureFormat, mipmaps: bool, usage: TextureUsage) -> Option<usize> {
+    fn try_get(&self, size: Size2D<u32>, format: TextureFormat, mipmaps: bool, usage: TextureUsages) -> Option<usize> {
         self.render_textures
             .iter()
             .enumerate()
@@ -56,7 +56,7 @@ impl RenderTextureCache {
         size: Size2D<u32>,
         format: TextureFormat,
         mipmaps: bool,
-        usage: TextureUsage,
+        usage: TextureUsages,
     ) -> RenderTexture {
         puffin::profile_function!();
         let best_tex = self.try_get(size, format, mipmaps, usage);

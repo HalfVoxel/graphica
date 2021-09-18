@@ -1,6 +1,6 @@
 use std::io::Read;
 use std::path::PathBuf;
-use wgpu::{Device, ShaderModule};
+use wgpu::{Device, ShaderModule, ShaderModuleDescriptorSpirV};
 
 pub fn load_wgsl_shader(device: &Device, path: &str) -> ShaderModule {
     let mut file = std::fs::File::open(PathBuf::from(path)).unwrap();
@@ -10,7 +10,6 @@ pub fn load_wgsl_shader(device: &Device, path: &str) -> ShaderModule {
     device.create_shader_module(&wgpu::ShaderModuleDescriptor {
         label: Some(path),
         source: wgpu::ShaderSource::Wgsl(text.into()),
-        flags: wgpu::ShaderFlags::VALIDATION,
     })
 }
 
@@ -23,10 +22,11 @@ pub fn load_shader(device: &Device, path: &str) -> ShaderModule {
 
 pub fn load_shader_bytes(device: &Device, shader_bytes: &[u8], label: Option<&str>) -> ShaderModule {
     println!("Loading shader {:?}", label);
-    let source = wgpu::util::make_spirv(shader_bytes);
-    device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-        label,
-        source,
-        flags: wgpu::ShaderFlags::empty(),
-    })
+    let source = wgpu::util::make_spirv_raw(shader_bytes);
+    // device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+    //     label,
+    //     source: wgpu::ShaderSource::SpirV(source),
+    // })
+
+    unsafe { device.create_shader_module_spirv(&ShaderModuleDescriptorSpirV { label, source }) }
 }

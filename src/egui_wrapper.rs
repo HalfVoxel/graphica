@@ -33,7 +33,7 @@ impl EguiWrapper {
         f(self.platform.context());
 
         // End the UI frame. We could now handle the output and draw the UI with the backend.
-        let (_output, paint_commands) = self.platform.end_frame();
+        let (_output, paint_commands) = self.platform.end_frame(None);
 
         self.platform.context().tessellate(paint_commands)
     }
@@ -56,6 +56,7 @@ impl EguiWrapper {
 
         // Record all render passes.
         self.egui_render_pass
-            .execute(encoder, view, paint_jobs, screen_descriptor, None);
+            .execute(encoder, view, paint_jobs, screen_descriptor, None)
+            .unwrap();
     }
 }

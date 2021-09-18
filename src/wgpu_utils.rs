@@ -21,7 +21,7 @@ pub fn as_u8_slice<T>(v: &[T]) -> &[u8] {
 pub fn create_buffer_range<'a, T>(
     device: &Device,
     data: &[T],
-    usage: wgpu::BufferUsage,
+    usage: wgpu::BufferUsages,
     label: impl Into<Option<&'a str>>,
 ) -> BufferRange {
     let (buffer, size) = create_buffer(device, data, usage, label);
@@ -34,7 +34,7 @@ pub fn create_buffer_range<'a, T>(
 pub fn create_buffer<'a, T>(
     device: &Device,
     data: &[T],
-    usage: wgpu::BufferUsage,
+    usage: wgpu::BufferUsages,
     label: impl Into<Option<&'a str>>,
 ) -> (Buffer, u64) {
     puffin::profile_function!();

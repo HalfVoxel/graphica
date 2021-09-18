@@ -3,6 +3,7 @@ name = "graphica"
 version = "0.1.0"
 authors = ["Aron Granberg <aron.granberg@gmail.com>"]
 edition = "2018"
+resolver = "2"
 
 [[bin]]
 name = "graphica"
@@ -12,33 +13,33 @@ path = "src/bin/main.rs"
 # lyon = { path = "../lyon", features = ["extra"] }
 lyon = "0.17"
 # wgpu = { path = "../wgpu-rs" }
-wgpu = "0.9"
+wgpu = { version = "0.10", features = ["spirv"] }
 # wgpu-core = { path = "../wgpu/wgpu-core"}
 # wgpu-native = { path = "../wgpu/wgpu-native"}
 # wgpu = { path = "../wgpu-rs"}
 winit = "0.25.0"
 euclid = "0.22"
 log = "0.4"
-env_logger = "0.8"
+env_logger = "0.9"
 rand = "0.8"
 lazy_static = "1.4"
 # packed_simd = "0.3"
-palette = "0.5"
+palette = "0.6"
 image = "0.23"
 kurbo = "0.8"
 async-std = "1.6"
 arrayvec = "0.7"
 # wgpu_glyph = "0.12"
-wgpu-profiler = "0.5"
+wgpu-profiler = "0.6"
 cpuprofiler = { version = "0.0.4", optional = true }
 cgmath = "0.18"
 lazy-init = "0.5"
 futures = "0.3"
-egui = "0.12"
-egui_wgpu_backend = "0.9"
-egui_winit_platform = "0.8"
-puffin = "0.5"
-puffin_egui = "0.3"
+egui = "0.14"
+egui_wgpu_backend = "0.12"
+egui_winit_platform = "0.10"
+puffin = "0.8"
+puffin_egui = "0.7"
 by_address = "1.0"
 tokio = { version = "1.7", features = ["rt-multi-thread", "time"] }
 profiling = { version = "1.0", features = ["profile-with-puffin"] }

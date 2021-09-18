@@ -1,12 +1,12 @@
 use std::{collections::HashMap, num::NonZeroU64, ops::Range, sync::Arc};
 
-use wgpu::{util::StagingBelt, Buffer, BufferAddress, BufferDescriptor, BufferUsage, CommandEncoder, Device};
+use wgpu::{util::StagingBelt, Buffer, BufferAddress, BufferDescriptor, BufferUsages, CommandEncoder, Device};
 
 use crate::wgpu_utils::{as_u8_slice, create_buffer};
 
 #[derive(Default)]
 pub struct EphermalBufferCache {
-    chunks: HashMap<BufferUsage, Vec<Chunk>>,
+    chunks: HashMap<BufferUsages, Vec<Chunk>>,
 }
 
 #[derive(Clone)]
@@ -62,7 +62,7 @@ impl EphermalBufferCache {
         device: &Device,
         encoder: &mut CommandEncoder,
         staging_belt: &mut StagingBelt,
-        mut usage: BufferUsage,
+        mut usage: BufferUsages,
         contents: &[T],
     ) -> BufferRange {
         let bytes = as_u8_slice(contents);
@@ -77,7 +77,7 @@ impl EphermalBufferCache {
         }
 
         // We need to be able to copy to the buffer in order to be able to use the staging belt
-        usage |= BufferUsage::COPY_DST;
+        usage |= BufferUsages::COPY_DST;
 
         let chunks = self.chunks.entry(usage).or_default();
         let chunk_idx = if let Some(idx) = chunks.iter().position(|chunk| chunk.used + content_size <= chunk.size) {

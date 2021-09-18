@@ -73,7 +73,7 @@ fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
     return out_color;
 }
 
-// Error::UnknownShaderStage
+// Error::UnknownShaderStages
 [[stage(fragmentx)]]
 fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
 }

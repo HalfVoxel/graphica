@@ -13,21 +13,21 @@ impl BlurCompute {
 
         // let staging_buffer = device.create_buffer_with_data(
         //     bytemuck::cast_slice(&numbers),
-        //     wgpu::BufferUsage::MAP_READ | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
+        //     wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
         // );
 
         // let storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         //     size,
-        //     usage: wgpu::BufferUsage::STORAGE
-        //         | wgpu::BufferUsage::COPY_DST
-        //         | wgpu::BufferUsage::COPY_SRC,
+        //     usage: wgpu::BufferUsages::STORAGE
+        //         | wgpu::BufferUsages::COPY_DST
+        //         | wgpu::BufferUsages::COPY_SRC,
         //     label: None,
         // });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStage::COMPUTE,
+                visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::StorageTexture {
                     view_dimension: TextureViewDimension::D2,
                     format: crate::config::TEXTURE_FORMAT,

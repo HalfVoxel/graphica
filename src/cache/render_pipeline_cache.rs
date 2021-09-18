@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use by_address::ByAddress;
 use wgpu::{
-    BlendState, ColorWrite, DepthStencilState, Device, MultisampleState, PipelineLayout, PrimitiveState,
+    BlendState, ColorWrites, DepthStencilState, Device, MultisampleState, PipelineLayout, PrimitiveState,
     RenderPipeline, RenderPipelineDescriptor, ShaderModule, TextureFormat,
 };
 
@@ -20,7 +20,7 @@ impl RenderPipelineCache {
                 &[wgpu::ColorTargetState {
                     format: key.target_format,
                     blend: Some(key.blend_state),
-                    write_mask: ColorWrite::all(),
+                    write_mask: ColorWrites::all(),
                 }],
                 key.depth_format.map(|format| DepthStencilState {
                     format,
