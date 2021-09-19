@@ -1235,7 +1235,7 @@ dependencies = [
  "lyon",
  "palette",
  "profiling",
- "puffin 0.8.1",
+ "puffin",
  "puffin_egui",
  "rand",
  "shaderc",
@@ -2107,31 +2107,17 @@ dependencies = [
 [[package]]
 name = "profiling"
 version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87dfd5592a8eed7e74f56ad7b125f8234763b805c30f0c7c95c486920026a6ec"
 dependencies = [
  "profiling-procmacros",
- "puffin 0.5.2",
+ "puffin",
 ]
 
 [[package]]
 name = "profiling-procmacros"
 version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9dc92bed14cc1433694b0ee18dfb3c219bf182019b0daf7b017f7a9f1e280ac"
 dependencies = [
  "quote",
  "syn",
-]
-
-[[package]]
-name = "puffin"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "298fd52e432bba94b023a7c1e9cd8ac4dfb53088afeb2b8551ec16c629b3e2a8"
-dependencies = [
- "byteorder",
- "once_cell",
 ]
 
 [[package]]
@@ -2153,7 +2139,7 @@ dependencies = [
  "egui",
  "natord",
  "once_cell",
- "puffin 0.8.1",
+ "puffin",
 ]
 
 [[package]]
@@ -3003,7 +2989,3 @@ name = "xml-rs"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2d7d3948613f75c98fd9328cfdcc45acc4d360655289d0a7d4ec931392200a3"
-
-[[patch.unused]]
-name = "profiling"
-version = "1.0.2"
