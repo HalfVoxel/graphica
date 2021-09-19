@@ -9,8 +9,8 @@ use image::GenericImageView;
 use lyon::math::*;
 use wgpu::util::DeviceExt;
 use wgpu::{
-    ComputePipeline, Device, Extent3d, PushConstantRange, Queue, RenderPipeline, TextureFormat, TextureUsages,
-    TextureViewDimension,
+    BindGroupLayout, ComputePipeline, Device, Extent3d, PushConstantRange, Queue, RenderPipeline, TextureFormat,
+    TextureUsages, TextureViewDimension,
 };
 
 type GPURGBA = [u8; 4];
@@ -115,7 +115,12 @@ pub struct BrushManager {
 }
 
 impl BrushManager {
-    pub fn load(device: &Device, queue: &Queue, _sample_count: u32) -> BrushManager {
+    pub fn load(
+        device: &Device,
+        queue: &Queue,
+        _sample_count: u32,
+        bind_group_layout_pass_info: &Arc<BindGroupLayout>,
+    ) -> BrushManager {
         let blue_noise = image::open("blue_noise_56.png").expect("Could not open blue noise image");
         let size = blue_noise.dimensions();
         let blue_noise = blue_noise
@@ -187,7 +192,7 @@ impl BrushManager {
 
         let pipeline_layout_brush = Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&bind_group_layout_brush],
+            bind_group_layouts: &[&bind_group_layout_brush, bind_group_layout_pass_info],
             push_constant_ranges: &[],
         }));
 

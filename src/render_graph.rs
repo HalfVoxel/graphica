@@ -4,8 +4,8 @@ use std::{collections::VecDeque, rc::Rc, sync::Arc};
 use euclid::default::Size2D;
 use lyon::math::{point, size, Rect};
 use wgpu::{
-    util::StagingBelt, BindGroup, BlendState, BufferUsages, Color, CommandEncoder, ComputePass, ComputePipeline,
-    Device, Extent3d, LoadOp, Origin3d, TextureFormat, TextureUsages,
+    util::StagingBelt, BindGroup, BindGroupLayout, BlendState, BufferUsages, Color, CommandEncoder, ComputePass,
+    ComputePipeline, Device, Extent3d, LoadOp, Origin3d, TextureFormat, TextureUsages,
 };
 use wgpu_profiler::{wgpu_profiler, GpuProfiler};
 
@@ -391,6 +391,7 @@ pub struct RenderGraphCompiler<'a> {
     pub material_cache: &'a mut MaterialCache,
     pub mipmapper: &'a Mipmapper,
     pub gpu_profiler: &'a mut GpuProfiler,
+    pub pass_info_bind_group_layout: &'a BindGroupLayout,
 }
 
 struct RenderTextureSlot {
@@ -465,6 +466,13 @@ impl PhysicalResource {
             PhysicalResource::Buffer(b) => b,
         }
     }
+}
+
+#[repr(C)]
+#[repr(align(256))]
+#[derive(Debug, Clone)]
+pub struct ShaderPassInfo {
+    render_target_size: Size2D<f32>,
 }
 
 impl<'a> RenderGraphCompiler<'a> {
@@ -1249,9 +1257,47 @@ impl<'a> RenderGraphCompiler<'a> {
         }
     }
 
+    pub fn create_pass_infos(&mut self, passes: &[CompiledPass]) -> BindGroup {
+        let pass_infos = passes
+            .iter()
+            .map(|pass| match pass {
+                CompiledPass::RenderPass { target, .. } => ShaderPassInfo {
+                    render_target_size: size(target.size().width as f32, target.size().height as f32),
+                },
+                _ => ShaderPassInfo {
+                    render_target_size: size(0.0, 0.0),
+                },
+            })
+            .collect::<Vec<_>>();
+
+        let buffer = self.ephermal_buffer_cache.get(
+            self.device,
+            self.encoder,
+            self.staging_belt,
+            BufferUsages::UNIFORM,
+            &pass_infos,
+        );
+        return self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pass infos"),
+            layout: self.pass_info_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &buffer.buffer,
+                    offset: buffer.range.start,
+                    // Note: each bind group only binds 1 shader pass info, but the buffer contains many.
+                    // Which shader pass info is bound is determined by the dynamic offset
+                    size: wgpu::BufferSize::new(std::mem::size_of::<ShaderPassInfo>() as u64),
+                }),
+            }],
+        });
+    }
+
     pub fn render(&mut self, passes: &[CompiledPass]) {
+        let pass_infos = self.create_pass_infos(passes);
+
         puffin::profile_function!();
-        for pass in passes {
+        for (pass_index, pass) in passes.iter().enumerate() {
             match pass {
                 CompiledPass::RenderPass { target, clear, ops } => {
                     let color_attachment = wgpu::RenderPassColorAttachment {
@@ -1268,6 +1314,11 @@ impl<'a> RenderGraphCompiler<'a> {
                         color_attachments: &[color_attachment],
                         depth_stencil_attachment: None,
                     });
+                    render_pass.set_bind_group(
+                        1,
+                        &pass_infos,
+                        &[(pass_index * std::mem::size_of::<ShaderPassInfo>()) as u32],
+                    );
 
                     for op in ops {
                         match op {
@@ -1278,7 +1329,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                 bind_group,
                             } => {
                                 puffin::profile_scope!("op:blit");
-                                wgpu_profiler!("op:blit", self.gpu_profiler, &mut render_pass, &self.device, {
+                                wgpu_profiler!("op:blit", self.gpu_profiler, &mut render_pass, self.device, {
                                     render_pass.set_pipeline(&pipeline.pipeline);
                                     render_pass.set_bind_group(0, bind_group, &[]);
                                     render_pass.set_index_buffer(self.blitter.ibo.slice(..), wgpu::IndexFormat::Uint32);
@@ -1294,7 +1345,7 @@ impl<'a> RenderGraphCompiler<'a> {
                             } => {
                                 puffin::profile_scope!("op:render");
                                 let index_count = ibo.size() as u32 / std::mem::size_of::<u32>() as u32;
-                                wgpu_profiler!("op:render", self.gpu_profiler, &mut render_pass, &self.device, {
+                                wgpu_profiler!("op:render", self.gpu_profiler, &mut render_pass, self.device, {
                                     render_pass.set_pipeline(&pipeline.pipeline);
                                     render_pass.set_bind_group(0, bind_group, &[]);
                                     render_pass.set_index_buffer(ibo.as_slice(), wgpu::IndexFormat::Uint32);
@@ -1322,7 +1373,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                 pipeline,
                                 bind_groups,
                             } => {
-                                wgpu_profiler!("op:generate_mipmaps", self.gpu_profiler, &mut cpass, &self.device, {
+                                wgpu_profiler!("op:generate_mipmaps", self.gpu_profiler, &mut cpass, self.device, {
                                     assert!(target.mip_level_count() > 1);
                                     // assert!((texture.descriptor.size.width & (texture.descriptor.size.width - 1)) == 0, "Texture width must be a power of two. Found {}", texture.descriptor.size.width);
                                     // assert!((texture.descriptor.size.height & (texture.descriptor.size.height - 1)) == 0, "Texture height must be a power of two. Found {}", texture.descriptor.size.height);
@@ -1336,7 +1387,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                         width = (width / 2).max(1);
                                         height = (height / 2).max(1);
                                         let local_size: u32 = 8;
-                                        wgpu_profiler!("op:dispatch", self.gpu_profiler, &mut cpass, &self.device, {
+                                        wgpu_profiler!("op:dispatch", self.gpu_profiler, &mut cpass, self.device, {
                                             cpass.set_bind_group(0, bind_group, &[]);
                                             cpass.dispatch(
                                                 (width + local_size - 1) / local_size,
@@ -1352,7 +1403,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                 pipeline,
                                 dispatch_size,
                             } => {
-                                wgpu_profiler!("op:compute", self.gpu_profiler, &mut cpass, &self.device, {
+                                wgpu_profiler!("op:compute", self.gpu_profiler, &mut cpass, self.device, {
                                     cpass.set_pipeline(pipeline);
                                     cpass.set_bind_group(0, bind_group, &[]);
                                     cpass.dispatch(dispatch_size.0, dispatch_size.1, dispatch_size.2);

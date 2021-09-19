@@ -5,6 +5,12 @@ struct VertexOutput {
 };
 
 [[block]]
+struct PassInfo {
+    render_target_size: vec2<f32>;
+};
+
+
+[[block]]
 struct Globals {
     u_resolution: vec2<f32>;
     u_scroll_offset: vec2<f32>;
@@ -17,16 +23,19 @@ struct Primitive {
 };
 
 [[group(0), binding(0)]]
-var globals: Globals;
+var<uniform> globals: Globals;
 
 [[group(0), binding(1)]]
-var primitives: Primitive;
+var<uniform> primitives: Primitive;
 
 [[group(0), binding(2)]]
 var s_Color: sampler;
 
 [[group(0), binding(3)]]
 var t_Color: texture_2d<f32>;
+
+[[group(1), binding(0)]]
+var<uniform> pass_info: PassInfo;
 
 [[stage(vertex)]]
 fn vs_main(
@@ -36,7 +45,11 @@ fn vs_main(
     ) -> VertexOutput {
     let prim: Primitive = primitives;
     var out: VertexOutput;
-    out.position = prim.matrix * vec4<f32>(a_position, 0.0, 1.0);
+    let size = vec2<f32>(pass_info.render_target_size);
+    var p = (a_position / size) * 2.0 - vec2<f32>(1.0); //prim.matrix * vec4<f32>(a_position, 0.0, 1.0);
+    p = vec2<f32>(p.x, -p.y);
+    out.position = vec4<f32>(p, 0.0, 1.0);
+    // out.position = vec4<f32>(out.position.xy * pass_info.render_target_size.xy, out.position.zw);
     out.color = a_color;//vec4(1.0, 1.0, 1.0, 1.0);
     out.uv = a_uv;
     return out;

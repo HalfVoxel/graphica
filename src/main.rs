@@ -12,6 +12,7 @@ use lyon::tessellation::{StrokeOptions, StrokeTessellator};
 use rand::Rng;
 use std::convert::TryInto;
 use std::num::NonZeroU64;
+use std::ops::Range;
 use wgpu::BlendState;
 
 use wgpu::Extent3d;
@@ -181,7 +182,7 @@ pub struct BrushRenderer {
     ibo: BufferRange,
     material: Arc<Material>,
     brush_manager: Rc<BrushManager>,
-    stroke_ranges: Vec<std::ops::Range<u32>>,
+    stroke_ranges: Vec<ContinuousStroke>,
 }
 
 fn sample_points_along_curve(path: &PathData, spacing: f32) -> Vec<(usize, CanvasPoint)> {
@@ -1048,6 +1049,11 @@ impl BrushRendererTrait for BrushRendererWithReadbackBatched {
     // }
 }
 
+struct ContinuousStroke {
+    pub vertex_range: Range<u32>,
+    pub bbox: CanvasRectI32,
+}
+
 impl BrushRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -1075,26 +1081,35 @@ impl BrushRenderer {
             // sample_points_along_sub_path(&sub_path, brush_data.brush.spacing * size, &mut points);
             let points = sample_points_along_curve(&smoothed_subpath, brush_data.brush.spacing * size);
 
+            let bbox = CanvasRect::from_points(
+                points
+                    .iter()
+                    .flat_map(|&(_, v)| [v + vector(-size, -size), v + vector(size, size)]),
+            )
+            .round_out()
+            .to_i32();
+            let offset = (-bbox.min().to_f32()).to_vector();
+
             vertices.extend(points.iter().flat_map(|&(vertex_index, pos)| {
                 let color = brush_data.colors[vertex_index / 3].into_format().into_raw();
                 ArrayVec::from([
                     BrushGpuVertex {
-                        position: pos + vector(-size, -size),
+                        position: pos + vector(-size, -size) + offset,
                         uv: point(0.0, 0.0),
                         color,
                     },
                     BrushGpuVertex {
-                        position: pos + vector(size, -size),
+                        position: pos + vector(size, -size) + offset,
                         uv: point(1.0, 0.0),
                         color,
                     },
                     BrushGpuVertex {
-                        position: pos + vector(size, size),
+                        position: pos + vector(size, size) + offset,
                         uv: point(1.0, 1.0),
                         color,
                     },
                     BrushGpuVertex {
-                        position: pos + vector(-size, size),
+                        position: pos + vector(-size, size) + offset,
                         uv: point(0.0, 1.0),
                         color,
                     },
@@ -1103,7 +1118,10 @@ impl BrushRenderer {
 
             let start_triangle = ((start_vertex / 4) * 6) as u32;
             let end_triangle = ((vertices.len() / 4) * 6) as u32;
-            stroke_ranges.push(start_triangle..end_triangle);
+            stroke_ranges.push(ContinuousStroke {
+                bbox,
+                vertex_range: start_triangle..end_triangle,
+            });
         }
 
         let vbo = create_buffer_range(device, &vertices, wgpu::BufferUsages::VERTEX, None);
@@ -1181,15 +1199,20 @@ impl BrushRenderer {
 impl BrushRendererTrait for BrushRenderer {
     fn render_node(&self, render_graph: &mut RenderGraph, mut target: GraphNode) -> GraphNode {
         for stroke_path in &self.stroke_ranges {
-            if stroke_path.is_empty() {
+            if stroke_path.vertex_range.is_empty() {
                 continue;
             }
 
-            let scratch = render_graph.clear(size(512, 512), wgpu::Color::TRANSPARENT);
+            let bbox = stroke_path.bbox;
+            let min_size = (bbox.width().max(bbox.height()) as u32).next_power_of_two().max(32) as i32;
+            let scratch_size = size(min_size, min_size).to_u32();
+            // let scratch_size = stroke_path.bbox.size.to_u32().to_untyped();
+            let scratch = render_graph.clear(scratch_size, wgpu::Color::TRANSPARENT);
 
             let mut ibo = self.ibo.clone();
-            ibo.range.start += stroke_path.start as u64 * std::mem::size_of::<u32>() as u64;
-            ibo.range.end = self.ibo.range.start + stroke_path.end as u64 * std::mem::size_of::<u32>() as u64;
+            ibo.range.start += stroke_path.vertex_range.start as u64 * std::mem::size_of::<u32>() as u64;
+            ibo.range.end =
+                self.ibo.range.start + stroke_path.vertex_range.end as u64 * std::mem::size_of::<u32>() as u64;
             assert!(self.ibo.range.contains(&ibo.range.start));
             assert!(self.ibo.range.contains(&(ibo.range.end - 1)));
             let rendered_strokes = render_graph.mesh(
@@ -1202,8 +1225,14 @@ impl BrushRendererTrait for BrushRenderer {
             target = render_graph.blend(
                 rendered_strokes,
                 target,
-                rect(0.0, 0.0, 512.0, 512.0),
-                rect(0.0, 0.0, 512.0, 512.0),
+                rect(0.0, 0.0, scratch_size.width as f32, scratch_size.height as f32),
+                rect(
+                    stroke_path.bbox.min_x(),
+                    stroke_path.bbox.min_y(),
+                    scratch_size.width as i32,
+                    scratch_size.height as i32,
+                )
+                .to_f32(),
                 BlendState::PREMULTIPLIED_ALPHA_BLENDING,
             );
         }
@@ -1619,7 +1648,28 @@ pub fn main() {
         },
     });
 
-    let brush_manager = Rc::new(BrushManager::load(&device, &queue, sample_count));
+    let pass_info_bind_group_layout = Arc::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("pass info"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: true,
+                min_binding_size: wgpu::BufferSize::new(
+                    std::mem::size_of::<crate::render_graph::ShaderPassInfo>() as u64
+                ),
+            },
+            count: None,
+        }],
+    }));
+
+    let brush_manager = Rc::new(BrushManager::load(
+        &device,
+        &queue,
+        sample_count,
+        &pass_info_bind_group_layout,
+    ));
 
     let event_loop = EventLoop::new();
     let window = Window::new(&event_loop).unwrap();
@@ -2106,6 +2156,7 @@ pub fn main() {
                     staging_belt: &mut staging_belt,
                     mipmapper: &mipmapper,
                     gpu_profiler: &mut gpu_profiler,
+                    pass_info_bind_group_layout: &pass_info_bind_group_layout,
                 };
 
                 let passes = render_graph_compiler.compile(&render_graph, framebuffer, &frame);
