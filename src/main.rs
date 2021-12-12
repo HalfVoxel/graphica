@@ -2166,7 +2166,7 @@ pub fn main() {
                     pass_info_bind_group_layout: &pass_info_bind_group_layout,
                 };
 
-                let passes = render_graph_compiler.compile(&render_graph, framebuffer, &frame);
+                let passes = render_graph_compiler.compile(&render_graph);
                 render_graph_compiler.render(&passes);
             });
 

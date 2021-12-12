@@ -506,12 +506,7 @@ impl<'a> RenderGraphCompiler<'a> {
         )
     }
 
-    pub fn compile(
-        &mut self,
-        render_graph: &RenderGraph,
-        source: GraphNode,
-        target_texture: &RenderTexture,
-    ) -> Vec<CompiledPass> {
+    pub fn compile(&mut self, render_graph: &RenderGraph) -> Vec<CompiledPass> {
         puffin::profile_scope!("compile render graph");
         self.gpu_profiler.begin_scope("compile", self.encoder, self.device);
         let mut usages = vec![
@@ -629,19 +624,24 @@ impl<'a> RenderGraphCompiler<'a> {
             usages[i] = usage;
         }
 
-        if !target_texture.usage().contains(usages[source.index].usages) {
-            panic!(
-                "The render target doesn't have sufficient usage flags. The render target has: {:?}, but required {:?}",
-                target_texture.usage(),
-                usages[source.index].usages
-            );
+        for node in &render_graph.nodes {
+            if let RenderingPrimitive::OutputRenderTarget { target, render_texture } = node {
+                if !render_texture.usage().contains(usages[target.index].usages) {
+                    panic!(
+                            "The render target {:?} doesn't have sufficient usage flags. The render target has: {:?}, but required {:?}",
+                            render_texture,
+                            render_texture.usage(),
+                            usages[target.index].usages
+                        );
+                }
+            }
         }
 
         // logical_to_physical_resources[usages[source.index].logical_resource] = Some(target_texture.clone());
 
         let (sorted, logical_to_physical_render_targets) = {
             puffin::profile_scope!("schedule");
-            self.topological_sort(&render_graph.nodes, &usages, &source, logical_to_physical_resources)
+            self.topological_sort(&render_graph.nodes, &usages, logical_to_physical_resources)
         };
         // println!("{:#?}", sorted.iter().map(|i| &nodes[i.index]).collect::<Vec<_>>());
 
@@ -734,7 +734,6 @@ impl<'a> RenderGraphCompiler<'a> {
         &mut self,
         nodes: &[RenderingPrimitive],
         usages: &[Usage],
-        start_node: &GraphNode,
         // Mapping from logical render targets to physical render targets
         // May contain duplicates due to aliasing.
         mut logical_to_physical_resources: Vec<Option<PhysicalResource>>,
