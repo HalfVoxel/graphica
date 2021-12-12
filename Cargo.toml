@@ -13,11 +13,11 @@ path = "src/bin/main.rs"
 # lyon = { path = "../lyon", features = ["extra"] }
 lyon = "0.17"
 # wgpu = { path = "../wgpu-rs" }
-wgpu = { version = "0.10", features = ["spirv"] }
+wgpu = { version = "0.11", features = ["spirv"] }
 # wgpu-core = { path = "../wgpu/wgpu-core"}
 # wgpu-native = { path = "../wgpu/wgpu-native"}
 # wgpu = { path = "../wgpu-rs"}
-winit = "0.25.0"
+winit = { version = "0.26.0", features = ["x11"] }
 euclid = "0.22"
 log = "0.4"
 env_logger = "0.9"
@@ -30,16 +30,16 @@ kurbo = "0.8"
 async-std = "1.6"
 arrayvec = "0.7"
 # wgpu_glyph = "0.12"
-wgpu-profiler = "0.6"
+wgpu-profiler = "0.7"
 cpuprofiler = { version = "0.0.4", optional = true }
 cgmath = "0.18"
 lazy-init = "0.5"
 futures = "0.3"
-egui = "0.14"
-egui_wgpu_backend = "0.12"
-egui_winit_platform = "0.10"
-puffin = "0.8"
-puffin_egui = "0.7"
+egui = "0.15"
+egui_wgpu_backend = "0.14"
+egui_winit_platform = "0.12"
+puffin = "0.12"
+puffin_egui = "0.11"
 by_address = "1.0"
 tokio = { version = "1.7", features = ["rt-multi-thread", "time"] }
 profiling = { version = "1.0", features = ["profile-with-puffin"] }

@@ -25,7 +25,7 @@ pub struct SwapchainImageWrapper {
     descriptor: wgpu::SurfaceConfiguration,
     // Note: view must be dropped *before* image due to https://github.com/gfx-rs/wgpu/issues/1797
     view: TextureView,
-    image: wgpu::SurfaceFrame,
+    image: wgpu::SurfaceTexture,
 }
 
 impl std::fmt::Debug for SwapchainImageWrapper {
@@ -66,24 +66,28 @@ impl<'a> RenderTextureView<'a> {
 }
 
 impl SwapchainImageWrapper {
-    pub fn from_swapchain_image(swapchain_image: wgpu::SurfaceFrame, descriptor: &wgpu::SurfaceConfiguration) -> Self {
+    pub fn from_swapchain_image(
+        swapchain_image: wgpu::SurfaceTexture,
+        descriptor: &wgpu::SurfaceConfiguration,
+    ) -> Self {
         Self {
-            view: swapchain_image
-                .output
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor {
-                    label: None,
-                    format: Some(descriptor.format),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    aspect: wgpu::TextureAspect::All,
-                    base_mip_level: 0,
-                    mip_level_count: Some(NonZeroU32::new(1).unwrap()),
-                    base_array_layer: 0,
-                    array_layer_count: None,
-                }),
+            view: swapchain_image.texture.create_view(&wgpu::TextureViewDescriptor {
+                label: None,
+                format: Some(descriptor.format),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                aspect: wgpu::TextureAspect::All,
+                base_mip_level: 0,
+                mip_level_count: Some(NonZeroU32::new(1).unwrap()),
+                base_array_layer: 0,
+                array_layer_count: None,
+            }),
             descriptor: descriptor.clone(),
             image: swapchain_image,
         }
+    }
+
+    pub fn present(self) {
+        self.image.present()
     }
 }
 

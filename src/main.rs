@@ -1503,13 +1503,14 @@ pub fn main() {
     let adapter = task::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,
         compatible_surface: None, // TODO
+        force_fallback_adapter: false,
     }))
     .unwrap();
 
     let (device, queue) = task::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: None,
-            features: wgpu::Features::NON_FILL_POLYGON_MODE
+            features: wgpu::Features::POLYGON_MODE_LINE
                 | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
                 | wgpu::Features::TIMESTAMP_QUERY
                 | wgpu::Features::PUSH_CONSTANTS
@@ -1936,8 +1937,14 @@ pub fn main() {
 
             let swapchain_output = {
                 puffin::profile_scope!("aquire swapchain");
-                window_surface.get_current_frame().unwrap()
+                loop {
+                    match window_surface.get_current_texture() {
+                        Ok(x) => break x,
+                        Err(e) => println!("{:#?}", e),
+                    }
+                }
             };
+
             let frame = RenderTexture::from(SwapchainImageWrapper::from_swapchain_image(
                 swapchain_output,
                 &swap_chain_desc,
@@ -2241,8 +2248,16 @@ pub fn main() {
 
             crate::gpu_profiler::process_finished_frame(&mut gpu_profiler, queue_submit_ns);
 
+            drop(render_graph);
+
             // Make sure we drop the profiling scope before we finish the frame.
             // Otherwise the profiling data will show up in the next frame.
+            if let RenderTexture::SwapchainImage(image) = frame {
+                match Arc::try_unwrap(image.0) {
+                    Ok(image) => image.present(),
+                    Err(_) => panic!("The swapchain image is still referenced somewhere"),
+                }
+            }
         }
         profiling::finish_frame!();
     });

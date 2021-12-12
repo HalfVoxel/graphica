@@ -18,10 +18,10 @@ struct Primitive {
 };
 
 [[group(0), binding(0)]]
-var globals: Globals;
+var<uniform> globals: Globals;
 
 [[group(0), binding(1)]]
-var primitives: Primitive;
+var<uniform> primitives: Primitive;
 
 [[stage(vertex)]]
 fn vs_main(

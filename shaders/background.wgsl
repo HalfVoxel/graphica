@@ -14,7 +14,7 @@ struct Globals {
 };
 
 [[group(0), binding(0)]]
-var globals: Globals;
+var<uniform> globals: Globals;
 
 [[stage(vertex)]]
 fn vs_main(

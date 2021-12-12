@@ -1,4 +1,4 @@
-use anyhow::*;
+use anyhow::{bail, Context};
 use glob::glob;
 use shaderc::{OptimizationLevel, ResolvedInclude};
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ struct ShaderData {
 }
 
 impl ShaderData {
-    pub fn load(src_path: PathBuf) -> Result<Self> {
+    pub fn load(src_path: PathBuf) -> anyhow::Result<Self> {
         let extension = src_path
             .extension()
             .context("File has no extension")?
@@ -40,7 +40,7 @@ impl ShaderData {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> anyhow::Result<()> {
     let t0 = Instant::now();
     // Collect all shaders recursively within /shaders/
     let mut shader_paths = [
@@ -54,43 +54,45 @@ fn main() -> Result<()> {
         .iter_mut()
         .flatten()
         .map(|glob_result| ShaderData::load(glob_result?))
-        .collect::<Vec<Result<_>>>()
+        .collect::<Vec<anyhow::Result<_>>>()
         .into_iter()
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let mut compiler = shaderc::Compiler::new().context("Unable to create shader compiler")?;
     let shader_dir = std::fs::canonicalize(PathBuf::from("./shaders"))?;
 
     let mut options = shaderc::CompileOptions::new().expect("Unsable to create shaderc options");
-    options.set_include_callback(|include_path, include_type, source_path, _number| {
-        let mut abs_include_path = match include_type {
-            shaderc::IncludeType::Relative => {
-                let mut x = PathBuf::from(source_path);
-                x.pop();
-                x.push(PathBuf::from(include_path));
-                x
+    options.set_include_callback(
+        |include_path, include_type, source_path, _number| -> Result<ResolvedInclude, String> {
+            let mut abs_include_path = match include_type {
+                shaderc::IncludeType::Relative => {
+                    let mut x = PathBuf::from(source_path);
+                    x.pop();
+                    x.push(PathBuf::from(include_path));
+                    x
+                }
+                shaderc::IncludeType::Standard => PathBuf::from(include_path),
+            };
+
+            abs_include_path = std::fs::canonicalize(abs_include_path).map_err(|e| format!("Invalid path: {}", e))?;
+
+            if !abs_include_path.extension().map(|s| s == "glsl").unwrap_or(false) {
+                return Err(format!("not a valid extension for include {}", include_path));
             }
-            shaderc::IncludeType::Standard => PathBuf::from(include_path),
-        };
 
-        abs_include_path = std::fs::canonicalize(abs_include_path).map_err(|e| format!("Invalid path: {}", e))?;
-
-        if !abs_include_path.extension().map(|s| s == "glsl").unwrap_or(false) {
-            return Err(format!("not a valid extension for include {}", include_path));
-        }
-
-        if !abs_include_path.starts_with(&shader_dir) {
-            Err(format!(
-                "Include path '{:?}' is not in the shader directory",
-                abs_include_path
-            ))
-        } else {
-            Ok(ResolvedInclude {
-                resolved_name: abs_include_path.to_str().unwrap().to_string(),
-                content: std::fs::read_to_string(abs_include_path).map_err(|e| e.to_string())?,
-            })
-        }
-    });
+            if !abs_include_path.starts_with(&shader_dir) {
+                Err(format!(
+                    "Include path '{:?}' is not in the shader directory",
+                    abs_include_path
+                ))
+            } else {
+                Ok(ResolvedInclude {
+                    resolved_name: abs_include_path.to_str().unwrap().to_string(),
+                    content: std::fs::read_to_string(abs_include_path).map_err(|e| e.to_string())?,
+                })
+            }
+        },
+    );
     options.set_generate_debug_info();
     options.set_optimization_level(OptimizationLevel::Performance);
     options.set_target_env(shaderc::TargetEnv::Vulkan, shaderc::EnvVersion::Vulkan1_1 as u32);

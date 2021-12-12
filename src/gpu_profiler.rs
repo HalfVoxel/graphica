@@ -31,7 +31,7 @@ pub fn process_finished_frame(gpu_profiler: &mut GpuProfiler, queue_submit_ns: i
                 start_time_ns: None,
                 name: "gpu".to_string(),
             },
-            puffin::StreamInfo::parse(stream).unwrap(),
+            &puffin::StreamInfo::parse(stream).unwrap().as_stream_into_ref(),
         )
     }
 }
