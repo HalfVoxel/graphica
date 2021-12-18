@@ -428,7 +428,7 @@ struct Usage {
 }
 
 pub struct CompilationContext<'a> {
-    device: &'a Device,
+    pub device: &'a Device,
     material_cache: &'a mut MaterialCache,
     usages: &'a [Usage],
     logical_to_physical_resources: &'a [PhysicalResource],
@@ -725,7 +725,7 @@ impl<'a> RenderGraphCompiler<'a> {
                         },
                     })
                     .collect::<Vec<_>>();
-                material_cache.override_material(device, &material.material, &overrides)
+                material_cache.override_material(&material.material, &overrides)
             }
         }
     }
@@ -1045,7 +1045,6 @@ impl<'a> RenderGraphCompiler<'a> {
                         .to_owned();
 
                     let mat = self.material_cache.override_material(
-                        self.device,
                         &self.blitter.material,
                         &[BindGroupEntryArc {
                             binding: 1,
@@ -1057,7 +1056,7 @@ impl<'a> RenderGraphCompiler<'a> {
                         source: source_texture.clone(),
                         // target: target_texture,
                         pipeline,
-                        bind_group: mat.bind_group().to_owned(),
+                        bind_group: mat.bind_group(self.device).to_owned(),
                         // bind_group: self.blit_bind_group(source_texture.default_view().view),
                         vbo: self.blit_vertices(
                             &Self::pixel_to_uv_rect(source_rect, &source_texture_size),
@@ -1122,7 +1121,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                 },
                             )
                             .to_owned(),
-                        bind_group: material.bind_group().to_owned(),
+                        bind_group: material.bind_group(self.device).to_owned(),
                     };
 
                     Self::push_render_op_top(passes, target_texture, op);
@@ -1158,7 +1157,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                 },
                             )
                             .to_owned(),
-                        bind_group: material.bind_group().to_owned(),
+                        bind_group: material.bind_group(self.device).to_owned(),
                     };
                     Self::push_render_op_top(passes, target_texture, op);
                 }
@@ -1168,7 +1167,6 @@ impl<'a> RenderGraphCompiler<'a> {
                         .map(|mip_level| {
                             puffin::profile_scope!("create bind group");
                             let mat = self.material_cache.override_material(
-                                self.device,
                                 &self.mipmapper.material,
                                 &[
                                     BindGroupEntryArc {
@@ -1185,7 +1183,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                 ],
                             );
 
-                            mat.bind_group().to_owned()
+                            mat.bind_group(self.device).to_owned()
                         })
                         .collect::<Vec<_>>();
 
@@ -1214,7 +1212,7 @@ impl<'a> RenderGraphCompiler<'a> {
                     Self::push_compute_op_top(
                         passes,
                         CompiledComputePrimitive::Compute {
-                            bind_group: material.bind_group().clone(),
+                            bind_group: material.bind_group(self.device).clone(),
                             pipeline: pipeline.to_owned(),
                             dispatch_size: *dispatch_size,
                         },

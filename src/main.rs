@@ -705,10 +705,11 @@ impl crate::render_graph::CustomComputePassPrimitive for BrushRendererWithReadba
         &'a self,
         context: &mut crate::render_graph::CompilationContext<'a>,
     ) -> Box<dyn crate::render_graph::CustomComputePass> {
+        let resolved = context.resolve_material(&self.material).clone();
         Box::new(BrushRendererWithReadbackSingleCPassCompiled {
             pipeline: self.pipeline.clone(),
             primitive_count: self.primitive_count,
-            bind_group: context.resolve_material(&self.material).bind_group().to_owned(),
+            bind_group: resolved.bind_group(context.device).to_owned(),
             dispatch: self.dispatch,
         })
     }

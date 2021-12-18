@@ -1209,6 +1209,7 @@ dependencies = [
  "lazy_static",
  "log",
  "lyon",
+ "once_cell",
  "palette",
  "profiling",
  "puffin 0.12.1",

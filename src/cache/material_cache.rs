@@ -1,11 +1,12 @@
 use std::{
-    collections::HashMap,
+    collections::{hash_map::DefaultHasher, HashMap},
     hash::{Hash, Hasher},
     rc::Rc,
     sync::Arc,
 };
 
 use by_address::ByAddress;
+use once_cell::unsync::OnceCell;
 use wgpu::{BindGroup, BindGroupDescriptor, BindGroupLayout, BlendState, Device, Sampler};
 
 use crate::{
@@ -19,7 +20,7 @@ pub struct Material {
     bind_group_layout: ByAddress<Arc<BindGroupLayout>>,
     label: String,
     bindings: Vec<BindGroupEntryArc>,
-    bind_group: Option<Rc<BindGroup>>,
+    bind_group: OnceCell<Option<Rc<BindGroup>>>,
     pub blend: BlendState,
 }
 
@@ -30,8 +31,12 @@ impl std::fmt::Debug for Material {
 }
 
 impl Material {
-    pub fn bind_group(&self) -> &Rc<BindGroup> {
-        if let Some(b) = &self.bind_group {
+    pub fn bind_group(&self, device: &Device) -> &Rc<BindGroup> {
+        let bind_group = self.bind_group.get_or_init(|| {
+            Self::bind_group_from_entries(device, &self.label, &self.bind_group_layout, &self.bindings).map(Rc::new)
+        });
+
+        if let Some(b) = &bind_group {
             b
         } else {
             panic!("A pass tried to use the material {}, but that material does not have all bindings specified.\nEntries: {:#?}", self.label, self.bindings)
@@ -39,18 +44,16 @@ impl Material {
     }
 
     pub fn new(
-        device: &Device,
         label: String,
         blend: BlendState,
         bind_group_layout: Arc<BindGroupLayout>,
         bindings: Vec<BindGroupEntryArc>,
     ) -> Material {
-        let bind_group = Self::bind_group_from_entries(device, &label, &bind_group_layout, &bindings).map(Rc::new);
         Material {
             bind_group_layout: bind_group_layout.into(),
             label,
             bindings,
-            bind_group,
+            bind_group: OnceCell::default(),
             blend,
         }
     }
@@ -70,7 +73,7 @@ impl Material {
                 resource,
             })
             .collect::<Vec<_>>();
-        Self::new(device, label.to_string(), blend, bind_group_layout, entries)
+        Self::new(label.to_string(), blend, bind_group_layout, entries)
     }
 
     fn bind_group_from_entries(
@@ -89,21 +92,18 @@ impl Material {
         })
     }
 
-    pub fn modified(&self, device: &Device, overrides: &[BindGroupEntryArc]) -> Material {
+    pub fn modified(&self, overrides: &[BindGroupEntryArc]) -> Material {
         puffin::profile_function!();
         let mut new_bindings = self.bindings.clone();
         for change in overrides {
             new_bindings[change.binding as usize] = change.to_owned();
         }
 
-        let bind_group =
-            Self::bind_group_from_entries(device, &self.label, &self.bind_group_layout, &new_bindings).map(Rc::new);
-
         Material {
             bind_group_layout: self.bind_group_layout.clone(),
             label: self.label.clone(),
             bindings: new_bindings,
-            bind_group,
+            bind_group: OnceCell::default(),
             blend: self.blend,
         }
     }
@@ -200,6 +200,9 @@ impl BindingResourceArc {
             BindingResourceArc::Mipmap(Some((RenderTexture::SwapchainImage(t), index))) => {
                 Arc::as_ptr(&t.0) as u64 ^ (31 * (*index as u64))
             }
+            BindingResourceArc::GraphNode(node) => {
+                panic!("GraphNode hasn't been replaced")
+            }
             _ => 0,
         }
     }
@@ -251,15 +254,10 @@ impl MaterialCache {
         // }
     }
 
-    pub fn override_material(
-        &mut self,
-        device: &Device,
-        material: &Material,
-        overrides: &[BindGroupEntryArc],
-    ) -> &Arc<Material> {
+    pub fn override_material(&mut self, material: &Material, overrides: &[BindGroupEntryArc]) -> &Arc<Material> {
         let hash = MaterialCache::hash_material(material, overrides);
         self.cache
             .entry(hash)
-            .or_insert_with(|| Arc::new(material.modified(device, overrides)))
+            .or_insert_with(|| Arc::new(material.modified(overrides)))
     }
 }
