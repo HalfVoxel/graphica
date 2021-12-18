@@ -1967,8 +1967,7 @@ pub fn main() {
             };
 
             let doc = &mut editor.document;
-
-            let mut export = None;
+            let rendering_done = Arc::new(tokio::sync::Notify::new());
 
             let paint_jobs = egui_wrapper.frame(|ctx| {
                 egui::SidePanel::left("side").show(&ctx, |ui| {
@@ -2011,7 +2010,26 @@ pub fn main() {
                             },
                         );
                         graph.render_graph.output_buffer(buffer_node, buffer.clone());
-                        export = Some(buffer);
+
+                        let rendering_done = rendering_done.clone();
+                        tokio::spawn(async move {
+                            rendering_done.notified().await;
+                            let slice = buffer.buffer.slice(..);
+                            slice.map_async(wgpu::MapMode::Read).await.unwrap();
+                            {
+                                let data = buffer.buffer.slice(..).get_mapped_range();
+                                println!("Got output data: {:#?}", &data[0..10]);
+                                image::save_buffer(
+                                    "export.png",
+                                    &data,
+                                    doc_size.width,
+                                    doc_size.height,
+                                    ColorType::Rgba8,
+                                )
+                                .unwrap();
+                            }
+                            buffer.buffer.unmap();
+                        });
                     }
                 });
 
@@ -2052,13 +2070,9 @@ pub fn main() {
                 );
             });
 
-            // document_renderer1
-            //     .as_ref()
-            //     .unwrap()
-            //     .brush_renderer
-            //     .readback(&mut encoder);
-
             let queue_submit_ns = puffin::now_ns();
+
+            rendering_done.notify_one();
 
             {
                 puffin::profile_scope!("resolve gpu profiler queries");
@@ -2073,21 +2087,6 @@ pub fn main() {
 
             // Signal to the profiler that the frame is finished.
             gpu_profiler.end_frame().unwrap();
-
-            if let Some(buffer) = export {
-                let slice = buffer.buffer.slice(..);
-                let mapped = slice.map_async(wgpu::MapMode::Read);
-                tokio::spawn(async move {
-                    mapped.await.unwrap();
-                    {
-                        let data = buffer.buffer.slice(..).get_mapped_range();
-                        println!("Got output data: {:#?}", &data[0..10]);
-                        image::save_buffer("export.png", &data, doc_size.width, doc_size.height, ColorType::Rgba8)
-                            .unwrap();
-                    }
-                    buffer.buffer.unmap();
-                });
-            }
 
             let (sender, mut receiver) = futures::channel::oneshot::channel();
             let recall = staging_belt.recall();
@@ -2108,12 +2107,6 @@ pub fn main() {
                     device.poll(wgpu::Maintain::Wait);
                 }
             }
-
-            // document_renderer1
-            //     .as_ref()
-            //     .unwrap()
-            //     .brush_renderer
-            //     .check_readback(&device);
 
             crate::gpu_profiler::process_finished_frame(&mut gpu_profiler, queue_submit_ns);
 

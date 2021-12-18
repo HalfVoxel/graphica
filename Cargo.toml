@@ -42,7 +42,7 @@ egui_winit_platform = "0.12"
 puffin = "0.12"
 puffin_egui = "0.11"
 by_address = "1.0"
-tokio = { version = "1.7", features = ["rt-multi-thread", "time"] }
+tokio = { version = "1.7", features = ["rt-multi-thread", "time", "sync"] }
 profiling = { version = "1.0", features = ["profile-with-puffin"] }
 
 [build-dependencies]
