@@ -27,5 +27,5 @@ impl RenderNode for BlitNode {
             .blit(source, target, self.source_rect, self.target_rect)
     }
 
-    fn update(&mut self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {}
+    fn update(&mut self, _device: &Device, _encoder: &mut CommandEncoder, _staging_belt: &mut StagingBelt) {}
 }

@@ -56,7 +56,6 @@ impl Mipmapper {
         }));
 
         let material = Arc::new(Material::from_consecutive_entries(
-            device,
             "mipmap",
             BlendState::REPLACE,
             bind_group_layout.clone(),

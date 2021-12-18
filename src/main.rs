@@ -1,16 +1,15 @@
-use cgmath::Vector1;
 use euclid::point2 as point;
 use euclid::rect;
 use euclid::size2 as size;
 use euclid::vec2 as vector;
 use euclid::Size2D;
-use euclid::UnknownUnit;
+
 use image::ColorType;
 use lyon::math::Point;
-use lyon::path::Path;
+
 use lyon::tessellation::geometry_builder::*;
 use lyon::tessellation::FillOptions;
-use lyon::tessellation::{StrokeOptions, StrokeTessellator};
+
 use rand::Rng;
 use std::convert::TryInto;
 use std::num::NonZeroU64;
@@ -20,10 +19,8 @@ use wgpu::BlendState;
 
 use wgpu::Extent3d;
 
-use wgpu::TextureView;
 // use wgpu_glyph::{ab_glyph::FontArc, GlyphBrushBuilder};
 
-use crate::blitter::BlitOp;
 use crate::brush_manager::{BrushGpuVertex, BrushManager, CloneBrushGpuVertex};
 use crate::cache::ephermal_buffer_cache::BufferRange;
 use crate::cache::ephermal_buffer_cache::EphermalBufferCache;
@@ -56,14 +53,10 @@ use crate::persistent_graph::PersistentGraph;
 use crate::persistent_graph::RenderNode;
 use crate::render_graph::GraphNode;
 use crate::render_graph::RenderGraph;
-use std::iter::ExactSizeIterator;
 use std::rc::Rc;
 use std::time::Instant;
-use wgpu::{
-    util::StagingBelt, BindGroup, Buffer, CommandEncoder, CommandEncoderDescriptor, Device, RenderPipeline,
-    TextureDescriptor,
-};
-use wgpu_profiler::{wgpu_profiler, GpuProfiler, GpuTimerScopeResult};
+use wgpu::{util::StagingBelt, Buffer, CommandEncoder, CommandEncoderDescriptor, Device, TextureDescriptor};
+use wgpu_profiler::{wgpu_profiler, GpuProfiler};
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -329,7 +322,6 @@ impl BrushRendererWithReadback {
         let width_in_pixels = (2.0 * (CanvasLength::new(size) * view.canvas_to_screen_scale()).get()).round() as u32;
 
         let material = Arc::new(Material::from_consecutive_entries(
-            device,
             "clone brush readback",
             BlendState::REPLACE,
             brush_manager.splat_with_readback.bind_group_layout.clone(),
@@ -353,7 +345,7 @@ impl BrushRendererWithReadback {
         }
     }
 
-    pub fn render(&self, encoder: &mut Encoder, view: &CanvasView) {
+    pub fn render(&self, _encoder: &mut Encoder, _view: &CanvasView) {
         // if self.points.len() <= 1 {
         //     return;
         // }
@@ -502,7 +494,7 @@ impl RenderNode for BrushRendererWithReadback {
         target
     }
 
-    fn update(&mut self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {}
+    fn update(&mut self, _device: &Device, _encoder: &mut CommandEncoder, _staging_belt: &mut StagingBelt) {}
 }
 
 pub struct BrushRendererWithReadbackSingle {
@@ -626,7 +618,6 @@ impl BrushRendererWithReadbackSingle {
         );
 
         let material = Arc::new(Material::from_consecutive_entries(
-            device,
             "clone brush single",
             BlendState::REPLACE,
             brush_manager.splat_with_readback_single_a.bind_group_layout.clone(),
@@ -656,7 +647,7 @@ impl BrushRendererWithReadbackSingle {
 }
 
 impl RenderNode for BrushRendererWithReadbackSingle {
-    fn update(&mut self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {}
+    fn update(&mut self, _device: &Device, _encoder: &mut CommandEncoder, _staging_belt: &mut StagingBelt) {}
 
     fn render_node(&self, graph: &mut PersistentGraph) -> GraphNode {
         let target = graph.render(&self.target);
@@ -861,7 +852,6 @@ impl BrushRendererWithReadbackBatched {
         );
 
         let material = Arc::new(Material::from_consecutive_entries(
-            device,
             "clone brush batched",
             BlendState::REPLACE,
             brush_manager.splat_with_readback_batched.bind_group_layout.clone(),
@@ -980,82 +970,6 @@ impl RenderNode for BrushRendererWithReadbackBatched {
             (DISPATCH as u32, DISPATCH as u32, 1),
         )
     }
-
-    // pub fn render(&self, encoder: &mut Encoder, _view: &CanvasView) {
-    //     if self.ubo.size() == 0 {
-    //         return;
-    //     }
-
-    //     const LOCAL_SIZE: u32 = 32;
-
-    //     let width_per_group = (self.size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
-    //     let height_per_group = (self.size_in_pixels + LOCAL_SIZE - 1) / LOCAL_SIZE;
-
-    //     let settings_ubo = create_buffer_range(
-    //         encoder.device,
-    //         &[ReadbackUniforms {
-    //             width_per_group: width_per_group as i32,
-    //             height_per_group: height_per_group as i32,
-    //             num_primitives: self.points.len() as i32 - 1,
-    //         }],
-    //         wgpu::BufferUsages::UNIFORM,
-    //         "Readback settings",
-    //     );
-
-    //     DynamicMaterial::new(self.material.clone(), vec![
-    //         BindGroupEntryArc {
-    //             binding: 0,
-    //             resource: BindingResourceArc::graph_node(texture)
-    //         }
-    //     ]);
-
-    //     let bind_group = encoder.device.create_bind_group(&wgpu::BindGroupDescriptor {
-    //         layout: &self.brush_manager.splat_with_readback_batched.bind_group_layout,
-    //         label: Some("Clone brush Bind Group"),
-    //         entries: &[
-    //             wgpu::BindGroupEntry {
-    //                 binding: 0,
-    //                 resource: wgpu::BindingResource::TextureView(encoder.target_texture.view),
-    //             },
-    //             wgpu::BindGroupEntry {
-    //                 binding: 1,
-    //                 resource: wgpu::BindingResource::TextureView(&self.temp_texture_view),
-    //             },
-    //             wgpu::BindGroupEntry {
-    //                 binding: 2,
-    //                 resource: wgpu::BindingResource::Sampler(&self.sampler),
-    //             },
-    //             wgpu::BindGroupEntry {
-    //                 binding: 3,
-    //                 resource: wgpu::BindingResource::TextureView(&self.brush_texture.view),
-    //             },
-    //             wgpu::BindGroupEntry {
-    //                 binding: 4,
-    //                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-    //                     buffer: &self.ubo,
-    //                     offset: 0,
-    //                     // TODO: Use None?
-    //                     size: Some(NonZeroU64::new(self.ubo_size).unwrap()),
-    //                 }),
-    //             },
-    //             wgpu::BindGroupEntry {
-    //                 binding: 5,
-    //                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-    //                     buffer: &settings_ubo,
-    //                     offset: 0,
-    //                     size: Some(NonZeroU64::new(settings_ubo_size).unwrap()),
-    //                 }),
-    //             },
-    //         ],
-    //     });
-
-    //     let mut cpass = encoder.encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-    //         label: Some("brush with readback"),
-    //     });
-    //     cpass.set_pipeline(&self.brush_manager.splat_with_readback_batched.pipeline);
-    //     cpass.set_bind_group(0, &bind_group, &[]);
-    //     cpass.dispatch(1, 1, 1);
-    // }
 }
 
 struct ContinuousStroke {
@@ -1169,7 +1083,6 @@ impl BrushRenderer {
         }));
 
         let material = Arc::new(Material::from_consecutive_entries(
-            device,
             "brush",
             BlendState::ALPHA_BLENDING,
             brush_manager.splat.bind_group_layout.clone(),
@@ -1191,19 +1104,6 @@ impl BrushRenderer {
             stroke_ranges,
             target,
         }
-    }
-
-    fn update(&self, _view: &CanvasView, _device: &Device, _encoder: &mut CommandEncoder) {
-        // let scene_ubo_transfer = device
-        // .create_buffer_mapped(1, wgpu::BufferUsages::COPY_SRC)
-        // .fill_from_slice(&[Globals {
-        //     resolution: [view.resolution.width as f32, view.resolution.height as f32],
-        //     zoom: view.zoom,
-        //     scroll_offset: view.scroll.to_array(),
-        // }]);
-
-        // let scene_ubo_size = std::mem::size_of::<Globals>() as u64;
-        // encoder.copy_buffer_to_buffer(&scene_ubo_transfer, 0, &self.scene_ubo, 0, scene_ubo_size);
     }
 }
 
@@ -1251,7 +1151,7 @@ impl RenderNode for BrushRenderer {
         target
     }
 
-    fn update(&mut self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {}
+    fn update(&mut self, _device: &Device, _encoder: &mut CommandEncoder, _staging_belt: &mut StagingBelt) {}
 }
 
 #[derive(Default)]
@@ -1265,12 +1165,12 @@ impl RenderNode for BrushTexture {
         if let Some(tex) = &*guard {
             graph.render_graph.texture(tex.clone())
         } else {
-            let mut canvas = graph.render_graph.clear(Size2D::new(256, 256), wgpu::Color::GREEN);
+            let canvas = graph.render_graph.clear(Size2D::new(256, 256), wgpu::Color::GREEN);
             graph.render_graph.snapshot_texture(canvas, self.cache.clone())
         }
     }
 
-    fn update(&mut self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {}
+    fn update(&mut self, _device: &Device, _encoder: &mut CommandEncoder, _staging_belt: &mut StagingBelt) {}
 }
 
 impl DocumentRenderer {
@@ -1750,7 +1650,6 @@ pub fn main() {
     );
 
     let bg_material_base = Arc::new(Material::from_consecutive_entries(
-        &device,
         "background",
         BlendState::REPLACE,
         bind_group_layout.clone(),
@@ -1761,7 +1660,6 @@ pub fn main() {
     ));
 
     let screen_bg_material_base = Arc::new(Material::from_consecutive_entries(
-        &device,
         "background",
         BlendState::REPLACE,
         bind_group_layout.clone(),
@@ -2057,8 +1955,8 @@ pub fn main() {
             let mut graph = PersistentGraph::new(&mut render_graph);
 
             {
-                let mut framebuffer = document_renderer2.as_ref().unwrap().render_node(&mut graph);
-                graph.render_graph.output_texture(framebuffer.clone(), frame.clone());
+                let framebuffer = document_renderer2.as_ref().unwrap().render_node(&mut graph);
+                graph.render_graph.output_texture(framebuffer, frame.clone());
             }
 
             // Upload all resources for the GPU.

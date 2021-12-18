@@ -6,10 +6,10 @@ use std::{
 };
 
 use euclid::{default::Size2D, Point2D};
-use lyon::math::{point, size, Rect};
+use lyon::math::{point, size};
 use wgpu::{
-    util::StagingBelt, BindGroup, BindGroupLayout, BlendState, BufferUsages, Color, CommandEncoder, ComputePass,
-    ComputePipeline, Device, Extent3d, LoadOp, Origin3d, TextureFormat, TextureUsages,
+    util::StagingBelt, BindGroup, BindGroupLayout, BlendState, BufferUsages, Color, CommandEncoder, ComputePipeline,
+    Device, Extent3d, LoadOp, Origin3d, TextureFormat, TextureUsages,
 };
 use wgpu_profiler::{wgpu_profiler, GpuProfiler};
 
@@ -25,7 +25,6 @@ use crate::{
     geometry_utilities::types::{CanvasRect, UVRect},
     mipmap::Mipmapper,
     texture::RenderTexture,
-    vertex::GPUVertex,
 };
 
 #[derive(Debug)]
@@ -402,8 +401,6 @@ impl RenderGraph {
             texture: texture.clone(),
         })
     }
-
-    fn render(self, _source: GraphNode) {}
 }
 
 pub struct RenderGraphCompiler<'a> {
@@ -420,14 +417,6 @@ pub struct RenderGraphCompiler<'a> {
     pub pass_info_bind_group_layout: &'a BindGroupLayout,
 }
 
-struct RenderTextureSlot {
-    texture: Option<RenderTexture>,
-    size: Extent3d,
-    format: TextureFormat,
-    first_use_pass: Option<usize>,
-    last_use_pass: Option<usize>,
-}
-
 #[derive(Debug)]
 pub enum CompiledPass {
     RenderPass {
@@ -440,8 +429,6 @@ pub enum CompiledPass {
     },
     EncoderPass(CompiledEncoderPrimitive),
 }
-
-type PassIndex = usize;
 
 #[derive(Debug)]
 struct RenderTextureHandle(usize);
@@ -463,7 +450,6 @@ pub struct CompilationContext<'a> {
 impl<'a> CompilationContext<'a> {
     pub fn resolve_material(&mut self, material: &'a RenderGraphMaterial) -> &Arc<Material> {
         RenderGraphCompiler::resolve_dynamic_material(
-            self.device,
             self.material_cache,
             material,
             self.usages,
@@ -651,11 +637,11 @@ impl<'a> RenderGraphCompiler<'a> {
 
             // Assign pre-filled resources
             match &nodes[i] {
-                RenderingPrimitive::OutputRenderTarget { target, render_texture } => {
+                RenderingPrimitive::OutputRenderTarget { render_texture, .. } => {
                     logical_to_physical_resources[usage.logical_resource] =
                         Some(PhysicalResource::RenderTexture(render_texture.clone()))
                 }
-                RenderingPrimitive::OutputBuffer { target, buffer } => {
+                RenderingPrimitive::OutputBuffer { buffer, .. } => {
                     logical_to_physical_resources[usage.logical_resource] =
                         Some(PhysicalResource::Buffer(buffer.clone()))
                 }
@@ -745,7 +731,6 @@ impl<'a> RenderGraphCompiler<'a> {
     }
 
     fn resolve_dynamic_material<'b>(
-        device: &Device,
         material_cache: &'b mut MaterialCache,
         material: &'b RenderGraphMaterial,
         usages: &[Usage],
@@ -1114,7 +1099,7 @@ impl<'a> RenderGraphCompiler<'a> {
                     });
                 }
                 RenderingPrimitive::Blit(Blit {
-                    target,
+                    target: _,
                     source,
                     source_rect,
                     target_rect,
@@ -1162,7 +1147,7 @@ impl<'a> RenderGraphCompiler<'a> {
                     Self::push_render_op_top(passes, target_texture, op);
                 }
                 RenderingPrimitive::Quad {
-                    target,
+                    target: _,
                     rect,
                     pipeline,
                     material,
@@ -1193,11 +1178,10 @@ impl<'a> RenderGraphCompiler<'a> {
                     );
 
                     let material = Self::resolve_dynamic_material(
-                        self.device,
                         self.material_cache,
                         material,
-                        &usages,
-                        &logical_to_physical_resources,
+                        usages,
+                        logical_to_physical_resources,
                     );
 
                     let op = CompiledRenderingPrimitive::Render {
@@ -1222,7 +1206,7 @@ impl<'a> RenderGraphCompiler<'a> {
                     Self::push_render_op_top(passes, target_texture, op);
                 }
                 RenderingPrimitive::Mesh {
-                    target,
+                    target: _,
                     vbo,
                     ibo,
                     pipeline,
@@ -1230,11 +1214,10 @@ impl<'a> RenderGraphCompiler<'a> {
                 } => {
                     let target_texture = target_resource.expect_render_texture();
                     let material = Self::resolve_dynamic_material(
-                        self.device,
                         self.material_cache,
                         material,
-                        &usages,
-                        &logical_to_physical_resources,
+                        usages,
+                        logical_to_physical_resources,
                     );
                     let op = CompiledRenderingPrimitive::Render {
                         vbo: vbo.to_owned(),
@@ -1298,11 +1281,10 @@ impl<'a> RenderGraphCompiler<'a> {
                     ..
                 } => {
                     let material = Self::resolve_dynamic_material(
-                        self.device,
                         self.material_cache,
                         material,
-                        &usages,
-                        &logical_to_physical_resources,
+                        usages,
+                        logical_to_physical_resources,
                     );
                     Self::push_compute_op_top(
                         passes,
@@ -1345,10 +1327,10 @@ impl<'a> RenderGraphCompiler<'a> {
                 RenderingPrimitive::OutputBuffer { .. } => {
                     // Noop
                 }
-                RenderingPrimitive::Texture { texture } => {
+                RenderingPrimitive::Texture { texture: _ } => {
                     // Noop
                 }
-                RenderingPrimitive::SnapshotTexture { source, texture } => {
+                RenderingPrimitive::SnapshotTexture { source, texture: _ } => {
                     let target_texture = target_resource.expect_render_texture();
                     let source_texture =
                         logical_to_physical_resources[usages[source.index].logical_resource].expect_render_texture();

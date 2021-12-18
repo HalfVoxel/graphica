@@ -174,7 +174,6 @@ impl Blitter {
             .collect::<Vec<_>>();
 
         let material = Material::from_consecutive_entries(
-            device,
             "blit material",
             BlendState::REPLACE,
             bind_group_layout.clone(),

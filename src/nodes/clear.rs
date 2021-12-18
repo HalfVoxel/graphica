@@ -16,5 +16,5 @@ impl RenderNode for Clear {
         graph.render_graph.clear(self.size, self.color)
     }
 
-    fn update(&mut self, device: &Device, encoder: &mut CommandEncoder, staging_belt: &mut StagingBelt) {}
+    fn update(&mut self, _device: &Device, _encoder: &mut CommandEncoder, _staging_belt: &mut StagingBelt) {}
 }

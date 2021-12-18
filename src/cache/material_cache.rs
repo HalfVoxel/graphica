@@ -1,9 +1,4 @@
-use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
-    hash::{Hash, Hasher},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{collections::HashMap, hash::Hasher, rc::Rc, sync::Arc};
 
 use by_address::ByAddress;
 use once_cell::unsync::OnceCell;
@@ -59,7 +54,6 @@ impl Material {
     }
 
     pub fn from_consecutive_entries(
-        device: &Device,
         label: &str,
         blend: BlendState,
         bind_group_layout: Arc<BindGroupLayout>,
@@ -200,7 +194,7 @@ impl BindingResourceArc {
             BindingResourceArc::Mipmap(Some((RenderTexture::SwapchainImage(t), index))) => {
                 Arc::as_ptr(&t.0) as u64 ^ (31 * (*index as u64))
             }
-            BindingResourceArc::GraphNode(node) => {
+            BindingResourceArc::GraphNode(_node) => {
                 panic!("GraphNode hasn't been replaced")
             }
             _ => 0,

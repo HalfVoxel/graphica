@@ -1,7 +1,7 @@
 use by_address::ByAddress;
 use euclid::rect;
 use lazy_init::Lazy;
-use std::{num::NonZeroU32, rc::Rc, sync::Arc};
+use std::{num::NonZeroU32, sync::Arc};
 use wgpu::{util::DeviceExt, CommandEncoder, Device, Extent3d, Queue, TextureFormat, TextureUsages, TextureView};
 
 pub struct Texture {

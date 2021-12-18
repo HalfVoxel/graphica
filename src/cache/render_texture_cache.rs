@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use euclid::default::Size2D;
 use wgpu::{Device, Extent3d, TextureFormat, TextureUsages};

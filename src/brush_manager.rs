@@ -7,10 +7,10 @@ use crate::texture::Texture;
 use crate::{geometry_utilities::types::*, vertex::GPUVertex};
 use image::GenericImageView;
 use lyon::math::*;
-use wgpu::util::DeviceExt;
+
 use wgpu::{
-    BindGroupLayout, ComputePipeline, Device, Extent3d, PushConstantRange, Queue, RenderPipeline, TextureFormat,
-    TextureUsages, TextureViewDimension,
+    BindGroupLayout, ComputePipeline, Device, Extent3d, PushConstantRange, Queue, TextureFormat, TextureUsages,
+    TextureViewDimension,
 };
 
 type GPURGBA = [u8; 4];

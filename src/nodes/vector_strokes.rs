@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use cgmath::Matrix4;
-use euclid::{Size2D, UnknownUnit};
+
 use lyon::{
     lyon_tessellation::{BuffersBuilder, StrokeOptions, StrokeTessellator, VertexBuffers},
     path::Path,
@@ -101,7 +101,6 @@ impl VectorRenderer {
         );
 
         let vector_material = Arc::new(Material::from_consecutive_entries(
-            device,
             "Vector",
             BlendState::ALPHA_BLENDING,
             bind_group_layout.to_owned(),
