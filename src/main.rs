@@ -2015,8 +2015,8 @@ pub fn main() {
                     }
                 });
 
-                if enable_profiler {
-                    puffin_egui::profiler_window(&ctx);
+                if enable_profiler && !puffin_egui::profiler_window(&ctx) {
+                    enable_profiler = false;
                 }
             });
 
