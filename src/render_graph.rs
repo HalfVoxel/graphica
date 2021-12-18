@@ -1,7 +1,11 @@
 use core::panic;
-use std::{collections::VecDeque, rc::Rc, sync::Arc};
+use std::{
+    collections::VecDeque,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
-use euclid::default::Size2D;
+use euclid::{default::Size2D, Point2D};
 use lyon::math::{point, size, Rect};
 use wgpu::{
     util::StagingBelt, BindGroup, BindGroupLayout, BlendState, BufferUsages, Color, CommandEncoder, ComputePass,
@@ -102,6 +106,13 @@ enum RenderingPrimitive {
         target: GraphNode,
         buffer: BufferRange,
     },
+    Texture {
+        texture: RenderTexture,
+    },
+    SnapshotTexture {
+        source: GraphNode,
+        texture: Arc<Mutex<Option<RenderTexture>>>,
+    },
 }
 
 pub trait CustomComputePassPrimitive {
@@ -147,6 +158,7 @@ impl RenderingPrimitive {
             },
             RenderingPrimitive::CustomCompute { reads, .. } => reads.clone().into_iter(),
             RenderingPrimitive::CopyTextureToBuffer { source, .. } => vec![source.clone()].into_iter(),
+            RenderingPrimitive::SnapshotTexture { source, .. } => vec![source.clone()].into_iter(),
             _ => vec![].into_iter(),
         }
     }
@@ -166,6 +178,8 @@ impl RenderingPrimitive {
             RenderingPrimitive::CopyTextureToBuffer { target, .. } => Some(target.clone()),
             RenderingPrimitive::OutputRenderTarget { target, .. } => Some(target.clone()),
             RenderingPrimitive::OutputBuffer { target, .. } => Some(target.clone()),
+            RenderingPrimitive::Texture { .. } => None,
+            RenderingPrimitive::SnapshotTexture { .. } => None,
         }
     }
 
@@ -196,7 +210,7 @@ impl RenderingPrimitive {
     }
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Hash)]
 pub struct GraphNode {
     index: usize,
 }
@@ -375,6 +389,18 @@ impl RenderGraph {
 
     pub fn copy_texture_to_buffer(&mut self, source: GraphNode, target: GraphNode, extent: Extent3d) -> GraphNode {
         self.push_primitive(RenderingPrimitive::CopyTextureToBuffer { source, target, extent })
+    }
+
+    pub fn texture(&mut self, texture: RenderTexture) -> GraphNode {
+        // TODO: Anything using this node as a target needs to insert a blit to a scratch texture first
+        self.push_primitive(RenderingPrimitive::Texture { texture })
+    }
+
+    pub fn snapshot_texture(&mut self, source: GraphNode, texture: Arc<Mutex<Option<RenderTexture>>>) -> GraphNode {
+        self.push_primitive(RenderingPrimitive::SnapshotTexture {
+            source,
+            texture: texture.clone(),
+        })
     }
 
     fn render(self, _source: GraphNode) {}
@@ -559,6 +585,17 @@ impl<'a> RenderGraphCompiler<'a> {
                 RenderingPrimitive::OutputBuffer { .. } => {
                     // NOP
                 }
+                RenderingPrimitive::SnapshotTexture { .. } => {
+                    usage.logical_resource = logical_render_target_index;
+                    logical_render_target_index += 1;
+                    // Seems reasonable?
+                    usage.requires_mipmaps = true;
+                    usage.usages |= TextureUsages::all()
+                }
+                RenderingPrimitive::Texture { .. } => {
+                    usage.logical_resource = logical_render_target_index;
+                    logical_render_target_index += 1;
+                }
             }
 
             if let Some(target) = nodes[i].target() {
@@ -608,6 +645,10 @@ impl<'a> RenderGraphCompiler<'a> {
                 usage.logical_resource = usages[target.index].logical_resource;
             }
 
+            if usage.logical_resource == usize::MAX {
+                panic!("Logical resource has not been set for {:#?}", nodes[i]);
+            }
+
             // Assign pre-filled resources
             match &nodes[i] {
                 RenderingPrimitive::OutputRenderTarget { target, render_texture } => {
@@ -617,6 +658,10 @@ impl<'a> RenderGraphCompiler<'a> {
                 RenderingPrimitive::OutputBuffer { target, buffer } => {
                     logical_to_physical_resources[usage.logical_resource] =
                         Some(PhysicalResource::Buffer(buffer.clone()))
+                }
+                RenderingPrimitive::Texture { texture } => {
+                    logical_to_physical_resources[usage.logical_resource] =
+                        Some(PhysicalResource::RenderTexture(texture.clone()))
                 }
                 _ => {}
             }
@@ -745,6 +790,7 @@ impl<'a> RenderGraphCompiler<'a> {
             remaining_readwrite_from_self: Option<GraphNode>,
             /// Tie-breaking bias. Higher values should be executed first.
             sort_order: u32,
+            alive: bool,
         }
 
         let mut topgraph = vec![TopSortNode::default(); nodes.len()];
@@ -757,13 +803,15 @@ impl<'a> RenderGraphCompiler<'a> {
             .iter()
             .map(|x| x.is_some() as usize)
             .collect::<Vec<_>>();
-        let original_refcounts = logical_render_target_refcount.clone();
+        let mut original_refcounts = logical_render_target_refcount.clone();
         let mut logical_render_target_pressure = vec![0; logical_to_physical_resources.len()];
 
         for (i, node) in nodes.iter().enumerate() {
             if matches!(
                 node,
-                RenderingPrimitive::OutputBuffer { .. } | RenderingPrimitive::OutputRenderTarget { .. }
+                RenderingPrimitive::OutputBuffer { .. }
+                    | RenderingPrimitive::OutputRenderTarget { .. }
+                    | RenderingPrimitive::SnapshotTexture { .. }
             ) {
                 que.push_front(GraphNode { index: i })
             }
@@ -771,6 +819,7 @@ impl<'a> RenderGraphCompiler<'a> {
 
         while let Some(node) = que.pop_front() {
             topgraph[node.index].sort_order = sort_order_index;
+            topgraph[node.index].alive = true;
             sort_order_index += 1;
 
             for target in nodes[node.index].reads() {
@@ -798,7 +847,7 @@ impl<'a> RenderGraphCompiler<'a> {
 
         let mut available_nodes = vec![];
         for (index, node) in topgraph.iter().enumerate() {
-            if node.remaining_dependencies == 0 {
+            if node.remaining_dependencies == 0 && node.alive {
                 available_nodes.push(GraphNode { index });
             }
         }
@@ -809,12 +858,14 @@ impl<'a> RenderGraphCompiler<'a> {
             render_texture_cache: &mut RenderTextureCache,
             logical_to_physical_resources: &[Option<PhysicalResource>],
         ) {
+            let refcount = &mut logical_render_target_refcount[logical_render_target];
             assert!(
-                logical_render_target_refcount[logical_render_target] > 0,
-                "Refcount for texture went below zero"
+                *refcount > 0,
+                "Refcount for texture {:#?} went below zero",
+                logical_to_physical_resources[logical_render_target]
             );
-            logical_render_target_refcount[logical_render_target] -= 1;
-            if logical_render_target_refcount[logical_render_target] == 0 {
+            *refcount -= 1;
+            if *refcount == 0 {
                 match &logical_to_physical_resources[logical_render_target] {
                     Some(PhysicalResource::RenderTexture(rt)) => {
                         // Deallocate
@@ -889,10 +940,47 @@ impl<'a> RenderGraphCompiler<'a> {
                             .get_or_insert_with(|| todo!());
                         // If the resource was pre-filled, we still want to ensure the type and size is correct
                         match resource {
-                            PhysicalResource::RenderTexture(rt) => {
+                            PhysicalResource::RenderTexture(_) => {
                                 panic!("Expected a buffer")
                             }
                             PhysicalResource::Buffer(b) => assert_eq!(b.size(), *size as u64),
+                        }
+                    }
+                    RenderingPrimitive::SnapshotTexture { source, texture } => {
+                        let parent = &logical_to_physical_resources[usages[source.index].logical_resource];
+                        if let Some(PhysicalResource::RenderTexture(source_tex)) = parent {
+                            let usage = &usages[best_node.index];
+                            let mut guard = texture.lock().unwrap();
+                            if let Some(tex) = &mut *guard {
+                                if tex.usage().contains(usage.usages)
+                                    && tex.size() == source_tex.size()
+                                    && tex.format() == source_tex.format()
+                                    && tex.mip_level_count() == source_tex.mip_level_count()
+                                {
+                                    // Still valid
+                                } else {
+                                    *guard = None;
+                                }
+                            }
+                            let texture = (*guard).get_or_insert_with(|| {
+                                self.render_texture_cache.temporary_render_texture(
+                                    self.device,
+                                    Size2D::new(source_tex.size().width, source_tex.size().height),
+                                    source_tex.format(),
+                                    true,
+                                    usage.usages,
+                                )
+                            });
+                            logical_to_physical_resources[usage.logical_resource] =
+                                Some(PhysicalResource::RenderTexture(texture.clone()));
+                            // Prevent it from being garbage collected
+                            logical_render_target_refcount[usage.logical_resource] = 1;
+                            original_refcounts[usage.logical_resource] = 1;
+                        } else {
+                            panic!(
+                                "Source of persistent texture hasn't been set or is not a render texture: {:#?}",
+                                parent
+                            );
                         }
                     }
                     _ => {}
@@ -902,7 +990,12 @@ impl<'a> RenderGraphCompiler<'a> {
                         .remaining_reads_from_self
                         .iter()
                         .position(|x| *x == best_node)
-                        .unwrap();
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Expected to find node {:#?} in the list of remaining reads from {:#?}",
+                                nodes[best_node.index], nodes[parent.index]
+                            )
+                        });
                     topgraph[parent.index].remaining_reads_from_self.swap_remove(idx);
 
                     if topgraph[parent.index].remaining_reads_from_self.is_empty() {
@@ -914,21 +1007,23 @@ impl<'a> RenderGraphCompiler<'a> {
                         }
                     }
 
+                    // We are done reading these resources, so we can reduce their refcount
                     let rt = usages[parent.index].logical_resource;
                     reduce_rt_refcount(
                         rt,
                         &mut logical_render_target_refcount,
-                        &mut self.render_texture_cache,
+                        self.render_texture_cache,
                         &logical_to_physical_resources,
                     );
                 }
 
+                // We are done writing these targets, so we can reduce their refcount
                 for write in nodes[best_node.index].writes() {
                     let rt = usages[write.index].logical_resource;
                     reduce_rt_refcount(
                         rt,
                         &mut logical_render_target_refcount,
-                        &mut self.render_texture_cache,
+                        self.render_texture_cache,
                         &logical_to_physical_resources,
                     );
                 }
@@ -1249,6 +1344,47 @@ impl<'a> RenderGraphCompiler<'a> {
                 }
                 RenderingPrimitive::OutputBuffer { .. } => {
                     // Noop
+                }
+                RenderingPrimitive::Texture { texture } => {
+                    // Noop
+                }
+                RenderingPrimitive::SnapshotTexture { source, texture } => {
+                    let target_texture = target_resource.expect_render_texture();
+                    let source_texture =
+                        logical_to_physical_resources[usages[source.index].logical_resource].expect_render_texture();
+                    let pipeline = self
+                        .render_pipeline_cache
+                        .get(
+                            self.device,
+                            RenderPipelineKey {
+                                base: self.blitter.render_pipeline_base.clone().into(),
+                                sample_count: target_texture.sample_count(),
+                                depth_format: None,
+                                target_format: target_texture.format(),
+                                blend_state: BlendState::REPLACE,
+                            },
+                        )
+                        .to_owned();
+
+                    let mat = self.material_cache.override_material(
+                        &self.blitter.material,
+                        &[BindGroupEntryArc {
+                            binding: 1,
+                            resource: BindingResourceArc::render_texture(Some(source_texture.clone())),
+                        }],
+                    );
+
+                    let op = CompiledRenderingPrimitive::Blit {
+                        source: source_texture.clone(),
+                        pipeline,
+                        bind_group: mat.bind_group(self.device).to_owned(),
+                        vbo: self.blit_vertices(
+                            &UVRect::new(Point2D::new(0.0, 0.0), Size2D::new(1.0, 1.0).cast_unit()),
+                            &UVRect::new(Point2D::new(0.0, 0.0), Size2D::new(1.0, 1.0).cast_unit()),
+                        ),
+                    };
+
+                    Self::push_render_op_top(passes, target_texture, op);
                 }
             }
         }
