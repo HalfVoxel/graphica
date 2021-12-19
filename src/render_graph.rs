@@ -914,8 +914,8 @@ impl<'a> RenderGraphCompiler<'a> {
                         // If the resource was pre-filled, we still want to ensure the type and size is correct
                         match resource {
                             PhysicalResource::RenderTexture(rt) => {
-                                assert_eq!(rt.size().width, size.width);
-                                assert_eq!(rt.size().height, size.height);
+                                assert!(rt.size().width >= size.width);
+                                assert!(rt.size().height >= size.height);
                             }
                             PhysicalResource::Buffer(_) => panic!("Expected a render texture"),
                         }
