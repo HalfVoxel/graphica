@@ -1155,19 +1155,12 @@ impl RenderNode for BrushRenderer {
 }
 
 #[derive(Default)]
-struct BrushTexture {
-    cache: Arc<Mutex<Option<RenderTexture>>>,
-}
+struct BrushTexture {}
 
 impl RenderNode for BrushTexture {
     fn render_node(&self, graph: &mut PersistentGraph) -> GraphNode {
-        let guard = self.cache.lock().unwrap();
-        if let Some(tex) = &*guard {
-            graph.render_graph.texture(tex.clone())
-        } else {
-            let canvas = graph.render_graph.clear(Size2D::new(256, 256), wgpu::Color::GREEN);
-            graph.render_graph.snapshot_texture(canvas, self.cache.clone())
-        }
+        let canvas = graph.render_graph.clear(Size2D::new(256, 256), wgpu::Color::GREEN);
+        canvas
     }
 
     fn update(&mut self, _device: &Device, _encoder: &mut CommandEncoder, _staging_belt: &mut StagingBelt) {}
@@ -1723,8 +1716,9 @@ pub fn main() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let _guard = runtime.enter();
 
+    let cache_node = Arc::new(Mutex::new(Cache::new(dummy_node())));
     let blit_node = Arc::new(Mutex::new(BlitNode {
-        source: dummy_node(),
+        source: cache_node.clone(),
         target: dummy_node(),
         source_rect: CanvasRect::from_size(Size2D::new(0.0, 0.0)),
         target_rect: CanvasRect::from_size(Size2D::new(0.0, 0.0)),
@@ -1891,8 +1885,9 @@ pub fn main() {
                     scene.brush,
                 ))));
 
-                let mut blit = blit_node.lock().unwrap();
-                blit.source = Arc::new(Mutex::new(Cache::new(document_renderer1.as_ref().unwrap().clone())));
+                let mut cache = cache_node.lock().unwrap();
+                cache.source = document_renderer1.as_ref().unwrap().clone();
+                cache.dirty();
             }
 
             let canvas_in_screen_space =

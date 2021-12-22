@@ -110,7 +110,7 @@ enum RenderingPrimitive {
     },
     SnapshotTexture {
         source: GraphNode,
-        texture: Arc<Mutex<Option<RenderTexture>>>,
+        texture: Arc<Mutex<Option<(RenderTexture, bool)>>>,
     },
 }
 
@@ -395,7 +395,11 @@ impl RenderGraph {
         self.push_primitive(RenderingPrimitive::Texture { texture })
     }
 
-    pub fn snapshot_texture(&mut self, source: GraphNode, texture: Arc<Mutex<Option<RenderTexture>>>) -> GraphNode {
+    pub fn snapshot_texture(
+        &mut self,
+        source: GraphNode,
+        texture: Arc<Mutex<Option<(RenderTexture, bool)>>>,
+    ) -> GraphNode {
         self.push_primitive(RenderingPrimitive::SnapshotTexture {
             source,
             texture: texture.clone(),
@@ -936,28 +940,32 @@ impl<'a> RenderGraphCompiler<'a> {
                         if let Some(PhysicalResource::RenderTexture(source_tex)) = parent {
                             let usage = &usages[best_node.index];
                             let mut guard = texture.lock().unwrap();
-                            if let Some(tex) = &mut *guard {
+                            if let Some((tex, dirty)) = &mut *guard {
                                 if tex.usage().contains(usage.usages)
                                     && tex.size() == source_tex.size()
                                     && tex.format() == source_tex.format()
                                     && tex.mip_level_count() == source_tex.mip_level_count()
                                 {
                                     // Still valid
+                                    *dirty = false;
                                 } else {
                                     *guard = None;
                                 }
                             }
                             let texture = (*guard).get_or_insert_with(|| {
-                                self.render_texture_cache.temporary_render_texture(
-                                    self.device,
-                                    Size2D::new(source_tex.size().width, source_tex.size().height),
-                                    source_tex.format(),
-                                    true,
-                                    usage.usages,
+                                (
+                                    self.render_texture_cache.temporary_render_texture(
+                                        self.device,
+                                        Size2D::new(source_tex.size().width, source_tex.size().height),
+                                        source_tex.format(),
+                                        true,
+                                        usage.usages,
+                                    ),
+                                    false,
                                 )
                             });
                             logical_to_physical_resources[usage.logical_resource] =
-                                Some(PhysicalResource::RenderTexture(texture.clone()));
+                                Some(PhysicalResource::RenderTexture(texture.0.clone()));
                             // Prevent it from being garbage collected
                             logical_render_target_refcount[usage.logical_resource] = 1;
                             original_refcounts[usage.logical_resource] = 1;
@@ -1330,7 +1338,7 @@ impl<'a> RenderGraphCompiler<'a> {
                 RenderingPrimitive::Texture { texture: _ } => {
                     // Noop
                 }
-                RenderingPrimitive::SnapshotTexture { source, texture: _ } => {
+                RenderingPrimitive::SnapshotTexture { source, .. } => {
                     let target_texture = target_resource.expect_render_texture();
                     let source_texture =
                         logical_to_physical_resources[usages[source.index].logical_resource].expect_render_texture();

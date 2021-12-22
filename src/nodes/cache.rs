@@ -9,8 +9,8 @@ use crate::{
 };
 
 pub struct Cache {
-    source: Arc<Mutex<dyn RenderNode>>,
-    cache: Arc<Mutex<Option<RenderTexture>>>,
+    pub source: Arc<Mutex<dyn RenderNode>>,
+    cache: Arc<Mutex<Option<(RenderTexture, bool)>>>,
 }
 
 impl Cache {
@@ -20,12 +20,18 @@ impl Cache {
             cache: Default::default(),
         }
     }
+
+    pub fn dirty(&mut self) {
+        if let Some((_, dirty)) = &mut *self.cache.lock().unwrap() {
+            *dirty = true;
+        }
+    }
 }
 
 impl RenderNode for Cache {
     fn render_node(&self, graph: &mut PersistentGraph) -> GraphNode {
         let guard = self.cache.lock().unwrap();
-        if let Some(tex) = &*guard {
+        if let Some((tex, false)) = &*guard {
             graph.render_graph.texture(tex.clone())
         } else {
             let source = graph.render(&self.source);
