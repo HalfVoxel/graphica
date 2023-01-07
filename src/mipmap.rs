@@ -122,7 +122,7 @@ impl Mipmapper {
             let local_size: u32 = 8;
             {
                 cpass.set_bind_group(0, bind_group, &[]);
-                cpass.dispatch(
+                cpass.dispatch_workgroups(
                     (width + local_size - 1) / local_size,
                     (height + local_size - 1) / local_size,
                     1,

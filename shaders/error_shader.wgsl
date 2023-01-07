@@ -1,10 +1,10 @@
 struct VertexOutput {
-    [[location(0)]] a: vec2<f32>;
+    @location(0) a: vec2<f32>;
     // Logs "expected integer", but it clearly is an integer
     [[location(-1)]] b: vec2<f32>;
     // Logs "expected integer", but it clearly is an integer
     [[location(42323232323232)]] c: vec2<f32>;
-    [[location(3)]] v_zoom: f32;
+    @location(3) v_zoom: f32;
     // Error::UnknownBuiltin
     [[builtin(positionx)]] position: vec4<f32>;
     // Error::UnknownAttribute
@@ -31,12 +31,12 @@ struct Globals {
     u_resolution: vec2<f32>;
 };
 
-[[group(0), binding(0)]]
+@group(0) @binding(0)
 var globals: Globals;
 
-[[stage(vertex)]]
+@vertex
 fn vs_main(
-    [[location(0)]] a_position: vec2<f32>
+    @location(0) a_position: vec2<f32>
     ) -> VertexOutput {
 
     var out: VertexOutput;
@@ -48,8 +48,8 @@ fn vs_main(
     return out;
 }
 
-[[stage(fragment)]]
-fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Error::UnknownStorageClass
     let px_position: ptr<f32> = 0.0;
 
@@ -75,5 +75,5 @@ fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
 
 // Error::UnknownShaderStages
 [[stage(fragmentx)]]
-fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }

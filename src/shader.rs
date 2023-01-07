@@ -7,7 +7,7 @@ pub fn load_wgsl_shader(device: &Device, path: &str) -> ShaderModule {
     let mut buf = vec![];
     file.read_to_end(&mut buf).unwrap();
     let text = String::from_utf8(buf).unwrap();
-    device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(path),
         source: wgpu::ShaderSource::Wgsl(text.into()),
     })

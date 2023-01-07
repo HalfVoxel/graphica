@@ -16,6 +16,7 @@ use std::num::NonZeroU64;
 use std::ops::Range;
 use std::sync::Mutex;
 use wgpu::BlendState;
+use wgpu::CompositeAlphaMode;
 
 use wgpu::Extent3d;
 
@@ -741,7 +742,7 @@ impl crate::render_graph::CustomComputePass for BrushRendererWithReadbackSingleC
         wgpu_profiler!("smudge", gpu_profiler, cpass, device, {
             for i in 0..self.primitive_count * 2 {
                 cpass.set_push_constants(0, as_u8_slice(&[i as u32]));
-                cpass.dispatch(dx, dy, dz);
+                cpass.dispatch_workgroups(dx, dy, dz);
             }
         });
     }
@@ -907,38 +908,38 @@ impl BrushRendererWithReadbackBatched {
         );
     }
 
-    pub fn check_readback(&self, device: &Device) {
-        {
-            let slice = self.readback_buffer.buffer.slice(..);
-            let f = slice.map_async(wgpu::MapMode::Read);
-            device.poll(wgpu::Maintain::Wait);
-            futures::executor::block_on(f).unwrap();
-            let data = slice.get_mapped_range();
-            let result: Vec<u32> = data
-                .chunks_exact(4)
-                .map(|b| u32::from_ne_bytes(b.try_into().unwrap()))
-                .collect();
+    // pub fn check_readback(&self, device: &Device) {
+    //     {
+    //         let slice = self.readback_buffer.buffer.slice(..);
+    //         let f = slice.map_async(wgpu::MapMode::Read);
+    //         device.poll(wgpu::Maintain::Wait);
+    //         futures::executor::block_on(f).unwrap();
+    //         let data = slice.get_mapped_range();
+    //         let result: Vec<u32> = data
+    //             .chunks_exact(4)
+    //             .map(|b| u32::from_ne_bytes(b.try_into().unwrap()))
+    //             .collect();
 
-            dbg!(result.len());
-            let mut distinct = vec![0; DISPATCH * DISPATCH * Self::LOCAL_SIZE * Self::LOCAL_SIZE];
-            for r in result {
-                distinct[r as usize] += 1;
-            }
-            if distinct[2] != 0 {
-                let mut cnt = 0;
-                for (i, d) in distinct.iter().enumerate() {
-                    if *d != 1 {
-                        println!("Diff at {}: {}", i, d);
-                        cnt += 1;
-                        if cnt > 10 {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        self.readback_buffer.buffer.unmap();
-    }
+    //         dbg!(result.len());
+    //         let mut distinct = vec![0; DISPATCH * DISPATCH * Self::LOCAL_SIZE * Self::LOCAL_SIZE];
+    //         for r in result {
+    //             distinct[r as usize] += 1;
+    //         }
+    //         if distinct[2] != 0 {
+    //             let mut cnt = 0;
+    //             for (i, d) in distinct.iter().enumerate() {
+    //                 if *d != 1 {
+    //                     println!("Diff at {}: {}", i, d);
+    //                     cnt += 1;
+    //                     if cnt > 10 {
+    //                         break;
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     self.readback_buffer.buffer.unmap();
+    // }
 }
 
 impl RenderNode for BrushRendererWithReadbackBatched {
@@ -1483,7 +1484,7 @@ pub fn main() {
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: None,
             polygon_mode: wgpu::PolygonMode::Fill,
-            clamp_depth: false,
+            unclipped_depth: false,
             conservative: false,
         },
         module: vs_module,
@@ -1494,6 +1495,7 @@ pub fn main() {
     });
 
     let mut wireframe_render_pipeline = (*render_pipeline).clone();
+    wireframe_render_pipeline.label = "Wireframe Render Pipeline".to_string();
     wireframe_render_pipeline.primitive.polygon_mode = wgpu::PolygonMode::Line;
     let wireframe_render_pipeline = Arc::new(wireframe_render_pipeline);
 
@@ -1510,7 +1512,7 @@ pub fn main() {
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: None,
             polygon_mode: wgpu::PolygonMode::Fill,
-            clamp_depth: false,
+            unclipped_depth: false,
             conservative: false,
         },
         target_count: 1,
@@ -1527,11 +1529,11 @@ pub fn main() {
         fragment: Some(wgpu::FragmentState {
             module: &bg_module,
             entry_point: "fs_main",
-            targets: &[wgpu::ColorTargetState {
+            targets: &[Some(wgpu::ColorTargetState {
                 format: crate::config::TEXTURE_FORMAT,
                 blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
-            }],
+            })],
         }),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -1539,7 +1541,7 @@ pub fn main() {
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: None,
             polygon_mode: wgpu::PolygonMode::Fill,
-            clamp_depth: false,
+            unclipped_depth: false,
             conservative: false,
         },
         depth_stencil: depth_stencil_state,
@@ -1548,6 +1550,7 @@ pub fn main() {
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
+        multiview: None,
     });
 
     let pass_info_bind_group_layout = Arc::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1584,6 +1587,7 @@ pub fn main() {
         width: size.width,
         height: size.height,
         present_mode: wgpu::PresentMode::Fifo,
+        alpha_mode: CompositeAlphaMode::Auto,
     };
 
     let mut multisampled_render_target = None;
@@ -1732,7 +1736,7 @@ pub fn main() {
     let mut render_texture_cache = RenderTextureCache::default();
     let mut material_cache = MaterialCache::default();
 
-    let mut gpu_profiler = GpuProfiler::new(4, queue.get_timestamp_period());
+    let mut gpu_profiler = GpuProfiler::new(4, queue.get_timestamp_period(), device.features());
     let mut enable_profiler = false;
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -1994,7 +1998,7 @@ pub fn main() {
             let doc = &mut editor.document;
             let rendering_done = Arc::new(tokio::sync::Notify::new());
 
-            let paint_jobs = egui_wrapper.frame(|ctx| {
+            let egui_output = egui_wrapper.frame(|ctx| {
                 egui::SidePanel::left("side").show(&ctx, |ui| {
                     ui.label("Hello");
                     if ui.button("Clear").clicked() {
@@ -2040,20 +2044,22 @@ pub fn main() {
                         tokio::spawn(async move {
                             rendering_done.notified().await;
                             let slice = buffer.buffer.slice(..);
-                            slice.map_async(wgpu::MapMode::Read).await.unwrap();
-                            {
-                                let data = buffer.buffer.slice(..).get_mapped_range();
-                                println!("Got output data: {:#?}", &data[0..10]);
-                                image::save_buffer(
-                                    "export.png",
-                                    &data,
-                                    doc_size.width,
-                                    doc_size.height,
-                                    ColorType::Rgba8,
-                                )
-                                .unwrap();
-                            }
-                            buffer.buffer.unmap();
+                            let buffer = buffer.clone();
+                            slice.map_async(wgpu::MapMode::Read, move |r| {
+                                {
+                                    let data = buffer.buffer.slice(..).get_mapped_range();
+                                    println!("Got output data: {:#?}", &data[0..10]);
+                                    image::save_buffer(
+                                        "export.png",
+                                        &data,
+                                        doc_size.width,
+                                        doc_size.height,
+                                        ColorType::Rgba8,
+                                    )
+                                    .unwrap();
+                                }
+                                buffer.buffer.unmap();
+                            });
                         });
                     }
                 });
@@ -2089,7 +2095,7 @@ pub fn main() {
 
             wgpu_profiler!("egui", &mut gpu_profiler, &mut encoder, &device, {
                 egui_wrapper.render(
-                    &paint_jobs,
+                    egui_output,
                     &device,
                     frame.default_view().view,
                     &queue,
@@ -2116,12 +2122,7 @@ pub fn main() {
             // Signal to the profiler that the frame is finished.
             gpu_profiler.end_frame().unwrap();
 
-            let (sender, mut receiver) = futures::channel::oneshot::channel();
-            let recall = staging_belt.recall();
-            task::spawn(async move {
-                recall.await;
-                let _ = sender.send(());
-            });
+            staging_belt.recall();
 
             // dbg!(t3.elapsed());
 
@@ -2130,9 +2131,7 @@ pub fn main() {
             // println!("Preparing GPU work = {:?}", t1.elapsed());
             {
                 puffin::profile_scope!("wait for device");
-                while receiver.try_recv().is_err() {
-                    device.poll(wgpu::Maintain::Wait);
-                }
+                device.poll(wgpu::Maintain::Wait);
             }
 
             crate::gpu_profiler::process_finished_frame(&mut gpu_profiler, queue_submit_ns);

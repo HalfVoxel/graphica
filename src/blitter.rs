@@ -85,10 +85,7 @@ impl Blitter {
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler {
-                        filtering: true,
-                        comparison: false,
-                    },
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
@@ -122,7 +119,7 @@ impl Blitter {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: None,
-                clamp_depth: false,
+                unclipped_depth: false,
                 conservative: false,
             },
             target_count: 1,
@@ -142,11 +139,11 @@ impl Blitter {
                     fragment: Some(wgpu::FragmentState {
                         module: &blit_module,
                         entry_point: "fs_main",
-                        targets: &[wgpu::ColorTargetState {
+                        targets: &[Some(wgpu::ColorTargetState {
                             format: crate::config::TEXTURE_FORMAT,
                             blend: Some(wgpu::BlendState::REPLACE),
                             write_mask: wgpu::ColorWrites::ALL,
-                        }],
+                        })],
                     }),
                     primitive: wgpu::PrimitiveState {
                         strip_index_format: None,
@@ -154,7 +151,7 @@ impl Blitter {
                         topology: wgpu::PrimitiveTopology::TriangleList,
                         front_face: wgpu::FrontFace::Ccw,
                         cull_mode: None,
-                        clamp_depth: false,
+                        unclipped_depth: false,
                         conservative: false,
                     },
                     depth_stencil: Some(DepthStencilState {
@@ -169,6 +166,7 @@ impl Blitter {
                         mask: !0,
                         alpha_to_coverage_enabled: false,
                     },
+                    multiview: None,
                 };
                 Rc::new(device.create_render_pipeline(&render_pipeline_descriptor))
             })
@@ -348,7 +346,7 @@ impl Blitter {
         const LOCAL_SIZE: u32 = 8;
         pass.set_pipeline(&self.render_pipeline_blend_over);
         pass.set_bind_group(0, &bind_group, &[]);
-        pass.dispatch(
+        pass.dispatch_workgroups(
             (size.0 + LOCAL_SIZE - 1) / LOCAL_SIZE,
             (size.1 + LOCAL_SIZE - 1) / LOCAL_SIZE,
             1,
@@ -377,7 +375,7 @@ impl Blitter {
         const LOCAL_SIZE: u32 = 8;
         pass.set_pipeline(&self.render_pipeline_rgb_to_srgb);
         pass.set_bind_group(0, &bind_group, &[]);
-        pass.dispatch(
+        pass.dispatch_workgroups(
             (size.0 + LOCAL_SIZE - 1) / LOCAL_SIZE,
             (size.1 + LOCAL_SIZE - 1) / LOCAL_SIZE,
             1,
@@ -427,14 +425,14 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("blit"),
-            color_attachments: &[wgpu::RenderPassColorAttachment {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: self.target_texture,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: true,
                 },
                 resolve_target,
-            }],
+            })],
             depth_stencil_attachment: None,
         });
 

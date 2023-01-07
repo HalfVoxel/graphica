@@ -1,14 +1,14 @@
 
-// [[group(0), binding(0)]]
+// @group(0) @binding(0)
 // var samp: sampler;
 
-[[group(0), binding(0)]]
+@group(0) @binding(0)
 var source: [[access(read)]] texture_storage_2d<rgba8unorm>;
 
-[[group(0), binding(1)]]
+@group(0) @binding(1)
 var target: [[access(write)]] texture_storage_2d<rgba8unorm>;
 
-[[group(0), binding(2)]]
+@group(0) @binding(2)
 var weights: [[access(read)]] texture_storage_1d<r32float>;
 
 [[stage(compute), workgroup_size(32, 32, 1)]]

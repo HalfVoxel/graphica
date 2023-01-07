@@ -1438,7 +1438,7 @@ impl<'a> RenderGraphCompiler<'a> {
 
                     let mut render_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("pass"),
-                        color_attachments: &[color_attachment],
+                        color_attachments: &[Some(color_attachment)],
                         depth_stencil_attachment: None,
                     });
                     render_pass.set_bind_group(
@@ -1470,7 +1470,6 @@ impl<'a> RenderGraphCompiler<'a> {
                                 pipeline,
                                 bind_group,
                             } => {
-                                puffin::profile_scope!("op:render");
                                 let index_count = ibo.size() as u32 / std::mem::size_of::<u32>() as u32;
                                 wgpu_profiler!("op:render", self.gpu_profiler, &mut render_pass, self.device, {
                                     render_pass.set_pipeline(&pipeline.pipeline);
@@ -1516,7 +1515,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                         let local_size: u32 = 8;
                                         wgpu_profiler!("op:dispatch", self.gpu_profiler, &mut cpass, self.device, {
                                             cpass.set_bind_group(0, bind_group, &[]);
-                                            cpass.dispatch(
+                                            cpass.dispatch_workgroups(
                                                 (width + local_size - 1) / local_size,
                                                 (height + local_size - 1) / local_size,
                                                 1,
@@ -1533,7 +1532,7 @@ impl<'a> RenderGraphCompiler<'a> {
                                 wgpu_profiler!("op:compute", self.gpu_profiler, &mut cpass, self.device, {
                                     cpass.set_pipeline(pipeline);
                                     cpass.set_bind_group(0, bind_group, &[]);
-                                    cpass.dispatch(dispatch_size.0, dispatch_size.1, dispatch_size.2);
+                                    cpass.dispatch_workgroups(dispatch_size.0, dispatch_size.1, dispatch_size.2);
                                 });
                             }
                             CompiledComputePrimitive::CustomCompute(f) => {

@@ -52,7 +52,7 @@ impl Encoder<'_> {
 
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: label.or(Some("msaa render pass")),
-            color_attachments: &[color_attachment],
+            color_attachments: &[Some(color_attachment)],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: self.depth_texture_view.view,
                 depth_ops: Some(wgpu::Operations {
@@ -79,7 +79,7 @@ impl Encoder<'_> {
 
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
-            color_attachments: &[color_attachment],
+            color_attachments: &[Some(color_attachment)],
             depth_stencil_attachment: if depth {
                 Some(wgpu::RenderPassDepthStencilAttachment {
                     view: self.depth_texture_view.view,

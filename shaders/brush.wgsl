@@ -1,47 +1,44 @@
 struct VertexOutput {
-    [[location(0)]] color: vec4<f32>;
-    [[location(1)]] uv: vec2<f32>;
-    [[builtin(position)]] position: vec4<f32>;
-};
+    @location(0) color: vec4<f32>,
+    @location(1) uv: vec2<f32>,
+    @builtin(position) position: vec4<f32>,
+}
 
-[[block]]
 struct PassInfo {
-    render_target_size: vec2<f32>;
-};
+    render_target_size: vec2<f32>,
+}
 
 
-[[block]]
 struct Globals {
-    u_resolution: vec2<f32>;
-    u_scroll_offset: vec2<f32>;
-    u_zoom: f32;
-};
+    u_resolution: vec2<f32>,
+    u_scroll_offset: vec2<f32>,
+    u_zoom: f32,
+}
 
-[[block]]
 struct Primitive {
-    matrix: mat4x4<f32>;
-};
+    local2world: mat4x4<f32>,
+}
 
-[[group(0), binding(0)]]
+@group(0) @binding(0)
 var<uniform> globals: Globals;
 
-[[group(0), binding(1)]]
+@group(0) @binding(1)
 var<uniform> primitives: Primitive;
 
-[[group(0), binding(2)]]
+@group(0) @binding(2)
 var s_Color: sampler;
 
-[[group(0), binding(3)]]
+@group(0) @binding(3)
 var t_Color: texture_2d<f32>;
 
-[[group(1), binding(0)]]
+@group(1) @binding(0)
 var<uniform> pass_info: PassInfo;
 
-[[stage(vertex)]]
+@vertex
 fn vs_main(
-    [[location(0)]] a_position: vec2<f32>,
-    [[location(1)]] a_uv: vec2<f32>,
-    [[location(2)]] a_color: vec4<f32>,
+    @location(0) a_position: vec2<f32>,
+    @location(1) a_uv: vec2<f32>,
+    @location(2) a_color: vec4<f32>,
     ) -> VertexOutput {
     let prim: Primitive = primitives;
     var out: VertexOutput;
@@ -55,8 +52,8 @@ fn vs_main(
     return out;
 }
 
-[[stage(fragment)]]
-fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let out_color = in.color * textureSample(t_Color, s_Color, in.uv);
     return out_color;
 }

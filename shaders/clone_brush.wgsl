@@ -1,27 +1,27 @@
 struct VertexOutput {
-    [[location(0)]] color: vec4<f32>;
-    [[location(1)]] uv_background_src: vec2<f32>;
-    [[location(2)]] uv_background_target: vec2<f32>;
-    [[location(3)]] uv_brush: vec2<f32>;
-    [[builtin(position)]] position: vec4<f32>;
+    @location(0) color: vec4<f32>,
+    @location(1) uv_background_src: vec2<f32>,
+    @location(2) uv_background_target: vec2<f32>,
+    @location(3) uv_brush: vec2<f32>,
+    @builtin(position) position: vec4<f32>,
 };
 
-[[group(0), binding(0)]]
+@group(0) @binding(0)
 var samp: sampler;
 
-[[group(0), binding(1)]]
+@group(0) @binding(1)
 var t_background: texture_2d<f32>;
 
-[[group(0), binding(2)]]
+@group(0) @binding(2)
 var t_brush: texture_2d<f32>;
 
-[[stage(vertex)]]
+@vertex
 fn vs_main(
-    [[location(0)]] a_position: vec2<f32>,
-    [[location(1)]] a_uv_background_src: vec2<f32>,
-    [[location(2)]] a_uv_background_target: vec2<f32>,
-    [[location(3)]] a_uv_brush: vec2<f32>,
-    [[location(4)]] a_color: vec4<f32>,
+    @location(0) a_position: vec2<f32>,
+    @location(1) a_uv_background_src: vec2<f32>,
+    @location(2) a_uv_background_target: vec2<f32>,
+    @location(3) a_uv_brush: vec2<f32>,
+    @location(4) a_color: vec4<f32>,
     ) -> VertexOutput {
 
     let z = 1.0;
@@ -42,8 +42,8 @@ fn vs_main(
     return v_out;
 }
 
-[[stage(fragment)]]
-fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let background_src: vec4<f32> = textureSample(t_background, samp, in.uv_background_src);
     let background_target: vec4<f32> = textureSample(t_background, samp, in.uv_background_target);
     let brush: f32 = textureSample(t_brush, samp, in.uv_brush).a;

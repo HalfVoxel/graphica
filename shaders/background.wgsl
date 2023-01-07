@@ -1,24 +1,23 @@
 struct VertexOutput {
-    [[location(0)]] v_position: vec2<f32>;
-    [[location(1)]] v_resolution: vec2<f32>;
-    [[location(2)]] v_scroll_offset: vec2<f32>;
-    [[location(3)]] v_zoom: f32;
-    [[builtin(position)]] position: vec4<f32>;
+    @location(0) v_position: vec2<f32>,
+    @location(1) v_resolution: vec2<f32>,
+    @location(2) v_scroll_offset: vec2<f32>,
+    @location(3) v_zoom: f32,
+    @builtin(position) position: vec4<f32>,
 };
 
-[[block]]
 struct Globals {
-    u_resolution: vec2<f32>;
-    u_scroll_offset: vec2<f32>;
-    u_zoom: f32;
+    u_resolution: vec2<f32>,
+    u_scroll_offset: vec2<f32>,
+    u_zoom: f32,
 };
 
-[[group(0), binding(0)]]
+@group(0) @binding(0)
 var<uniform> globals: Globals;
 
-[[stage(vertex)]]
+@vertex
 fn vs_main(
-    [[location(0)]] a_position: vec2<f32>
+    @location(0) a_position: vec2<f32>
     ) -> VertexOutput {
 
     var out: VertexOutput;
@@ -31,8 +30,8 @@ fn vs_main(
     return out;
 }
 
-[[stage(fragment)]]
-fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Multiplication by 0.5 because v_position goes from -1 to +1.
     let px_position: vec2<f32> = in.v_position * in.v_resolution * 0.5;
 

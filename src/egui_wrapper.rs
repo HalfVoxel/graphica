@@ -1,4 +1,4 @@
-use egui::{ClippedMesh, CtxRef};
+use egui::{ClippedPrimitive, Context};
 use wgpu::Device;
 use winit::dpi::PhysicalSize;
 
@@ -27,20 +27,18 @@ impl EguiWrapper {
         }
     }
 
-    pub fn frame(&mut self, f: impl FnOnce(CtxRef)) -> Vec<ClippedMesh> {
+    pub fn frame(&mut self, f: impl FnOnce(Context)) -> egui::FullOutput {
         puffin::profile_function!();
         self.platform.begin_frame();
         f(self.platform.context());
 
         // End the UI frame. We could now handle the output and draw the UI with the backend.
-        let (_output, paint_commands) = self.platform.end_frame(None);
-
-        self.platform.context().tessellate(paint_commands)
+        self.platform.end_frame(None)
     }
 
     pub fn render(
         &mut self,
-        paint_jobs: &[ClippedMesh],
+        egui_output: egui::FullOutput,
         device: &Device,
         view: &wgpu::TextureView,
         queue: &wgpu::Queue,
@@ -48,15 +46,17 @@ impl EguiWrapper {
         screen_descriptor: &egui_wgpu_backend::ScreenDescriptor,
     ) {
         puffin::profile_function!();
+        let paint_jobs = self.platform.context().tessellate(egui_output.shapes);
+
         self.egui_render_pass
-            .update_texture(device, queue, &self.platform.context().texture());
-        self.egui_render_pass.update_user_textures(device, queue);
+            .add_textures(device, queue, &egui_output.textures_delta)
+            .unwrap();
         self.egui_render_pass
-            .update_buffers(device, queue, paint_jobs, screen_descriptor);
+            .update_buffers(device, queue, &paint_jobs, screen_descriptor);
 
         // Record all render passes.
         self.egui_render_pass
-            .execute(encoder, view, paint_jobs, screen_descriptor, None)
+            .execute(encoder, view, &paint_jobs, screen_descriptor, None)
             .unwrap();
     }
 }

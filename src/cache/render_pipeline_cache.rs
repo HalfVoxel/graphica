@@ -17,11 +17,11 @@ impl RenderPipelineCache {
         self.cache.entry(key).or_insert_with_key(|key| {
             let pipeline = key.base.to_wgpu_pipeline(
                 device,
-                &[wgpu::ColorTargetState {
+                &[Some(wgpu::ColorTargetState {
                     format: key.target_format,
                     blend: Some(key.blend_state),
                     write_mask: ColorWrites::all(),
-                }],
+                })],
                 key.depth_format.map(|format| DepthStencilState {
                     format,
                     depth_write_enabled: false,
@@ -84,7 +84,7 @@ impl RenderPipelineBase {
     fn to_wgpu_pipeline(
         &self,
         device: &Device,
-        targets: &[wgpu::ColorTargetState],
+        targets: &[Option<wgpu::ColorTargetState>],
         depth_stencil: Option<DepthStencilState>,
         multisample: MultisampleState,
     ) -> RenderPipeline {
@@ -106,6 +106,7 @@ impl RenderPipelineBase {
             primitive: self.primitive,
             depth_stencil,
             multisample,
+            multiview: None,
         };
 
         device.create_render_pipeline(&render_pipeline_descriptor)

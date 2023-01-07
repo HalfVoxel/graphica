@@ -19,7 +19,7 @@ use crate::{
     wgpu_utils::{create_buffer_range, update_buffer_range_via_transfer},
 };
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Copy, Clone)]
 pub struct Primitive {
     pub mvp_matrix: Matrix4<f32>,
