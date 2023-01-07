@@ -1,4 +1,5 @@
 use crate::geometry_utilities::types::ScreenPoint;
+use crate::geometry_utilities::types::ScreenVector;
 use euclid::default::Vector2D;
 use euclid::point2 as point;
 use euclid::vec2 as vector;
@@ -29,22 +30,71 @@ pub struct CapturedClick {
 
 impl CapturedClick {
     pub fn is_pressed(&self, input: &InputManager) -> bool {
-        let btn_state = input.states.get(&self.key).unwrap();
-        btn_state.down_frame == self.down_frame && btn_state.is_pressed()
+        if let Some(btn_state) = input.states.get(&self.key) {
+            btn_state.down_frame == self.down_frame && btn_state.is_pressed()
+        } else {
+            false
+        }
     }
 
     pub fn on_down(&self, input: &InputManager) -> bool {
-        let btn_state = input.states.get(&self.key).unwrap();
-        btn_state.down_frame == self.down_frame && btn_state.down_frame == input.frame_count
+        if let Some(btn_state) = input.states.get(&self.key) {
+            btn_state.down_frame == self.down_frame && btn_state.down_frame == input.frame_count
+        } else {
+            false
+        }
     }
 
     pub fn on_up(&self, input: &InputManager) -> bool {
-        let btn_state = input.states.get(&self.key).unwrap();
-        btn_state.down_frame == self.down_frame && btn_state.up_frame == input.frame_count
+        if let Some(btn_state) = input.states.get(&self.key) {
+            btn_state.down_frame == self.down_frame && btn_state.up_frame == input.frame_count
+        } else {
+            false
+        }
     }
 }
 
-#[derive(Eq, PartialEq, Hash, Clone, Copy)]
+pub struct CapturedDrag {
+    click: CapturedClick,
+}
+
+impl CapturedDrag {
+    pub fn uncaptured() -> Self {
+        Self {
+            click: CapturedClick {
+                key: ExtendedKey::MouseButton(MouseButton::Left), // Irrelevant
+                down_frame: -1,
+                mouse_start: point(0.0, 0.0),
+            },
+        }
+    }
+
+    pub fn is_captured(&self, input: &InputManager) -> bool {
+        self.click.is_pressed(input)
+    }
+
+    pub fn try_recapture(&mut self, input: &mut InputManager, btn: MouseButton) {
+        if !self.click.is_pressed(input) {
+            if let Some(capture) = input.capture_drag(btn) {
+                *self = capture;
+            }
+        }
+    }
+
+    pub fn new(click: CapturedClick) -> Self {
+        Self { click }
+    }
+
+    pub fn drag_delta(&self, input: &InputManager) -> ScreenVector {
+        if self.click.is_pressed(input) {
+            input.mouse_position_delta()
+        } else {
+            vector(0.0, 0.0)
+        }
+    }
+}
+
+#[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 pub enum ExtendedKey {
     VirtualKeyCode(VirtualKeyCode),
     MouseButton(MouseButton),
@@ -111,6 +161,7 @@ impl Shape for CircleShape {
 pub struct InputManager {
     states: HashMap<ExtendedKey, KeyState>,
     pub mouse_position: ScreenPoint,
+    last_mouse_position: ScreenPoint,
     pub frame_count: i32,
     pub scroll_delta: Vector2D<f32>,
 }
@@ -132,12 +183,37 @@ impl KeyCombination {
 }
 
 impl InputManager {
+    pub fn mouse_position_delta(&self) -> ScreenVector {
+        if self.frame_count > 0 {
+            self.mouse_position - self.last_mouse_position
+        } else {
+            vector(0.0, 0.0)
+        }
+    }
+
     pub fn tick_frame(&mut self) {
         self.frame_count += 1;
         self.scroll_delta = vector(0.0, 0.0);
+        self.last_mouse_position = self.mouse_position;
         for state in self.states.values_mut() {
             if !state.is_pressed() {
                 state.captured = false;
+            }
+        }
+    }
+
+    pub fn block_egui_captured_input(&mut self, ctx: &egui::Context) {
+        if ctx.wants_pointer_input() {
+            self.scroll_delta = vector(0.0, 0.0);
+            self.capture_click(MouseButton::Left);
+            self.capture_click(MouseButton::Right);
+            self.capture_click(MouseButton::Middle);
+        }
+        if ctx.wants_keyboard_input() {
+            for state in self.states.values_mut() {
+                if state.is_pressed() {
+                    state.captured = true;
+                }
             }
         }
     }
@@ -291,6 +367,10 @@ impl InputManager {
             }
         }
         None
+    }
+
+    pub fn capture_drag(&mut self, mouse_btn: MouseButton) -> Option<CapturedDrag> {
+        self.capture_click(mouse_btn).map(CapturedDrag::new)
     }
 
     pub fn capture_click_shape(&mut self, mouse_btn: MouseButton, shape: impl Shape) -> Option<CapturedClick> {

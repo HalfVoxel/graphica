@@ -41,6 +41,7 @@ use crate::geometry_utilities;
 use crate::geometry_utilities::types::*;
 use crate::geometry_utilities::ParamCurveDistanceEval;
 use crate::gui;
+use crate::input::CapturedDrag;
 use crate::input::{InputManager, KeyCombination};
 use crate::nodes::vector_strokes::Primitive;
 use crate::nodes::BlitNode;
@@ -1398,6 +1399,9 @@ pub fn main() {
             size_changed: true,
             brush: BrushType::Normal,
         },
+        scene_input: SceneInput {
+            captured_drag: CapturedDrag::uncaptured(),
+        },
         input: InputManager::default(),
     };
 
@@ -1757,21 +1761,23 @@ pub fn main() {
                 puffin::profile_scope!("event handling");
                 egui_wrapper.platform.handle_event(&event);
 
-                let new_time = Instant::now();
-                let dt = (new_time.duration_since(last_time)).as_secs_f32();
-                last_time = new_time;
-
-                if update_inputs(event, control_flow, &mut editor.input, scene, dt) {
+                if update_inputs(event, control_flow, &mut editor.input, scene) {
                     // keep polling inputs.
                     return;
                 }
             }
+
+            let new_time = Instant::now();
+            let dt = (new_time.duration_since(last_time)).as_secs_f32();
+            last_time = new_time;
 
             // puffin::profile_scope!("event loop");
 
             {
                 puffin::profile_scope!("input");
                 egui_wrapper.platform.update_time(start_time.elapsed().as_secs_f64());
+                editor.input.block_egui_captured_input(&egui_wrapper.platform.context());
+                update_scene_from_input(scene, &mut editor.input, &mut editor.scene_input, dt);
 
                 editor.gui.update();
                 editor.gui.input(&mut editor.ui_document, &mut editor.input);
@@ -1998,76 +2004,17 @@ pub fn main() {
             let doc = &mut editor.document;
             let rendering_done = Arc::new(tokio::sync::Notify::new());
 
-            let egui_output = egui_wrapper.frame(|ctx| {
-                egui::SidePanel::left("side").show(&ctx, |ui| {
-                    ui.label("Hello");
-                    if ui.button("Clear").clicked() {
-                        doc.brushes.clear();
-                    }
-
-                    if ui.button("Sample path").clicked() {
-                        doc.brushes.clear();
-                        doc.brushes.move_to(point(10.0, 10.0), Srgba::new(0.0, 0.0, 0.0, 0.0));
-                        doc.brushes.line_to(point(100.0, 100.0), Srgba::new(0.0, 0.0, 0.0, 0.0));
-                        doc.brushes.line_to(point(200.0, 100.0), Srgba::new(0.0, 0.0, 0.0, 0.0));
-                    }
-
-                    ui.checkbox(&mut enable_profiler, "Profiler");
-
-                    ui.radio_value(&mut scene.brush, BrushType::Normal, "Normal");
-                    ui.radio_value(&mut scene.brush, BrushType::Smudge, "Smudge");
-                    ui.radio_value(&mut scene.brush, BrushType::SmudgeBatch, "SmudgeBatch");
-                    ui.radio_value(&mut scene.brush, BrushType::SmudgeSingle, "SmudgeSingle");
-
-                    if ui.button("Export").clicked() {
-                        let canvas =
-                            graph.render(&(document_renderer1.as_ref().unwrap().clone() as Arc<Mutex<dyn RenderNode>>));
-                        let buffer = create_buffer_range(
-                            &device,
-                            &vec![0; doc_size.area() as usize],
-                            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                            "Readback",
-                        );
-                        let mut buffer_node = graph.render_graph.uninitialized_buffer(buffer.size() as usize);
-                        buffer_node = graph.render_graph.copy_texture_to_buffer(
-                            canvas,
-                            buffer_node,
-                            Extent3d {
-                                width: doc_size.width,
-                                height: doc_size.height,
-                                depth_or_array_layers: 1,
-                            },
-                        );
-                        graph.render_graph.output_buffer(buffer_node, buffer.clone());
-
-                        let rendering_done = rendering_done.clone();
-                        tokio::spawn(async move {
-                            rendering_done.notified().await;
-                            let slice = buffer.buffer.slice(..);
-                            let buffer = buffer.clone();
-                            slice.map_async(wgpu::MapMode::Read, move |r| {
-                                {
-                                    let data = buffer.buffer.slice(..).get_mapped_range();
-                                    println!("Got output data: {:#?}", &data[0..10]);
-                                    image::save_buffer(
-                                        "export.png",
-                                        &data,
-                                        doc_size.width,
-                                        doc_size.height,
-                                        ColorType::Rgba8,
-                                    )
-                                    .unwrap();
-                                }
-                                buffer.buffer.unmap();
-                            });
-                        });
-                    }
-                });
-
-                if enable_profiler && !puffin_egui::profiler_window(&ctx) {
-                    enable_profiler = false;
-                }
-            });
+            let egui_output = egui_ui(
+                &mut egui_wrapper,
+                &mut editor.document,
+                &device,
+                &mut enable_profiler,
+                scene,
+                document_renderer1.as_ref().unwrap(),
+                &mut graph,
+                doc_size,
+                &rendering_done,
+            );
 
             wgpu_profiler!("rendering", &mut gpu_profiler, &mut encoder, &device, {
                 let mut render_graph_compiler = crate::render_graph::RenderGraphCompiler {
@@ -2190,6 +2137,7 @@ pub struct Editor {
     path_editor: PathEditor,
     brush_editor: BrushEditor,
     scene: SceneParams,
+    scene_input: SceneInput,
     ui_document: Document,
     document: Document,
     input: InputManager,
@@ -2246,6 +2194,10 @@ impl Document {
     }
 }
 
+pub struct SceneInput {
+    pub captured_drag: CapturedDrag,
+}
+
 pub struct SceneParams {
     pub view: CanvasView,
     pub target_zoom: f32,
@@ -2282,15 +2234,88 @@ impl SceneParams {
     }
 }
 
+fn egui_ui(
+    egui_wrapper: &mut EguiWrapper,
+    doc: &mut Document,
+    device: &Device,
+    enable_profiler: &mut bool,
+    scene: &mut SceneParams,
+    document_renderer1: &Arc<Mutex<DocumentRenderer>>,
+    graph: &mut PersistentGraph,
+    doc_size: Size2D<u32, CanvasSpace>,
+    rendering_done: &Arc<tokio::sync::Notify>,
+) -> egui::FullOutput {
+    egui_wrapper.frame(|ctx| {
+        egui::SidePanel::left("side").show(&ctx, |ui| {
+            ui.label("Hello");
+            if ui.button("Clear").clicked() {
+                doc.brushes.clear();
+            }
+
+            if ui.button("Sample path").clicked() {
+                doc.brushes.clear();
+                doc.brushes.move_to(point(10.0, 10.0), Srgba::new(0.0, 0.0, 0.0, 0.0));
+                doc.brushes.line_to(point(100.0, 100.0), Srgba::new(0.0, 0.0, 0.0, 0.0));
+                doc.brushes.line_to(point(200.0, 100.0), Srgba::new(0.0, 0.0, 0.0, 0.0));
+            }
+
+            ui.checkbox(enable_profiler, "Profiler");
+
+            ui.radio_value(&mut scene.brush, BrushType::Normal, "Normal");
+            ui.radio_value(&mut scene.brush, BrushType::Smudge, "Smudge");
+            ui.radio_value(&mut scene.brush, BrushType::SmudgeBatch, "SmudgeBatch");
+            ui.radio_value(&mut scene.brush, BrushType::SmudgeSingle, "SmudgeSingle");
+
+            if ui.button("Export").clicked() {
+                let canvas = graph.render(&(document_renderer1.clone() as Arc<Mutex<dyn RenderNode>>));
+                let buffer = create_buffer_range(
+                    &device,
+                    &vec![0; doc_size.area() as usize],
+                    wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    "Readback",
+                );
+                let mut buffer_node = graph.render_graph.uninitialized_buffer(buffer.size() as usize);
+                buffer_node = graph.render_graph.copy_texture_to_buffer(
+                    canvas,
+                    buffer_node,
+                    Extent3d {
+                        width: doc_size.width,
+                        height: doc_size.height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                graph.render_graph.output_buffer(buffer_node, buffer.clone());
+
+                let rendering_done = rendering_done.clone();
+                tokio::spawn(async move {
+                    rendering_done.notified().await;
+                    let slice = buffer.buffer.slice(..);
+                    let buffer = buffer.clone();
+                    slice.map_async(wgpu::MapMode::Read, move |r| {
+                        {
+                            let data = buffer.buffer.slice(..).get_mapped_range();
+                            println!("Got output data: {:#?}", &data[0..10]);
+                            image::save_buffer("export.png", &data, doc_size.width, doc_size.height, ColorType::Rgba8)
+                                .unwrap();
+                        }
+                        buffer.buffer.unmap();
+                    });
+                });
+            }
+        });
+
+        if *enable_profiler && !puffin_egui::profiler_window(&ctx) {
+            *enable_profiler = false;
+        }
+    })
+}
+
 fn update_inputs(
     event: Event<()>,
     control_flow: &mut ControlFlow,
     input: &mut InputManager,
     scene: &mut SceneParams,
-    delta_time: f32,
 ) -> bool {
-    let last_cursor = input.mouse_position;
-
     input.event(&event);
 
     match event {
@@ -2344,19 +2369,24 @@ fn update_inputs(
             }
             _ => {}
         },
-        Event::DeviceEvent {
-            event: winit::event::DeviceEvent::Motion { axis: 3, value },
-            ..
-        } => {
-            scene.target_zoom *= f32::powf(1.01, -value as f32);
-        }
         _evt => {
             //println!("{:?}", _evt);
         }
     }
 
-    if input.is_pressed(MouseButton::Right) {
-        let cursor_delta = input.mouse_position - last_cursor;
+    *control_flow = ControlFlow::Poll;
+    true
+}
+
+pub fn update_scene_from_input(
+    scene: &mut SceneParams,
+    input: &mut InputManager,
+    scene_input: &mut SceneInput,
+    delta_time: f32,
+) {
+    scene_input.captured_drag.try_recapture(input, MouseButton::Right);
+    if scene_input.captured_drag.is_captured(input) {
+        let cursor_delta = input.mouse_position_delta();
         scene.target_scroll -= scene.view.screen_to_canvas_vector(cursor_delta);
         scene.view.scroll -= scene.view.screen_to_canvas_vector(cursor_delta);
     }
@@ -2386,12 +2416,10 @@ fn update_inputs(
         scene.target_stroke_width *= f32::powf(0.2, delta_time);
     }
 
+    scene.target_zoom *= f32::powf(1.002, -input.scroll_delta.y);
+
     //println!(" -- zoom: {}, scroll: {:?}", scene.target_zoom, scene.target_scroll);
     let new_zoom = scene.view.zoom + (scene.target_zoom - scene.view.zoom) / 3.0;
     scene.view.zoom_around_point(input.mouse_position, new_zoom);
     scene.stroke_width = scene.stroke_width + (scene.target_stroke_width - scene.stroke_width) / 5.0;
-
-    *control_flow = ControlFlow::Poll;
-
-    true
 }
