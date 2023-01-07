@@ -172,6 +172,7 @@ pub struct BrushRenderer {
     material: Arc<Material>,
     brush_manager: Rc<BrushManager>,
     stroke_ranges: Vec<ContinuousStroke>,
+    texture: Arc<Mutex<dyn RenderNode>>,
 }
 
 fn sample_points_along_curve(path: &PathData, spacing: f32) -> Vec<(usize, CanvasPoint)> {
@@ -234,6 +235,7 @@ pub struct BrushRendererWithReadback {
     size: f32,
     width_in_pixels: u32,
     view: CanvasView,
+    texture: Arc<Mutex<dyn RenderNode>>,
 }
 
 impl BrushRendererWithReadback {
@@ -246,7 +248,7 @@ impl BrushRendererWithReadback {
         _encoder: &mut CommandEncoder,
         _scene_ubo: &BufferRange,
         brush_manager: &Rc<BrushManager>,
-        texture: &Arc<Texture>,
+        texture: Arc<Mutex<dyn RenderNode>>,
     ) -> BrushRendererWithReadback {
         let mut points = sample_points_along_curve(&brush_data.path, 1.41);
         if points.len() > 200 {
@@ -328,7 +330,7 @@ impl BrushRendererWithReadback {
             vec![
                 BindingResourceArc::sampler(Some(sampler)),
                 BindingResourceArc::render_texture(None),
-                BindingResourceArc::texture(Some(texture.clone())),
+                BindingResourceArc::render_texture(None),
             ],
         ));
 
@@ -342,6 +344,7 @@ impl BrushRendererWithReadback {
             material,
             view: *view,
             target,
+            texture,
         }
     }
 
@@ -443,6 +446,7 @@ impl RenderNode for BrushRendererWithReadback {
         if self.points.len() <= 1 {
             return target;
         }
+        let texture = graph.render(&self.texture);
 
         let to_screen_pos = |v: CanvasPoint| self.view.canvas_to_screen_point(v);
 
@@ -463,10 +467,16 @@ impl RenderNode for BrushRendererWithReadback {
             ibo.range.end = self.ibo.range.start + (((i + 1) * 6) * std::mem::size_of::<u32>()) as u64;
             let material = DynamicMaterial::new(
                 self.material.clone(),
-                vec![BindGroupEntryArc {
-                    binding: 1,
-                    resource: BindingResourceArc::graph_node(target.clone()),
-                }],
+                vec![
+                    BindGroupEntryArc {
+                        binding: 1,
+                        resource: BindingResourceArc::graph_node(target.clone()),
+                    },
+                    BindGroupEntryArc {
+                        binding: 2,
+                        resource: BindingResourceArc::graph_node(texture.clone()),
+                    },
+                ],
             );
             scratch = graph.render_graph.mesh(
                 scratch,
@@ -504,9 +514,9 @@ pub struct BrushRendererWithReadbackSingle {
     group_width: u32,
     size_in_pixels: u32,
     num_primitives: usize,
-    brush_texture: Arc<Texture>,
     sampler: Arc<wgpu::Sampler>,
     material: Arc<Material>,
+    texture: Arc<Mutex<dyn RenderNode>>,
 }
 
 fn pixel_path<U>(mut points: impl Iterator<Item = euclid::Point2D<f32, U>>) -> Vec<euclid::Point2D<i32, U>> {
@@ -558,7 +568,7 @@ impl BrushRendererWithReadbackSingle {
         _encoder: &mut CommandEncoder,
         _scene_ubo: &BufferRange,
         brush_manager: &Rc<BrushManager>,
-        texture: &Arc<Texture>,
+        texture: Arc<Mutex<dyn RenderNode>>,
     ) -> BrushRendererWithReadbackSingle {
         let size_in_pixels = 256;
         let mut primitives = vec![];
@@ -626,7 +636,7 @@ impl BrushRendererWithReadbackSingle {
                 BindingResourceArc::texture(None),
                 BindingResourceArc::texture(Some(brush_manager.blue_noise_tex.clone())),
                 BindingResourceArc::sampler(Some(sampler.clone())),
-                BindingResourceArc::texture(Some(texture.to_owned())),
+                BindingResourceArc::texture(None),
                 BindingResourceArc::buffer(Some(ubo.clone())),
                 BindingResourceArc::buffer(Some(settings_ubo)),
             ],
@@ -639,9 +649,9 @@ impl BrushRendererWithReadbackSingle {
             size_in_pixels,
             sampler,
             num_primitives: primitives.len(),
-            brush_texture: texture.clone(),
             material,
             target,
+            texture,
         }
     }
 }
@@ -654,6 +664,8 @@ impl RenderNode for BrushRendererWithReadbackSingle {
         if self.ubo.size() == 0 {
             return target;
         }
+
+        let texture = graph.render(&self.texture);
 
         let scratch = graph.render_graph.clear_with_format(
             size(self.size_in_pixels * 2, self.size_in_pixels),
@@ -670,6 +682,10 @@ impl RenderNode for BrushRendererWithReadbackSingle {
                 BindGroupEntryArc {
                     binding: 1,
                     resource: BindingResourceArc::graph_node(scratch.clone()),
+                },
+                BindGroupEntryArc {
+                    binding: 4,
+                    resource: BindingResourceArc::graph_node(texture.clone()),
                 },
             ],
         );
@@ -736,12 +752,12 @@ pub struct BrushRendererWithReadbackBatched {
     ubo: BufferRange,
     brush_manager: Rc<BrushManager>,
     size_in_pixels: u32,
-    brush_texture: Arc<Texture>,
     sampler: Arc<wgpu::Sampler>,
     material: Arc<Material>,
     atomic_sbo: BufferRange,
     readback_buffer: BufferRange,
     atomic_output: BufferRange,
+    texture: Arc<Mutex<dyn RenderNode>>,
 }
 
 #[repr(C, align(16))]
@@ -773,7 +789,7 @@ impl BrushRendererWithReadbackBatched {
         _encoder: &mut CommandEncoder,
         _scene_ubo: &BufferRange,
         brush_manager: &Rc<BrushManager>,
-        texture: &Arc<Texture>,
+        texture: Arc<Mutex<dyn RenderNode>>,
     ) -> BrushRendererWithReadbackBatched {
         let size_in_pixels = 256;
 
@@ -859,7 +875,7 @@ impl BrushRendererWithReadbackBatched {
                 BindingResourceArc::texture(None),
                 BindingResourceArc::texture(None),
                 BindingResourceArc::sampler(Some(sampler.clone())),
-                BindingResourceArc::texture(Some(texture.to_owned())),
+                BindingResourceArc::texture(None),
                 BindingResourceArc::buffer(Some(ubo.clone())),
                 BindingResourceArc::buffer(Some(settings_ubo)),
                 BindingResourceArc::buffer(Some(atomic_sbo.clone())),
@@ -872,12 +888,12 @@ impl BrushRendererWithReadbackBatched {
             ubo,
             size_in_pixels,
             sampler,
-            brush_texture: texture.clone(),
             material,
             atomic_sbo,
             readback_buffer,
             atomic_output,
             target,
+            texture,
         }
     }
 
@@ -944,6 +960,8 @@ impl RenderNode for BrushRendererWithReadbackBatched {
             return target;
         }
 
+        let texture = graph.render(&self.texture);
+
         let scratch = graph.render_graph.clear_with_format(
             size(self.size_in_pixels * 2, self.size_in_pixels),
             wgpu::Color::RED,
@@ -959,6 +977,10 @@ impl RenderNode for BrushRendererWithReadbackBatched {
                 BindGroupEntryArc {
                     binding: 1,
                     resource: BindingResourceArc::graph_node(scratch),
+                },
+                BindGroupEntryArc {
+                    binding: 3,
+                    resource: BindingResourceArc::graph_node(texture),
                 },
             ],
         );
@@ -987,7 +1009,7 @@ impl BrushRenderer {
         _encoder: &mut CommandEncoder,
         scene_ubo: &BufferRange,
         brush_manager: &Rc<BrushManager>,
-        texture: &Arc<Texture>,
+        texture: Arc<Mutex<dyn RenderNode>>,
     ) -> BrushRenderer {
         let size = brush_data.brush.size;
         let mut vertices: Vec<BrushGpuVertex> = vec![];
@@ -1090,7 +1112,7 @@ impl BrushRenderer {
                 BindingResourceArc::buffer(Some(scene_ubo.clone())),
                 BindingResourceArc::buffer(Some(primitive_ubo)),
                 BindingResourceArc::sampler(Some(sampler)),
-                BindingResourceArc::texture(Some(texture.clone())),
+                BindingResourceArc::texture(None),
             ],
         ));
 
@@ -1103,6 +1125,7 @@ impl BrushRenderer {
             brush_manager: brush_manager.clone(),
             stroke_ranges,
             target,
+            texture,
         }
     }
 }
@@ -1110,6 +1133,18 @@ impl BrushRenderer {
 impl RenderNode for BrushRenderer {
     fn render_node(&self, graph: &mut PersistentGraph) -> GraphNode {
         let mut target = graph.render(&self.target);
+        if self.stroke_ranges.is_empty() {
+            return target;
+        }
+
+        let texture = graph.render(&self.texture);
+        let mat = DynamicMaterial::new(
+            self.material.clone(),
+            vec![BindGroupEntryArc {
+                binding: 3,
+                resource: BindingResourceArc::graph_node(texture),
+            }],
+        );
         for stroke_path in &self.stroke_ranges {
             if stroke_path.vertex_range.is_empty() {
                 continue;
@@ -1132,7 +1167,7 @@ impl RenderNode for BrushRenderer {
                 self.vbo.clone(),
                 ibo,
                 self.brush_manager.splat.pipeline.clone(),
-                self.material.clone(),
+                mat.clone(),
             );
             target = graph.render_graph.blend(
                 rendered_strokes,
@@ -1154,18 +1189,6 @@ impl RenderNode for BrushRenderer {
     fn update(&mut self, _device: &Device, _encoder: &mut CommandEncoder, _staging_belt: &mut StagingBelt) {}
 }
 
-#[derive(Default)]
-struct BrushTexture {}
-
-impl RenderNode for BrushTexture {
-    fn render_node(&self, graph: &mut PersistentGraph) -> GraphNode {
-        let canvas = graph.render_graph.clear(Size2D::new(256, 256), wgpu::Color::GREEN);
-        canvas
-    }
-
-    fn update(&mut self, _device: &Device, _encoder: &mut CommandEncoder, _staging_belt: &mut StagingBelt) {}
-}
-
 impl DocumentRenderer {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -1182,6 +1205,7 @@ impl DocumentRenderer {
         brush_manager: &Rc<BrushManager>,
         brush: BrushType,
     ) -> Self {
+        puffin::profile_function!();
         let vector_renderer = VectorRenderer::new(
             target,
             document,
@@ -1216,7 +1240,7 @@ impl DocumentRenderer {
                 encoder,
                 &scene_ubo,
                 brush_manager,
-                &document.textures[0],
+                brush_manager.brushtex.clone(),
             ))),
             BrushType::Smudge => Arc::new(Mutex::new(BrushRendererWithReadback::new(
                 vector_renderer.clone(),
@@ -1226,7 +1250,7 @@ impl DocumentRenderer {
                 encoder,
                 &scene_ubo,
                 brush_manager,
-                &document.textures[0],
+                brush_manager.brushtex.clone(),
             ))),
             BrushType::SmudgeBatch => Arc::new(Mutex::new(BrushRendererWithReadbackBatched::new(
                 vector_renderer.clone(),
@@ -1236,7 +1260,7 @@ impl DocumentRenderer {
                 encoder,
                 &scene_ubo,
                 brush_manager,
-                &document.textures[0],
+                brush_manager.brushtex.clone(),
             ))),
             BrushType::SmudgeSingle => Arc::new(Mutex::new(BrushRendererWithReadbackSingle::new(
                 vector_renderer.clone(),
@@ -1246,7 +1270,7 @@ impl DocumentRenderer {
                 encoder,
                 &scene_ubo,
                 brush_manager,
-                &document.textures[0],
+                brush_manager.brushtex.clone(),
             ))),
         };
 
@@ -1683,8 +1707,6 @@ pub fn main() {
         Texture::load_from_file(std::path::Path::new("brush.png"), &device, &mut init_encoder).unwrap(),
     );
 
-    let brushtex = BrushTexture::default();
-
     editor.document.textures.push(tex.clone());
     editor.ui_document.textures.push(tex);
 
@@ -1741,48 +1763,51 @@ pub fn main() {
                 }
             }
 
-            puffin::profile_scope!("event loop");
+            // puffin::profile_scope!("event loop");
 
-            egui_wrapper.platform.update_time(start_time.elapsed().as_secs_f64());
+            {
+                puffin::profile_scope!("input");
+                egui_wrapper.platform.update_time(start_time.elapsed().as_secs_f64());
 
-            editor.gui.update();
-            editor.gui.input(&mut editor.ui_document, &mut editor.input);
-            editor.gui.render(&mut editor.ui_document, &scene.view);
-            // editor.toolbar.update_ui(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
-            editor.path_editor.update(
-                &mut editor.ui_document,
-                &mut editor.document,
-                &scene.view,
-                &mut editor.input,
-                &editor.gui_root.get(&editor.gui).tool,
-            );
-            editor.brush_editor.update(
-                &mut editor.ui_document,
-                &mut editor.document,
-                &scene.view,
-                &mut editor.input,
-                &editor.gui_root.get(&editor.gui).tool,
-            );
+                editor.gui.update();
+                editor.gui.input(&mut editor.ui_document, &mut editor.input);
+                editor.gui.render(&mut editor.ui_document, &scene.view);
+                // editor.toolbar.update_ui(&mut editor.ui_document, &mut editor.document, &scene.view, &mut editor.input);
+                editor.path_editor.update(
+                    &mut editor.ui_document,
+                    &mut editor.document,
+                    &scene.view,
+                    &mut editor.input,
+                    &editor.gui_root.get(&editor.gui).tool,
+                );
+                editor.brush_editor.update(
+                    &mut editor.ui_document,
+                    &mut editor.document,
+                    &scene.view,
+                    &mut editor.input,
+                    &editor.gui_root.get(&editor.gui).tool,
+                );
 
-            if editor.input.on_combination(
-                &KeyCombination::new()
-                    .and(VirtualKeyCode::LControl)
-                    .and(VirtualKeyCode::W),
-            ) {
-                // Quit
-                *control_flow = ControlFlow::Exit;
+                if editor.input.on_combination(
+                    &KeyCombination::new()
+                        .and(VirtualKeyCode::LControl)
+                        .and(VirtualKeyCode::W),
+                ) {
+                    // Quit
+                    *control_flow = ControlFlow::Exit;
 
-                #[cfg(feature = "profile")]
-                PROFILER.lock().unwrap().stop().expect("Couldn't stop");
-                return;
-            }
+                    #[cfg(feature = "profile")]
+                    PROFILER.lock().unwrap().stop().expect("Couldn't stop");
+                    return;
+                }
 
-            // println!("Path editor = {:?}", t0.elapsed());
+                // println!("Path editor = {:?}", t0.elapsed());
 
-            if scene.size_changed {
-                let physical = scene.view.resolution;
-                swap_chain_desc.width = physical.width;
-                swap_chain_desc.height = physical.height;
+                if scene.size_changed {
+                    let physical = scene.view.resolution;
+                    swap_chain_desc.width = physical.width;
+                    swap_chain_desc.height = physical.height;
+                }
             }
 
             let window_extent = wgpu::Extent3d {
@@ -1840,109 +1865,114 @@ pub fn main() {
             });
 
             let doc_size = editor.document.size.unwrap();
-            let dummy_view = CanvasView {
-                zoom: 1.0,
-                scroll: vector(0.0, 0.0),
-                resolution: PhysicalSize::new(doc_size.width, doc_size.height),
-            };
-
-            scene.update_uniform_globals(&device, &mut encoder, &mut staging_belt, &globals_ubo.buffer);
-            update_buffer_via_transfer(
-                &device,
-                &mut encoder,
-                &mut staging_belt,
-                &[Globals {
-                    resolution: [doc_size.width as f32, doc_size.height as f32],
-                    zoom: 1.0,
-                    scroll_offset: [0.0, 0.0],
-                }],
-                &canvas_globals_ubo.buffer,
-            );
-
-            let hash = editor.document.hash() ^ scene.view.hash();
-            if hash != last_hash1 || document_renderer1.is_none() {
-                last_hash1 = hash;
-                document_renderer1 = Some(Arc::new(Mutex::new(DocumentRenderer::new(
-                    Arc::new(Mutex::new(Clear {
-                        size: editor.document.size.unwrap().cast_unit(),
-                        color: wgpu::Color {
-                            r: 0.5,
-                            g: 0.5,
-                            b: 0.5,
-                            a: 1.0,
-                        },
-                    })),
-                    &editor.document,
-                    &dummy_view,
-                    &device,
-                    &mut encoder,
-                    &mut staging_belt,
-                    &bind_group_layout,
-                    scene.show_wireframe,
-                    &render_pipeline,
-                    &wireframe_render_pipeline,
-                    &brush_manager,
-                    scene.brush,
-                ))));
-
-                let mut cache = cache_node.lock().unwrap();
-                cache.source = document_renderer1.as_ref().unwrap().clone();
-                cache.dirty();
-            }
-
-            let canvas_in_screen_space =
-                scene
-                    .view
-                    .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
-            let canvas_in_screen_uv_space =
-                canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
 
             {
-                let mut blit = blit_node.lock().unwrap();
-                blit.target = Arc::new(Mutex::new(Clear {
-                    size: Size2D::new(frame.size().width, frame.size().height),
-                    color: wgpu::Color::GREEN,
-                }));
-                blit.source_rect = CanvasRect::from_size(doc_size.cast());
-                blit.target_rect = canvas_in_screen_space.cast_unit();
-            }
+                puffin::profile_scope!("update renderers");
 
-            let ui_view = CanvasView {
-                zoom: 1.0,
-                scroll: vector(0.0, 0.0),
-                resolution: scene.view.resolution,
-            };
-            let hash = editor.ui_document.hash() ^ ui_view.hash();
-            let bypass_hash_check = true;
-            if hash != last_hash2 || document_renderer2.is_none() || bypass_hash_check {
-                last_hash2 = hash;
-                editor.ui_document.size = Some(Size2D::new(frame.size().width, frame.size().height));
-                document_renderer2 = Some(DocumentRenderer::new(
-                    blit_node.clone(),
-                    &editor.ui_document,
-                    &ui_view,
+                let dummy_view = CanvasView {
+                    zoom: 1.0,
+                    scroll: vector(0.0, 0.0),
+                    resolution: PhysicalSize::new(doc_size.width, doc_size.height),
+                };
+
+                scene.update_uniform_globals(&device, &mut encoder, &mut staging_belt, &globals_ubo.buffer);
+                update_buffer_via_transfer(
                     &device,
                     &mut encoder,
                     &mut staging_belt,
-                    &bind_group_layout,
-                    scene.show_wireframe,
-                    &render_pipeline,
-                    &wireframe_render_pipeline,
-                    &brush_manager,
-                    scene.brush,
-                ));
-            }
+                    &[Globals {
+                        resolution: [doc_size.width as f32, doc_size.height as f32],
+                        zoom: 1.0,
+                        scroll_offset: [0.0, 0.0],
+                    }],
+                    &canvas_globals_ubo.buffer,
+                );
 
-            document_renderer1
-                .as_mut()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .update(&device, &mut encoder, &mut staging_belt);
-            document_renderer2
-                .as_mut()
-                .unwrap()
-                .update(&device, &mut encoder, &mut staging_belt);
+                let hash = editor.document.hash() ^ scene.view.hash();
+                if hash != last_hash1 || document_renderer1.is_none() {
+                    last_hash1 = hash;
+                    document_renderer1 = Some(Arc::new(Mutex::new(DocumentRenderer::new(
+                        Arc::new(Mutex::new(Clear {
+                            size: editor.document.size.unwrap().cast_unit(),
+                            color: wgpu::Color {
+                                r: 0.5,
+                                g: 0.5,
+                                b: 0.5,
+                                a: 1.0,
+                            },
+                        })),
+                        &editor.document,
+                        &dummy_view,
+                        &device,
+                        &mut encoder,
+                        &mut staging_belt,
+                        &bind_group_layout,
+                        scene.show_wireframe,
+                        &render_pipeline,
+                        &wireframe_render_pipeline,
+                        &brush_manager,
+                        scene.brush,
+                    ))));
+
+                    let mut cache = cache_node.lock().unwrap();
+                    cache.source = document_renderer1.as_ref().unwrap().clone();
+                    cache.dirty();
+                }
+
+                let canvas_in_screen_space =
+                    scene
+                        .view
+                        .canvas_to_screen_rect(rect(0.0, 0.0, doc_size.width as f32, doc_size.height as f32));
+                let canvas_in_screen_uv_space =
+                    canvas_in_screen_space.scale(1.0 / window_extent.width as f32, 1.0 / window_extent.height as f32);
+
+                {
+                    let mut blit = blit_node.lock().unwrap();
+                    blit.target = Arc::new(Mutex::new(Clear {
+                        size: Size2D::new(frame.size().width, frame.size().height),
+                        color: wgpu::Color::GREEN,
+                    }));
+                    blit.source_rect = CanvasRect::from_size(doc_size.cast());
+                    blit.target_rect = canvas_in_screen_space.cast_unit();
+                }
+
+                let ui_view = CanvasView {
+                    zoom: 1.0,
+                    scroll: vector(0.0, 0.0),
+                    resolution: scene.view.resolution,
+                };
+                let hash = editor.ui_document.hash() ^ ui_view.hash();
+                let bypass_hash_check = true;
+                if hash != last_hash2 || document_renderer2.is_none() || bypass_hash_check {
+                    last_hash2 = hash;
+                    editor.ui_document.size = Some(Size2D::new(frame.size().width, frame.size().height));
+                    document_renderer2 = Some(DocumentRenderer::new(
+                        blit_node.clone(),
+                        &editor.ui_document,
+                        &ui_view,
+                        &device,
+                        &mut encoder,
+                        &mut staging_belt,
+                        &bind_group_layout,
+                        scene.show_wireframe,
+                        &render_pipeline,
+                        &wireframe_render_pipeline,
+                        &brush_manager,
+                        scene.brush,
+                    ));
+                }
+
+                document_renderer1
+                    .as_mut()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .update(&device, &mut encoder, &mut staging_belt);
+                document_renderer2
+                    .as_mut()
+                    .unwrap()
+                    .update(&device, &mut encoder, &mut staging_belt);
+            }
 
             ephermal_buffer_cache.reset();
 
@@ -2052,7 +2082,10 @@ pub fn main() {
                 render_graph_compiler.render(&passes);
             });
 
-            staging_belt.finish();
+            {
+                puffin::profile_scope!("staging_belt::finish");
+                staging_belt.finish();
+            }
 
             wgpu_profiler!("egui", &mut gpu_profiler, &mut encoder, &device, {
                 egui_wrapper.render(
@@ -2095,7 +2128,6 @@ pub fn main() {
             frame_count += 1.0;
             editor.input.tick_frame();
             // println!("Preparing GPU work = {:?}", t1.elapsed());
-            fps_limiter.wait(std::time::Duration::from_secs_f32(1.0 / 60.0));
             {
                 puffin::profile_scope!("wait for device");
                 while receiver.try_recv().is_err() {
@@ -2115,6 +2147,8 @@ pub fn main() {
                     Err(_) => panic!("The swapchain image is still referenced somewhere"),
                 }
             }
+
+            fps_limiter.wait(std::time::Duration::from_secs_f32(1.0 / 60.0));
         }
         profiling::finish_frame!();
     });

@@ -1,6 +1,8 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::cache::render_pipeline_cache::RenderPipelineBase;
+use crate::nodes::{Cache, GaussianDistribution2D};
+use crate::persistent_graph::RenderNode;
 use crate::shader::load_shader;
 use crate::shader::load_wgsl_shader;
 use crate::texture::Texture;
@@ -112,6 +114,7 @@ pub struct BrushManager {
     pub splat_with_readback_single_a: ShaderBundleCompute,
     pub splat_with_readback_single_b: ShaderBundleCompute,
     pub blue_noise_tex: Arc<Texture>,
+    pub brushtex: Arc<Mutex<dyn RenderNode>>,
 }
 
 impl BrushManager {
@@ -502,6 +505,9 @@ impl BrushManager {
                 bind_group_layout: bind_group_layout_clone_brush_single,
                 pipeline: Arc::new(device.create_compute_pipeline(&render_pipeline_descriptor_clone_brush_single_b)),
             },
+            brushtex: Arc::new(Mutex::new(Cache::new(Arc::new(Mutex::new(
+                GaussianDistribution2D::default(),
+            ))))),
         }
     }
 }

@@ -264,8 +264,12 @@ impl RenderGraph {
         }
     }
 
+    pub fn uninitialized_texture(&mut self, size: Size2D<u32>) -> GraphNode {
+        self.push_primitive(RenderingPrimitive::UninitializedTexture(size, None))
+    }
+
     pub fn clear(&mut self, size: Size2D<u32>, color: Color) -> GraphNode {
-        let tex = self.push_primitive(RenderingPrimitive::UninitializedTexture(size, None));
+        let tex = self.uninitialized_texture(size);
         self.push_primitive(RenderingPrimitive::Clear(tex, color))
     }
 

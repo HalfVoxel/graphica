@@ -1,14 +1,27 @@
 use by_address::ByAddress;
 use euclid::rect;
 use lazy_init::Lazy;
-use std::{num::NonZeroU32, sync::Arc};
+use std::sync::atomic::AtomicI32;
+use std::{
+    num::NonZeroU32,
+    sync::{atomic::Ordering, Arc, Mutex},
+};
 use wgpu::{util::DeviceExt, CommandEncoder, Device, Extent3d, Queue, TextureFormat, TextureUsages, TextureView};
+static count: AtomicI32 = AtomicI32::new(0);
 
 pub struct Texture {
     pub descriptor: wgpu::TextureDescriptor<'static>,
     pub buffer: wgpu::Texture,
     pub view: wgpu::TextureView,
     mipmap_views: Vec<Lazy<wgpu::TextureView>>,
+}
+
+impl Drop for Texture {
+    fn drop(&mut self) {
+        let c = count.fetch_add(-1, Ordering::Relaxed);
+        println!("Dropping {:?}", self);
+        println!("Alive textures: {}", c - 1)
+    }
 }
 
 impl std::fmt::Debug for Texture {
@@ -231,6 +244,7 @@ impl Texture {
             views.push(Lazy::new());
         }
 
+        count.fetch_add(1, Ordering::Relaxed);
         Texture {
             descriptor,
             buffer: tex,
