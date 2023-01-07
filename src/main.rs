@@ -1346,7 +1346,7 @@ pub fn main() {
     let mut tessellator = lyon::tessellation::FillTessellator::new();
     tessellator
         .tessellate_rectangle(
-            &euclid::Rect::new(point(-1.0 * 5.0, -1.0 * 5.0), size(2.0 * 5.0, 2.0 * 5.0)),
+            &euclid::Box2D::new(point(-1.0 * 10.0, -1.0 * 10.0), point(0.0, 0.0)),
             &FillOptions::default(),
             &mut BuffersBuilder::new(&mut bg_geometry, Positions),
         )

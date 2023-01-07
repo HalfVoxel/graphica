@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::cache::material_cache::{BindingResourceArc, Material};
 use crate::cache::render_pipeline_cache::RenderPipelineBase;
+use crate::geometry_utilities::types::UVRect;
 use crate::shader::load_wgsl_shader;
 use crate::wgpu_utils::*;
 use crate::{shader::load_shader, vertex::GPUVertex};
@@ -305,8 +306,8 @@ impl Blitter {
         encoder: &mut CommandEncoder,
         source_texture: &wgpu::TextureView,
         target_texture: &wgpu::TextureView,
-        source_uv_rect: Rect,
-        target_uv_rect: Rect,
+        source_uv_rect: UVRect,
+        target_uv_rect: UVRect,
         sample_count: u32,
         resolve_target: Option<&wgpu::TextureView>,
     ) {
@@ -397,8 +398,8 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
         &self,
         device: &Device,
         encoder: &mut CommandEncoder,
-        source_uv_rect: Rect,
-        target_uv_rect: Rect,
+        source_uv_rect: UVRect,
+        target_uv_rect: UVRect,
         sample_count: u32,
         resolve_target: Option<&wgpu::TextureView>,
     ) {
@@ -447,8 +448,8 @@ impl<'a, 'b> BlitterWithTextures<'a, 'b> {
     pub fn blit_regions(
         &self,
         device: &Device,
-        source_uv_rect: Rect,
-        target_uv_rect: Rect,
+        source_uv_rect: UVRect,
+        target_uv_rect: UVRect,
         sample_count: u32,
     ) -> BlitOp<'a> {
         let vertices = &[

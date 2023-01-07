@@ -1,10 +1,12 @@
 use crate::canvas::CanvasView;
+use crate::geometry_utilities::types::*;
 use crate::gui::*;
 use crate::input::{CapturedClick, InputManager, MouseButton};
 use crate::main::Document;
 use crate::path::{BorderRadii, PathData};
 use crate::path_collection::PathReference;
 use euclid::default::SideOffsets2D;
+use euclid::rect;
 use lyon::math::*;
 
 pub trait Tool {

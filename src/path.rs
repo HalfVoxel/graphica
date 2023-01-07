@@ -1,7 +1,7 @@
 use crate::geometry_utilities::types::*;
 use euclid::point2 as point;
 use euclid::vec2 as vector;
-use lyon::math::{Angle, Point, Rect, Vector};
+use lyon::math::{Angle, Point, Vector};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 

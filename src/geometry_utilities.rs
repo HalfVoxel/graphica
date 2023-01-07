@@ -14,6 +14,8 @@ use std::convert::TryInto;
 use types::*;
 
 pub mod types {
+    use euclid::UnknownUnit;
+
     pub struct ScreenSpace;
     pub struct CanvasSpace;
     pub struct UVSpace;
@@ -26,6 +28,7 @@ pub mod types {
     pub type CanvasRect = euclid::Rect<f32, CanvasSpace>;
     pub type CanvasRectI32 = euclid::Rect<i32, CanvasSpace>;
     pub type UVRect = euclid::Rect<f32, UVSpace>;
+    pub type Rect = euclid::Rect<f32, UnknownUnit>;
 }
 
 pub enum VectorFieldPrimitive {
