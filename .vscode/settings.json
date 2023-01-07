@@ -1,0 +1,10 @@
+{
+    "files.exclude": {
+        "target/**": true
+    },
+    "rust-analyzer.checkOnSave.extraArgs": [
+        "--target-dir",
+        "/tmp/rust-analyzer/graphica"
+    ],
+    "editor.formatOnSave": true
+}
